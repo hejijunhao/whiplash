@@ -1,0 +1,14 @@
+name: whiplash
+version: "0.1.0"
+description: "Jam on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8, live params, mutes, tempo. No SysEx, ever."
+author: Phil Helfried
+license: MIT
+provides_tools:
+  - list_midi_ports
+  - play_pattern
+  - set_param
+  - mute_track
+  - unmute_track
+  - set_tempo
+  - stop
+  - whiplash_status
