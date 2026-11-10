@@ -1,0 +1,30 @@
+# Dependency metadata for Hermes (it reads [project].dependencies when installing
+# the plugin) and for local dev. Whiplash is loaded by Hermes from this directory,
+# not built or published as a wheel, hence no [build-system].
+[project]
+name = "whiplash"
+version = "0.2.0"
+description = "Hermes Agent plugin: jam on an Elektron Digitakt II over USB MIDI."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "pgbouncer" }]
+requires-python = ">=3.11"
+dependencies = [
+    "mido>=1.3,<2",
+    "python-rtmidi>=1.5,<2",
+]
+
+[project.urls]
+Repository = "https://github.com/hejijunhao/whiplash"
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "pyyaml>=6,<7",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

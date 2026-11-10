@@ -1,14 +1,19 @@
 name: whiplash
-version: "0.1.0"
+version: "0.2.0"
 description: "Jam on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8, live params, mutes, tempo. No SysEx, ever."
-author: Phil Helfried
+author: pgbouncer
 license: MIT
+requires_hermes: ">=0.19"
+# Keep in sync with pyproject.toml [project].dependencies (tests enforce it).
+python_dependencies:
+  - "mido>=1.3,<2"
+  - "python-rtmidi>=1.5,<2"
 provides_tools:
-  - list_midi_ports
-  - play_pattern
-  - set_param
-  - mute_track
-  - unmute_track
-  - set_tempo
-  - stop
+  - whiplash_list_midi_ports
+  - whiplash_play_pattern
+  - whiplash_set_param
+  - whiplash_mute_track
+  - whiplash_unmute_track
+  - whiplash_set_tempo
+  - whiplash_stop
   - whiplash_status
