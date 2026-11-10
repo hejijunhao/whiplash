@@ -83,7 +83,7 @@ def test_register_is_fast_and_lazy():
 
 
 def test_every_tool_is_namespaced():
-    assert len(tools.HANDLERS) == 8
+    assert len(tools.HANDLERS) == 11
     assert all(name.startswith("whiplash_") for name in tools.HANDLERS)
 
 
@@ -196,7 +196,7 @@ def test_natural_end_then_new_play_never_doubles_the_panic(fake):
 def test_stop_when_idle_is_a_panic_button(fake):
     eng, port = fake
     eng.ensure_port()
-    assert eng.stop() == {"was_playing": False, "mutes_cleared": []}
+    assert eng.stop() == {"was_playing": False, "mutes_cleared": [], "ramps_cancelled": []}
     assert port.count("stop") == 1 and port.count("control_change", control=123) == 8
 
 
@@ -213,7 +213,8 @@ def test_concurrent_play_calls_leave_one_sequencer(fake):
     alive = [t for t in threading.enumerate() if t.name == "whiplash-seq" and t.is_alive()]
     assert len(alive) == 1 and eng.playing()
     eng.stop()
-    assert port.count("start") == 12
+    assert port.count("start") == 1  # the first call started; the rest queued live switches
+    assert port.count("stop") == 1  # and no Stop at any of the queued switches
     assert not [t for t in threading.enumerate() if t.name == "whiplash-seq" and t.is_alive()]
 
 
@@ -230,7 +231,7 @@ def test_mute_silences_a_track_live(fake):
     assert port.count("note_on", channel=3) > 0
 
 
-def test_mutes_do_not_survive_stop_or_a_new_pattern(fake):
+def test_mutes_reset_on_stop_and_fresh_start(fake):
     eng, port = fake
     eng.play(patterns.PATTERNS["techno"], bpm=300)
     eng.set_mute(1, True)
@@ -242,9 +243,8 @@ def test_mutes_do_not_survive_stop_or_a_new_pattern(fake):
     eng._thread.join(timeout=5)
     assert port.count("note_on", channel=0) == 4  # the kick is back
 
-    eng.play(patterns.PATTERNS["techno"], bpm=300)
-    eng.set_mute(1, True)
-    assert eng.play(patterns.PATTERNS["soul"], bpm=300)["mutes_cleared"] == [1]  # live switch reports it
+    eng.set_mute(2, True)  # muted after a natural end: a fresh start still clears it
+    assert eng.play(patterns.PATTERNS["soul"], bpm=300)["mutes_cleared"] == [2]
     assert eng.status()["muted"] == []
 
 
@@ -430,13 +430,16 @@ def test_tool_errors_are_json(tool_engine):
 
 def test_tool_play_stop_report_mutes(tool_engine):
     tool_engine()
-    assert call("whiplash_play_pattern", genre="techno", bpm=300)["mutes_cleared"] == []
+    out = call("whiplash_play_pattern", genre="techno", bpm=300)
+    assert out["mode"] == "started" and out["mutes_cleared"] == []
     assert call("whiplash_mute_track", track=1)["all_muted"] == [1]
-    out = call("whiplash_play_pattern", mood="chill")
-    assert out["playing"] == "soul" and out["replaced_playing"] is True and out["mutes_cleared"] == [1]
+    out = call("whiplash_play_pattern", mood="chill")  # live switch: queued, mute carried
+    assert out["mode"] == "queued" and out["next"] == "soul" and out["playing"] == "techno"
+    assert out["muted_carried"] == [1] and out["switch_at_bar"] >= 1 and out["bpm_at_switch"] == 86
     call("whiplash_mute_track", track=6, hardware=True)
     out = call("whiplash_stop")
-    assert out == {"success": True, "stopped": True, "was_playing": True, "mutes_cleared": [6]}
+    assert out == {"success": True, "stopped": True, "was_playing": True, "mutes_cleared": [1, 6],
+                   "ramps_cancelled": []}
 
 
 def test_virtual_port_end_to_end():

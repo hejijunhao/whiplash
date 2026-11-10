@@ -1,0 +1,41 @@
+# Draft of plugin-catalog/whiplash.yaml for NousResearch/hermes-agent.
+# Before submitting: replace sha with the full 40-character commit to pin, and re-run
+# `hermes plugins validate . --install-deps` against a checkout at that commit.
+name: whiplash
+title: Whiplash
+repo: https://github.com/hejijunhao/whiplash
+sha: "<40-hex sha placeholder>"
+description: >-
+  Let Hermes jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8 with MIDI
+  clock, bar-quantized pattern switches, named sound parameters, clock-synced parameter ramps, live
+  fills/drops/density/swing/humanize, mutes and tempo. Disclosure: controls MIDI hardware, runs a background
+  sequencer thread while a pattern plays, and opens a virtual MIDI port named "Whiplash" when no Digitakt
+  is connected. Never sends SysEx or program changes; no network, shell, or credentials.
+maintainer: pgbouncer
+tier: community
+category: tools
+requires_hermes: ">=0.19"
+version: "0.3.0"
+readme: true
+platforms: [linux, macos]
+known_issues:
+  - Needs an Elektron Digitakt II (or any MIDI device/DAW) on USB MIDI to be heard.
+  - With no device connected, Whiplash plays into a virtual MIDI port, which is silent unless a DAW or soft synth listens to it. Every tool result says so.
+  - Windows has no virtual MIDI ports, so the fallback is unavailable there.
+  - On Linux, python-rtmidi needs the ALSA runtime (libasound2).
+capabilities:
+  provides_tools:
+    - whiplash_list_midi_ports
+    - whiplash_list_params
+    - whiplash_play_pattern
+    - whiplash_set_param
+    - whiplash_ramp_param
+    - whiplash_mutate
+    - whiplash_mute_track
+    - whiplash_unmute_track
+    - whiplash_set_tempo
+    - whiplash_stop
+    - whiplash_status
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []

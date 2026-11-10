@@ -1,6 +1,6 @@
 name: whiplash
-version: "0.2.0"
-description: "Jam on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8, live params, mutes, tempo. No SysEx, ever."
+version: "0.3.0"
+description: "Jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8, bar-quantized switches, named params, clock-synced ramps, fills/drops/density, mutes, tempo. No SysEx, ever."
 author: pgbouncer
 license: MIT
 requires_hermes: ">=0.19"
@@ -10,8 +10,11 @@ python_dependencies:
   - "python-rtmidi>=1.5,<2"
 provides_tools:
   - whiplash_list_midi_ports
+  - whiplash_list_params
   - whiplash_play_pattern
   - whiplash_set_param
+  - whiplash_ramp_param
+  - whiplash_mutate
   - whiplash_mute_track
   - whiplash_unmute_track
   - whiplash_set_tempo

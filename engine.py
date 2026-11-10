@@ -5,64 +5,94 @@ Nothing here ever sends SysEx or program changes: Engine.send() refuses them.
 
 Two locks: _transport serialises play/stop/shutdown (it is held while joining
 the sequencer thread), _lock guards state and the port (the sequencer thread
-takes it for every send). The sequencer thread never takes _transport.
+takes it for every send). The sequencer thread never takes _transport and never
+enumerates ports, so tool calls can't stall the clock.
+
+Everything musical is timed off the sequencer's own MIDI clock: a live pattern
+switch lands on the next bar line, drops and fills are bar-scheduled, and ramps
+advance one step per clock tick.
 """
 import atexit
+import collections
 import heapq
 import logging
 import threading
 import time
+from dataclasses import dataclass
 
-from . import ccmap, patterns
+from . import ccmap, mutate, patterns
 
 log = logging.getLogger("whiplash")
 
 DEVICE_HINTS = ("digitakt",)
 VIRTUAL_NAME = "Whiplash"
-TICKS_PER_STEP = 6  # 24 PPQN MIDI clock
+PPQN = 24
+TICKS_PER_STEP = 6  # 24 PPQN MIDI clock, 16th-note steps
+TICKS_PER_BAR = TICKS_PER_STEP * patterns.STEPS
 GATE = 0.8
 ALLOWED_TYPES = {"note_on", "note_off", "control_change", "clock", "start", "stop", "continue"}
 BPM_MIN, BPM_MAX = 30, 300
 BARS_MAX = 512
+RAMP_BEATS_MAX, RAMP_BARS_MAX = 512, 128
+DROP_BARS_MAX = 32
+SWING_MIN, SWING_MAX = 50, 80
 JOIN_TIMEOUT = 2.0
-MUTE_CC = ccmap.PARAMS["mute"][0]
+HOTPLUG_INTERVAL = 2.0  # seconds between port enumerations while on the virtual port
+MUTE_CC = ccmap.MUTE_CC
+CURVES = {
+    "linear": lambda p: p,
+    "exp": lambda p: p ** 3,  # ease-in: slow start, fast finish (the classic filter sweep)
+    "log": lambda p: 1 - (1 - p) ** 3,  # ease-out: fast start, settles gently
+}
 
 
 class WhiplashError(Exception):
     pass
 
 
-def check_bpm(bpm):
+def _number(value):
     try:
-        value = float(bpm)
+        out = float(value)
     except (TypeError, ValueError):
-        value = float("nan")
+        return float("nan")
+    return out
+
+
+def check_bpm(bpm):
+    value = _number(bpm)
     if not BPM_MIN <= value <= BPM_MAX:  # also rejects NaN
         raise WhiplashError(f"bpm must be {BPM_MIN}-{BPM_MAX}, got {bpm!r}")
     return value
 
 
+def check_whole(value, low, high, what, hint=""):
+    number = _number(value)
+    if not (low <= number <= high and number == int(number)):  # NaN / inf fail the range test first
+        raise WhiplashError(f"{what} must be a whole number {low}-{high}{hint}, got {value!r}")
+    return int(number)
+
+
 def check_bars(bars):
     if bars is None:
         return None
-    try:
-        value = float(bars)
-        whole = value == int(value)
-    except (TypeError, ValueError, OverflowError):  # not a number, NaN, or infinite
-        value, whole = 0.0, False
-    if not whole or not 1 <= value <= BARS_MAX:
-        raise WhiplashError(f"bars must be a whole number 1-{BARS_MAX} (omit it to loop), got {bars!r}")
-    return int(value)
+    return check_whole(bars, 1, BARS_MAX, "bars", " (omit it to loop)")
 
 
-def check_track(track):
+def check_track(track, high=16):
     try:
         value = int(track)
     except (TypeError, ValueError):
         value = 0
-    if not 1 <= value <= 16:
-        raise WhiplashError(f"track must be 1-16, got {track!r}")
+    if not 1 <= value <= high or isinstance(track, bool):
+        raise WhiplashError(f"track must be 1-{high}, got {track!r}")
     return value
+
+
+def check_tracks(tracks, high=8):
+    if tracks is None or tracks == []:
+        raise WhiplashError("give tracks, e.g. [1] or [1, 6]")
+    items = tracks if isinstance(tracks, (list, tuple)) else [tracks]
+    return sorted({check_track(t, high) for t in items})
 
 
 def _mido():
@@ -71,8 +101,10 @@ def _mido():
         mido.set_backend("mido.backends.rtmidi", load=True)
         return mido
     except Exception as exc:  # ImportError or missing rtmidi backend
-        raise WhiplashError(
-            f"MIDI backend unavailable ({exc}). Install with: pip install mido python-rtmidi") from exc
+        hint = "pip install mido python-rtmidi"
+        if "libasound" in str(exc):
+            hint = "install the ALSA runtime (e.g. apt install libasound2) for python-rtmidi"
+        raise WhiplashError(f"MIDI backend unavailable ({exc}). Fix: {hint}") from exc
 
 
 def list_ports():
@@ -82,21 +114,50 @@ def list_ports():
 
 def find_device(names):
     for name in names:
-        if any(h in name.lower() for h in DEVICE_HINTS):
+        if name != VIRTUAL_NAME and any(h in name.lower() for h in DEVICE_HINTS):
             return name
     return None
 
 
+@dataclass
+class Ramp:
+    id: str
+    track: int
+    cc: int
+    label: str
+    start: int
+    end: int
+    total: int  # clock ticks
+    curve: str
+    elapsed: int = 0
+    last: int = None
+
+    def progress(self):
+        return min(1.0, self.elapsed / self.total)
+
+    def value(self):
+        return round(self.start + (self.end - self.start) * CURVES[self.curve](self.progress()))
+
+    def summary(self):
+        return {"id": self.id, "track": self.track, "param": self.label, "cc": self.cc, "from": self.start,
+                "to": self.end, "current": self.last, "curve": self.curve, "progress": round(self.progress(), 3),
+                "remaining_beats": round((self.total - self.elapsed) / PPQN, 2)}
+
+
 class Engine:
-    def __init__(self, opener=None):
+    def __init__(self, opener=None, lister=None):
         self._lock = threading.RLock()
         self._transport = threading.RLock()
         self._opener = opener  # test hook: callable(port_name|None) -> (port, label, virtual)
+        self._lister = lister if lister is not None else ((lambda: []) if opener else None)  # test hook
         self._port = None
         self._exit_hooked = False
         self.port_name = None
         self.virtual = False
         self.fallback = False  # True when the virtual port was opened because no Digitakt was found
+        self.port_lost = None  # name of a port that failed mid-send (unplugged); reopened on next call
+        self._hp_checked = float("-inf")
+        self._hp_device = None
         self._thread = None
         self._stop = None  # per-run stop Event
         self._done = None  # per-run Event, set once the run has silenced the port itself
@@ -106,9 +167,20 @@ class Engine:
         self.muted = set()
         self.hw_muted = set()  # tracks whose mute Whiplash also set on the unit (CC 94)
         self.bars_total = None
-        self.bar = 0
+        self.bar = 0  # bars since transport start
+        self.pattern_start = 0  # bar where the current pattern took over
+        self._queued = None  # pending live switch: {pattern, bpm, bars, at}
         self.last_error = None
         self._sounding = set()  # (channel, note)
+        self._cc_values = {}  # (channel, cc) -> last value sent
+        self._ramps = {}  # (track, cc) -> Ramp
+        self._ramp_seq = 0
+        self.seed = 0
+        self._density = {}  # track -> amount
+        self.humanize = 0.0
+        self._work = {}  # working copy of the pattern (density applied)
+        self._drops = {}  # track -> (first bar, end bar exclusive)
+        self._fills = {}  # bar -> set(tracks)
         self.sent_count = 0
 
     # ---- port handling -------------------------------------------------
@@ -122,6 +194,8 @@ class Engine:
             else:
                 self._open(port, allow_virtual)
             self.fallback = bool(self.virtual and port != VIRTUAL_NAME)
+            self.port_lost = None
+            self._hp_checked, self._hp_device = float("-inf"), None
             if self.fallback:
                 log.warning("No Digitakt found; MIDI goes to virtual output %r (hardware is silent)", VIRTUAL_NAME)
             if not self._exit_hooked:  # silence the unit and close the port when the host process exits
@@ -157,6 +231,25 @@ class Engine:
             except Exception:
                 log.exception("closing port")
         self._port, self.port_name, self.virtual, self.fallback = None, None, False, False
+        self._cc_values.clear()  # values sent to one device say nothing about the next
+
+    def check_hotplug(self):
+        """While on the virtual port, return a Digitakt output that has appeared, else None.
+
+        Enumerates ports at most every HOTPLUG_INTERVAL seconds, outside _lock, never raises.
+        Notify only: Whiplash never moves the beat by itself.
+        """
+        if not self.virtual:
+            return None
+        now = time.monotonic()
+        if now - self._hp_checked >= HOTPLUG_INTERVAL:
+            self._hp_checked = now
+            try:
+                names = self._lister() if self._lister else _mido().get_output_names()
+            except Exception:
+                names = []
+            self._hp_device = find_device(names)
+        return self._hp_device
 
     def send(self, msg):
         if msg.type not in ALLOWED_TYPES:
@@ -164,11 +257,20 @@ class Engine:
         with self._lock:
             if self._port is None:
                 raise WhiplashError("no MIDI port open")
-            self._port.send(msg)
+            try:
+                self._port.send(msg)
+            except Exception:
+                # The device went away (USB unplugged). Drop the port so the next tool call
+                # re-detects and reopens it instead of writing into a dead handle.
+                lost = self.port_name
+                self._close_port()
+                self.port_lost = lost
+                raise
             self.sent_count += 1
 
     def _cc(self, mido, ch, control, value):
         self.send(mido.Message("control_change", channel=ch, control=control, value=value))
+        self._cc_values[(ch, control)] = value
 
     def _record(self, where, exc):
         with self._lock:
@@ -181,31 +283,51 @@ class Engine:
         return thread is not None and thread.is_alive()
 
     def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True):
-        """Start a pattern, replacing whatever is playing. Returns what stop() reported."""
+        """Start a pattern, or queue a live switch to it at the next bar line.
+
+        Returns {"mode": "queued", "switch_at_bar", "replaced_queued"} when a pattern is already
+        playing on the same port (clock keeps running; mutes and ramps carry over), else
+        {"mode": "started", "was_playing", "mutes_cleared", "ramps_cancelled"}.
+        """
         bpm = check_bpm(pattern.bpm if bpm is None else bpm)  # validate before touching the running beat
         bars = check_bars(bars)
         with self._transport:
+            if self.playing() and self._port is not None and (port is None or port == self.port_name):
+                with self._lock:
+                    replaced = self._queued["pattern"].name if self._queued else None
+                    at = self.bar + 1
+                    self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at}
+                return {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced}
             stopped = self.stop()
             self.ensure_port(port)
             with self._lock:
-                self.pattern = pattern
-                self.bpm = bpm
-                self.swing = pattern.swing
-                self.bars_total = bars
+                self._load(pattern, bpm, bars, start_bar=0)
                 self.bar = 0
                 self.last_error = None
                 self._stop, self._done = threading.Event(), threading.Event()
                 self._thread = threading.Thread(
-                    target=self._run, args=(send_clock, bars, self._stop, self._done),
+                    target=self._run, args=(send_clock, self._stop, self._done),
                     name="whiplash-seq", daemon=True)
                 self._thread.start()
-            return stopped
+            return {"mode": "started", **stopped}
+
+    def _load(self, pattern, bpm, bars, start_bar):
+        """Make pattern current (caller holds _lock). Resets mutations, keeps mutes, ramps, drops."""
+        self.pattern = pattern
+        self.bpm = bpm
+        self.swing = pattern.swing
+        self.bars_total = bars
+        self.pattern_start = start_bar
+        self._density, self.humanize = {}, 0.0
+        self._work = mutate.working(pattern)
 
     def stop(self):
-        """Stop the sequencer, silence the port once, and reset mutes."""
+        """Stop the sequencer, silence the port once, and reset mutes, ramps and mutations."""
         with self._transport:
             thread, stop, done = self._thread, self._stop, self._done
             self._thread = self._stop = self._done = None
+            with self._lock:  # snapshot before the thread's own exit clears them
+                ramps = sorted((r.id for r in self._ramps.values()), key=lambda i: int(i[1:]))
             was_playing = thread is not None and thread.is_alive()
             if stop is not None:
                 stop.set()
@@ -220,8 +342,14 @@ class Engine:
                 self._record("stop", exc)
                 raise
             finally:
+                with self._lock:
+                    self._ramps.clear()
+                    self._queued = None
+                    self._drops, self._fills = {}, {}
+                    if self.pattern is not None:
+                        self._load(self.pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
-            return {"was_playing": was_playing, "mutes_cleared": cleared}
+            return {"was_playing": was_playing, "mutes_cleared": cleared, "ramps_cancelled": ramps}
 
     def shutdown(self):
         """Exit hook: stop, silence, release hardware mutes, close the port. Never raises."""
@@ -277,35 +405,68 @@ class Engine:
                         self._record("unmute", exc)
         return cleared
 
-    def _run(self, send_clock, bars_total, stop, done):
+    # ---- sequencer thread ----------------------------------------------
+    def _bar_boundary(self, bar_n):
+        """At the top of bar_n (caller holds _lock): switch, end check, build the bar's events.
+
+        Returns None when the run should end, else {step: [(track, note, vel, gate, offset_ticks)]}.
+        """
+        queued = self._queued
+        if queued and bar_n >= queued["at"]:
+            self._queued = None
+            self._load(queued["pattern"], queued["bpm"], queued["bars"], start_bar=bar_n)
+            log.info("whiplash: switched to %s at bar %d", queued["pattern"].name, bar_n)
+        if self.bars_total and bar_n - self.pattern_start >= self.bars_total:
+            return None
+        self.bar = bar_n
+        for track, (_, end) in list(self._drops.items()):
+            if end <= bar_n:
+                del self._drops[track]  # auto-return
+        for old in [b for b in self._fills if b < bar_n]:
+            del self._fills[old]
+        fills = self._fills.pop(bar_n, set())
+        idx = (bar_n - self.pattern_start) % patterns.BARS
+        r = mutate.rng(self.seed, "humanize", bar_n) if self.humanize else None
+        events = collections.defaultdict(list)
+        for track, bars in self._work.items():
+            drop = self._drops.get(track)
+            if drop and drop[0] <= bar_n:
+                continue
+            hits = mutate.fill(track, bars[idx]) if track in fills else bars[idx]
+            for step, note, vel, gate, offset in hits:
+                if r is not None:
+                    vel, offset = mutate.humanize(vel, offset, self.humanize, r)
+                events[step].append((track, note, vel, gate, offset))
+        return events
+
+    def _run(self, send_clock, stop, done):
         mido = __import__("mido")
         pending = []  # heap of (time, seq, ch, note, vel)
         seq = 0
         next_tick = time.perf_counter() + 0.01
         tick = 0
+        events = {}
         try:
             self.send(mido.Message("start"))
             while not stop.is_set():
-                with self._lock:
-                    tick_len = 60.0 / self.bpm / 24
-                    swing, pattern, muted = self.swing, self.pattern, set(self.muted)
                 step_abs, sub = divmod(tick, TICKS_PER_STEP)
-                bar_idx, step = divmod(step_abs, patterns.STEPS)
-                if sub == 0 and step == 0:
-                    if bars_total and bar_idx >= bars_total:
-                        break
-                    self.bar = bar_idx
+                bar_n, step = divmod(step_abs, patterns.STEPS)
+                with self._lock:
+                    if sub == 0 and step == 0:
+                        events = self._bar_boundary(bar_n)
+                        if events is None:
+                            break
+                    tick_len = 60.0 / self.bpm / PPQN
+                    swing, muted = self.swing, set(self.muted)
                 if sub == 0:
                     sixteenth = tick_len * TICKS_PER_STEP
                     t0 = next_tick + ((swing - 0.5) * 2 * sixteenth if step % 2 else 0)
-                    for track, bars in pattern.bars.items():
+                    for track, note, vel, gate, offset in events.get(step, ()):
                         if track in muted:
                             continue
-                        for s, note, vel, gate in bars[bar_idx % patterns.BARS]:
-                            if s == step:
-                                ch = track - 1
-                                heapq.heappush(pending, (t0, seq, ch, note, vel)); seq += 1
-                                heapq.heappush(pending, (t0 + gate * sixteenth * GATE - 1e-4, seq, ch, note, 0)); seq += 1
+                        ch, on = track - 1, t0 + offset * tick_len
+                        heapq.heappush(pending, (on, seq, ch, note, vel)); seq += 1
+                        heapq.heappush(pending, (on + gate * sixteenth * GATE - 1e-4, seq, ch, note, 0)); seq += 1
                 # wait for the tick, flushing note events on time
                 while True:
                     now = time.perf_counter()
@@ -318,16 +479,20 @@ class Engine:
                     time.sleep(max(0.0, min(wake - now, 0.002)))
                 if send_clock:
                     self.send(mido.Message("clock"))
+                self._advance_ramps(mido)
                 tick += 1
                 next_tick += tick_len
-            # flush note-offs that are still pending
+            # flush note-offs for notes still sounding (pending note-ons are simply dropped)
             for _, _, ch, note, vel in sorted(pending):
-                if vel == 0:
+                if vel == 0 and (ch, note) in self._sounding:
                     self._note(mido, ch, note, 0)
         except Exception as exc:
             log.exception("sequencer thread crashed")
             self._record("sequencer stopped", exc)
         finally:
+            with self._lock:
+                self._ramps.clear()  # ramps are clocked by this thread; they can't outlive it
+                self._queued = None
             try:
                 self._panic()
                 done.set()
@@ -343,20 +508,56 @@ class Engine:
             self.send(mido.Message("note_off", channel=ch, note=note))
             self._sounding.discard((ch, note))
 
+    def _advance_ramps(self, mido):
+        with self._lock:
+            for key, ramp in list(self._ramps.items()):
+                ramp.elapsed += 1
+                value = ramp.value()
+                if value != ramp.last:  # only on integer changes: no CC floods
+                    self._cc(mido, ramp.track - 1, ramp.cc, value)
+                    ramp.last = value
+                if ramp.elapsed >= ramp.total:
+                    del self._ramps[key]
+
     # ---- parameters ----------------------------------------------------
+    def _target(self, param, cc):
+        """Resolve exactly one of param / cc to (cc, Param or None)."""
+        given = [k for k, v in (("param", param), ("cc", cc)) if v not in (None, "")]
+        if len(given) != 1:
+            raise WhiplashError(f"give exactly one of param or cc (got {', '.join(given) or 'none'})")
+        if param not in (None, ""):
+            try:
+                spec = ccmap.lookup(param)
+            except ValueError as exc:
+                raise WhiplashError(str(exc)) from None
+            return spec.cc, spec
+        number = check_whole(cc, 0, 119, "cc")
+        if number in ccmap.BLOCKED_CCS:
+            raise WhiplashError(f"CC {number} is blocked (sample slot/bank select, bank select, or NRPN/data entry)")
+        return number, None
+
+    @staticmethod
+    def _value(value, spec, what="value"):
+        """Validate a 7-bit value for a CC target; clamp into a named param's range. -> (value, clamped)"""
+        number = check_whole(value, 0, 127, what)
+        if spec is None:
+            return number, False
+        if number < spec.min or number > spec.max:
+            if spec.discrete:
+                raise WhiplashError(f"{spec.name} {what} must be {spec.min}-{spec.max}, got {value!r}")
+            return min(spec.max, max(spec.min, number)), True
+        return number, False
+
     def set_param(self, track, value, param=None, cc=None, nrpn=None):
         """Send one parameter change. Exactly one of param / cc / nrpn selects the target.
 
-        param and cc take a 7-bit value (0-127). nrpn takes the full 14-bit value
-        (0-16383), always split as MSB = value >> 7, LSB = value & 127.
+        param and cc take a 7-bit value (0-127); named params clamp into their own range
+        (e.g. tune 4-124). nrpn takes the full 14-bit value (0-16383), always split as
+        MSB = value >> 7, LSB = value & 127. Cancels a running ramp on the same track/CC.
         """
         mido = __import__("mido")
         track = check_track(track)
         ch = track - 1
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            raise WhiplashError(f"value must be a whole number, got {value!r}") from None
         given = [k for k, v in (("param", param), ("cc", cc), ("nrpn", nrpn)) if v not in (None, "")]
         if len(given) != 1:
             raise WhiplashError(f"give exactly one of param, cc or nrpn (got {', '.join(given) or 'none'})")
@@ -369,41 +570,194 @@ class Engine:
                 raise WhiplashError("nrpn msb and lsb must each be 0-127")
             if (msb, lsb) in ccmap.BLOCKED_NRPNS:
                 raise WhiplashError("that NRPN changes sample assignment and is blocked")
-            if not 0 <= value <= 16383:
-                raise WhiplashError("NRPN value must be 0-16383 (14-bit; a 7-bit amount v is v * 128)")
+            value = check_whole(value, 0, 16383, "NRPN value", " (14-bit; a 7-bit amount v is v * 128)")
             hi, lo = value >> 7, value & 0x7F
             with self._lock:  # keep the four CCs together on the wire
                 for control, v in ((99, msb), (98, lsb), (6, hi), (38, lo)):
                     self._cc(mido, ch, control, v)
             return {"track": track, "nrpn": [msb, lsb], "value": value, "data_msb": hi, "data_lsb": lo}
-        if given == ["param"]:
-            key = str(param).strip().lower().replace(" ", "_").replace("-", "_")
-            if key not in ccmap.PARAMS:
-                raise WhiplashError(f"unknown param {param!r}; known: {sorted(ccmap.PARAMS)}")
-            cc, _, vmax = ccmap.PARAMS[key]
-            if not 0 <= value <= vmax:
-                raise WhiplashError(f"{key} value must be 0-{vmax}")
-        try:
-            cc = int(cc)
-        except (TypeError, ValueError):
-            raise WhiplashError(f"cc must be a whole number, got {cc!r}") from None
-        if not 0 <= cc <= 119 or cc in ccmap.BLOCKED_CCS:
-            raise WhiplashError(f"CC {cc} is not allowed (0-119, excluding sample select / NRPN / bank CCs)")
-        if not 0 <= value <= 127:
-            raise WhiplashError("CC value must be 0-127")
-        self._cc(mido, ch, cc, value)
-        if cc == MUTE_CC:  # track unit mutes set this way too, so stop/exit releases them
-            with self._lock:
+        number, spec = self._target(param, cc)
+        value, clamped = self._value(value, spec)
+        with self._lock:
+            ramp = self._ramps.pop((track, number), None)
+            self._cc(mido, ch, number, value)
+            if number == MUTE_CC:  # track unit mutes set this way too, so stop/exit releases them
                 (self.hw_muted.add if value else self.hw_muted.discard)(track)
-        return {"track": track, "cc": cc, "value": value}
+        out = {"track": track, "cc": number, "value": value}
+        if spec is not None:
+            out["param"] = spec.name
+        if clamped:
+            out["clamped"] = True
+        if ramp is not None:
+            out["cancelled_ramp"] = ramp.id
+        return out
+
+    def ramp(self, track, to, param=None, cc=None, start=None, beats=None, bars=None, curve="linear"):
+        """Ramp a CC from start to `to` over beats or bars, advanced on the sequencer clock."""
+        track = check_track(track)
+        number, spec = self._target(param, cc)
+        if spec is not None and spec.discrete:
+            raise WhiplashError(f"{spec.name} is a switch; use whiplash_set_param")
+        to, to_clamped = self._value(to, spec, "to")
+        lengths = [k for k, v in (("beats", beats), ("bars", bars)) if v is not None]
+        if len(lengths) != 1:
+            raise WhiplashError("give exactly one of beats or bars")
+        if beats is not None:
+            amount = _number(beats)
+            if not 0 < amount <= RAMP_BEATS_MAX:
+                raise WhiplashError(f"beats must be above 0 and at most {RAMP_BEATS_MAX}, got {beats!r}")
+            ticks = amount * PPQN
+        else:
+            amount = _number(bars)
+            if not 0 < amount <= RAMP_BARS_MAX:
+                raise WhiplashError(f"bars must be above 0 and at most {RAMP_BARS_MAX}, got {bars!r}")
+            ticks = amount * TICKS_PER_BAR
+        curve = str(curve or "linear").strip().lower()
+        if curve not in CURVES:
+            raise WhiplashError(f"curve must be one of {', '.join(CURVES)}, got {curve!r}")
+        ch = track - 1
+        label = spec.name if spec else f"cc {number}"
+        mido = __import__("mido")
+        with self._lock:
+            if not self.playing():
+                raise WhiplashError("ramps run on the sequencer clock: start a pattern with whiplash_play_pattern "
+                                    "first, or use whiplash_set_param for an instant change")
+            if start is None:
+                start = self._cc_values.get((ch, number))
+                if start is None:
+                    raise WhiplashError(f"give 'from': Whiplash hasn't sent {label} on track {track} yet, so it "
+                                        "doesn't know where to start")
+                from_clamped = False
+            else:
+                start, from_clamped = self._value(start, spec, "from")
+            replaced = self._ramps.pop((track, number), None)
+            self._ramp_seq += 1
+            ramp = Ramp(f"r{self._ramp_seq}", track, number, label, start, to, max(1, round(ticks)), curve)
+            if self._cc_values.get((ch, number)) != start:
+                self._cc(mido, ch, number, start)
+            ramp.last = start
+            self._ramps[(track, number)] = ramp
+        out = {"ramp_id": ramp.id, **ramp.summary()}
+        if replaced is not None:
+            out["replaced"] = replaced.id
+        if to_clamped or from_clamped:
+            out["clamped"] = True
+        return out
+
+    def cancel_ramps(self, which):
+        """Cancel one ramp by id, or all with "all". The parameter stays where the ramp left it."""
+        with self._lock:
+            if str(which).strip().lower() == "all":
+                ids = sorted(r.id for r in self._ramps.values())
+                self._ramps.clear()
+                return ids
+            for key, ramp in list(self._ramps.items()):
+                if ramp.id == which:
+                    del self._ramps[key]
+                    return [ramp.id]
+            active = sorted(r.id for r in self._ramps.values())
+        raise WhiplashError(f"no active ramp {which!r}; active: {active or 'none'}")
+
+    def ramps(self):
+        with self._lock:
+            return [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))]
+
+    # ---- live mutations ------------------------------------------------
+    def _require_playing(self):
+        if not self.playing():
+            raise WhiplashError("nothing is playing: start a pattern with whiplash_play_pattern first")
+
+    def mutate_density(self, tracks, amount):
+        if isinstance(amount, str):
+            word = amount.strip().lower()
+            if word not in mutate.DENSITY_WORDS:
+                raise WhiplashError(f"amount must be -1..1 or one of {', '.join(mutate.DENSITY_WORDS)}")
+            amount = mutate.DENSITY_WORDS[word]
+        amount = _number(amount)
+        if not -1 <= amount <= 1:
+            raise WhiplashError("density amount must be -1 (thinnest) .. 0 (original) .. 1 (busiest)")
+        tracks = check_tracks(tracks)
+        with self._lock:
+            self._require_playing()
+            for track in tracks:
+                pristine = mutate.working(self.pattern)[track]
+                self._density[track] = amount
+                self._work[track] = mutate.density(pristine, amount, self.seed, track)
+            return {"density": {str(t): a for t, a in sorted(self._density.items())}, "applies": "next bar"}
+
+    def mutate_swing(self, amount):
+        value = _number(amount)
+        if not SWING_MIN <= value <= SWING_MAX:
+            raise WhiplashError(f"swing must be {SWING_MIN}-{SWING_MAX} (percent, like the unit's SWING)")
+        with self._lock:
+            self._require_playing()
+            self.swing = value / 100
+            return {"swing": value, "applies": "next step"}
+
+    def mutate_humanize(self, amount):
+        value = _number(amount)
+        if not 0 <= value <= 1:
+            raise WhiplashError("humanize amount must be 0 (off) to 1 (loosest)")
+        with self._lock:
+            self._require_playing()
+            self.humanize = value
+            return {"humanize": value, "applies": "next bar",
+                    "max_velocity_change": round(value * mutate.HUMANIZE_VEL),
+                    "max_timing_ticks": round(value * mutate.HUMANIZE_TICKS, 3)}
+
+    def schedule_fill(self, tracks=None):
+        tracks = check_tracks(tracks if tracks is not None else list(mutate.DRUM_TRACKS), high=8)
+        if any(t not in mutate.DRUM_TRACKS for t in tracks):
+            raise WhiplashError("fills work on drum tracks 1-5 (kick, snare/rim, clap, closed hat, open hat)")
+        with self._lock:
+            self._require_playing()
+            at = self.bar + 1
+            self._fills.setdefault(at, set()).update(tracks)
+            return {"fill_at_bar": at, "tracks": tracks}
+
+    def schedule_drop(self, tracks, bars, fill=False):
+        tracks = check_tracks(tracks)
+        bars = check_whole(bars, 1, DROP_BARS_MAX, "drop bars")
+        with self._lock:
+            self._require_playing()
+            first = self.bar + 1
+            end = first + bars
+            for track in tracks:
+                self._drops[track] = (first, end)
+            out = {"dropped": tracks, "from_bar": first, "returns_at_bar": end}
+            if fill:
+                fill_tracks = [t for t in mutate.DRUM_TRACKS if t not in tracks]
+                if fill_tracks:
+                    self._fills.setdefault(end - 1, set()).update(fill_tracks)
+                    out.update(fill_at_bar=end - 1, fill_tracks=fill_tracks)
+            return out
+
+    def reset_mutations(self):
+        with self._lock:
+            self._require_playing()
+            self._drops, self._fills = {}, {}
+            self._load(self.pattern, self.bpm, self.bars_total, self.pattern_start)
+            return {"reset": True, "swing": round(self.swing * 100), "applies": "next bar"}
+
+    def mutations(self):
+        with self._lock:
+            return {"density": {str(t): a for t, a in sorted(self._density.items())},
+                    "swing": round(self.swing * 100, 1), "humanize": self.humanize,
+                    "drops": {str(t): {"from_bar": a, "returns_at_bar": b} for t, (a, b) in sorted(self._drops.items())},
+                    "fills_at_bars": {str(b): sorted(ts) for b, ts in sorted(self._fills.items())}}
 
     def status(self):
         with self._lock:
+            queued = self._queued
             return {
                 "playing": self.playing(), "port": self.port_name, "virtual": self.virtual,
-                "fallback": self.fallback,
+                "fallback": self.fallback, "port_lost": self.port_lost,
                 "pattern": self.pattern.name if self.pattern else None, "bpm": self.bpm,
-                "bar": self.bar, "bars": self.bars_total, "muted": sorted(self.muted),
-                "hardware_muted": sorted(self.hw_muted), "last_error": self.last_error,
-                "messages_sent": self.sent_count,
+                "bar": self.bar, "pattern_bar": self.bar - self.pattern_start, "bars": self.bars_total,
+                "queued": ({"pattern": queued["pattern"].name, "bpm": queued["bpm"], "switch_at_bar": queued["at"]}
+                           if queued else None),
+                "muted": sorted(self.muted), "hardware_muted": sorted(self.hw_muted),
+                "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
+                "mutations": self.mutations(),
+                "last_error": self.last_error, "messages_sent": self.sent_count,
             }
