@@ -334,3 +334,39 @@ def test_readme_has_an_updating_section():
     readme = (ROOT / "README.md").read_text()
     section = readme.split("## Updating", 1)[1].split("\n## ", 1)[0]
     assert "hermes gateway restart" in section and "whiplash-digitakt" in section
+
+
+# ---- agreement with docs/digitakt-ii/reference.md -------------------------
+
+REFERENCE = (ROOT / "docs" / "digitakt-ii" / "reference.md").read_text()
+
+
+def test_note_names_follow_the_reference_convention():
+    # reference.md "Note names": MIDI note 0 = C0, so 60 = C5 (Logic: C3; GM/scientific: C4).
+    assert "60 = C5" in REFERENCE and "0 = C0" in REFERENCE
+    assert [patterns.note_name(n) for n in (0, 12, 16, 60, 84)] == ["C0", "C1", "E1", "C5", "C7"]
+    # reference §8.3 #15: the manual's "E2" label for note 16 contradicts its own numbering; we follow 0 = C0.
+    assert "16 is E1" in REFERENCE
+
+
+def test_pitch_caveats_from_the_reference_reach_the_agent():
+    # reference §0.3 / §5.5 / §6.1: native pitch also needs the preset OCTAVE unchanged; SLICE = NOTE picks slices.
+    assert "OCTAVE" in engine.PITCH_NOTE and "0 = C0" in engine.PITCH_NOTE
+    skill = (ROOT / "skills" / "digitakt" / "SKILL.md").read_text()
+    for fact in ("OCTAVE", "SLICE = NOTE", "C0 = MIDI 0", "Logic Pro calls 60", "127 = infinite"):
+        assert fact in skill, fact
+
+
+def test_transpose_range_matches_the_documented_chromatic_range():
+    # reference §6.1 and §15.1 #22: 16-84 is documented (AUTO channel); the track-channel range is undocumented.
+    assert (patterns.NOTE_MIN, patterns.NOTE_MAX) == (16, 84)
+    assert "16-84" in REFERENCE and "Notes 16-84" in REFERENCE
+    assert "documented chromatic range" in schemas.SCHEMAS["whiplash_transpose"]["description"]
+
+
+def test_amp_envelope_facts_match_the_reference():
+    # reference §5.2: HOLD 0-126 fixed (ignores note-off), 127 = NOTE (midi.guide default); MODE CC 87, 0 AHD, 1 ADSR.
+    assert "| MODE | 87 | 0 = AHD" in REFERENCE and "127 = **NOTE**" in REFERENCE
+    assert ccmap.PARAMS["amp_mode"].cc == 87 and ccmap.PARAMS["amp_hold"].cc == 80
+    assert "0-126" in ccmap.PARAMS["amp_hold"].description and "default" in ccmap.PARAMS["amp_hold"].description
+    assert "| `amp_mode` | amp | 87 |" in REFERENCE  # the reference's param table lists it (test_reference checks all)

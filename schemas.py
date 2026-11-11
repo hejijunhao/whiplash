@@ -95,7 +95,7 @@ SCHEMAS = {
                         "Use it when a bass or synth sounds stretched, grainy or too low: note 60 is the sample's own "
                         "pitch, and the result's pitch block shows how far the line sits from it. Absolute (0 = back "
                         "to the pattern). Carries across pattern switches; whiplash_stop resets it. Notes clamp to "
-                        "the Digitakt's chromatic range 16-84. Needs a pattern playing." + SKILL),
+                        "16-84, the manual's documented chromatic range. Needs a pattern playing." + SKILL),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": TRACK,
             "semitones": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX,

@@ -48,10 +48,11 @@ _NOT_PARAMS = {123, 6, 38, 98, 99}  # All Notes Off and NRPN data entry: never s
 KIT_NOTE = ("Track roles are the pattern's assumed layout, not what the unit holds: ask the user what each track "
             "plays. slot, tune and last_cc are the last values Whiplash sent (it can't read the unit; null = not "
             "sent yet).")
-PITCH_NOTE = ("pitch: MIDI note 60 plays a sample at its own pitch (tune 64). semitones_from_native = note - 60 + "
-              "(tune - 64), using the tune Whiplash last sent (null = not sent, counted as 64). Names use Elektron "
-              "octaves (C5 = MIDI 60). A line far below native sounds stretched or grainy: raise it with "
-              "whiplash_transpose (or tune) before touching the envelope.")
+PITCH_NOTE = ("pitch: MIDI note 60 plays a sample at its own pitch, if tune is 64 and the preset's OCTAVE (FUNC+FLTR "
+              "> TRACK) is unchanged. semitones_from_native = note - 60 + (tune - 64), using the tune Whiplash last "
+              "sent (null = not sent, counted as 64); Whiplash can't see the OCTAVE setting or an LFO on tune. "
+              "Names use Elektron octaves (0 = C0, C5 = MIDI 60). A line far below native sounds stretched or "
+              "grainy: raise it with whiplash_transpose (or tune) before touching the envelope.")
 SWING_MIN, SWING_MAX = 50, 80
 JOIN_TIMEOUT = 2.0
 HOTPLUG_INTERVAL = 2.0  # seconds between port enumerations while on the virtual port

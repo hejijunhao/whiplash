@@ -4,9 +4,11 @@ Each pattern is 4 bars of 16 steps. A hit is (step, note, velocity, gate_steps).
 Deep house and soul are ported from Phil's ~/digitakt-deephouse and
 ~/digitakt-soul-beat scripts; techno and breaks are new.
 
-Native register (v0.5). Manual 8.4 MIDI NOTES (OS 1.15A, p. 25): notes 16-84 (E2-C7, C5 = MIDI 60)
-play the active track's sample chromatically, so note 60 is the sample's own pitch and every
-semitone below it pitches the sample down. The note tables below are kept as written; register()
+Native register (v0.5). See docs/digitakt-ii/reference.md §6.1. Note 60 (C5 in Elektron numbering,
+0 = C0) plays a sample at its own pitch while TUNE is 64 and the preset's OCTAVE is unchanged
+([M] p. 25, p. 38), and every semitone below it slows the sample down. Manual 8.4 documents notes
+16-84 (E1-C7; the manual prints "E2") as the chromatic range for the AUTO channel; the range on a
+track's own channel is undocumented, so Whiplash keeps every note inside 16-84 as the safe range. The note tables below are kept as written; register()
 lifts each melodic track by whole octaves at load time until its median note is no more than
 NATIVE_FLOOR semitones below 60, so a bass sample is not stretched an octave and a half down.
 Intervals are kept, only the register moves. Parts already near or above native are left alone.
@@ -16,7 +18,7 @@ from dataclasses import dataclass, field, replace
 
 DRUM = 60  # note 60 plays a sample at its original pitch
 NATIVE = DRUM
-NOTE_MIN, NOTE_MAX = 16, 84  # manual 8.4: the chromatic range on a track channel
+NOTE_MIN, NOTE_MAX = 16, 84  # manual 8.4 chromatic range (documented for AUTO; conservative on track channels)
 NATIVE_FLOOR = 7  # semitones: the techno bass lands at 53 (-7), the register Phil fixed by ear (tune +12)
 STEPS = 16
 BARS = 4
@@ -34,7 +36,7 @@ class Pattern:
 
 
 def note_name(note):
-    """Elektron octave numbering, as on the unit and in the manual: C5 = MIDI 60 (standard MIDI calls it C4)."""
+    """Elektron octave numbering (reference.md conventions): 0 = C0, 60 = C5. Logic calls 60 C3, GM/scientific C4."""
     return f"{NOTE_NAMES[note % 12]}{note // 12}"
 
 
