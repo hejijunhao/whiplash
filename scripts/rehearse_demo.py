@@ -484,8 +484,9 @@ class Rehearsal:
         events = self.run_events(run)
         stops = [s for s in events if s.msg.type in ("start", "stop") and 0 < s.clocks < r["A9"].call_pos[1]]
         self.check("A7", not stops, "no MIDI Stop/Start around the switch", lines)
-        before, after = self.bpm_of(events, bar - 1), self.bpm_of(events, bar + 1)
-        lines.append(f"  measured tempo: bar {bar - 1} {before:.1f} BPM, bar {bar + 1} {after:.1f} BPM")
+        before, after = self.bpm_of(events, bar - 2), self.bpm_of(events, bar + 1)
+        lines.append(f"  measured tempo: bars {bar - 2}-{bar - 1} {before:.1f} BPM, bars {bar + 1}-{bar + 2} "
+                     f"{after:.1f} BPM")
         self.check("A7", abs(before - 122) < 1 and abs(after - 126) < 1, "the tempo goes 122 -> 126 at the switch",
                    lines)
         kick = self.notes_in_bar(run, bar, 0)
@@ -557,11 +558,13 @@ class Rehearsal:
         return sorted((ch + 1, n) for ch, n in sounding)
 
     @staticmethod
-    def bpm_of(events, bar):
-        """Tempo measured from the clock in one bar, in the engine's (musical) time."""
-        t = [s.music for s in events if s.msg.type == "clock" and s.clocks // BAR == bar]
-        gaps = [b - a for a, b in zip(t, t[1:])]
-        return 60.0 / (statistics.median(gaps) * 24) if gaps else 0.0
+    def bpm_of(events, bar, bars=2):
+        """Tempo over whole bars of clock (first clock of `bar` to the first clock `bars` later), in the
+        engine's (musical) time. Per-tick gaps are no good at high --speed: a coarse sleep (macOS) skews
+        their median, while the engine's absolute schedule keeps the bar length exact."""
+        a, b = bar * BAR, (bar + bars) * BAR
+        t = {s.clocks: s.music for s in events if s.msg.type == "clock" and s.clocks in (a, b)}
+        return 4 * 60.0 * bars / (t[b] - t[a]) if len(t) == 2 else 0.0
 
     @staticmethod
     def jitter(times):
