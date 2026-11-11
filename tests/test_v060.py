@@ -9,7 +9,7 @@ import whiplash
 from whiplash import engine, harmony, kitmap, parts, patterns, schemas, tools
 from test_whiplash import call, make_engine, tool_engine  # noqa: F401  (fixture)
 from test_live import bar_events, pretend_playing, timeline, wait_bar
-from test_v051 import TimedPort, _jitter
+from test_v051 import TimedPort, assert_jitter
 
 P = patterns.PATTERNS
 ROOT = Path(whiplash.__path__[0])
@@ -426,7 +426,7 @@ def test_clock_jitter_is_unchanged_with_a_progression():
     base, chords = t[:at * engine.TICKS_PER_BAR], t[at * engine.TICKS_PER_BAR:(at + 2) * engine.TICKS_PER_BAR]
     assert len(chords) == 2 * engine.TICKS_PER_BAR
     assert port.count("note_on", channel=8) >= 2 * 16 * 3  # stacked chords on 16ths really played
-    assert _jitter(chords) <= max(_jitter(base) * 2, _jitter(base) + 0.003), (_jitter(base), _jitter(chords))
+    assert_jitter(base, chords, "progression")
 
 
 # ---- tool, schema, docs, version ----------------------------------------------------

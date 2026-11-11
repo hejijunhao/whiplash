@@ -63,7 +63,12 @@ def ccs(port, channel, control):
             if m.type == "control_change" and m.channel == channel and m.control == control]
 
 
-def wait_bar(eng, bar, timeout=6.0):
+def wait_bar(eng, bar, timeout=None):
+    """Wait until the sequencer reaches `bar`. The deadline is a hang guard, not a timing check: by default the
+    bars still to play at the current tempo, doubled, plus 5 s (a fixed 6 s was exactly 3 bars at 120 BPM, so any
+    runner stall failed test_note_off_lands_at_length_times_a_sixteenth on macOS CI, run 43039990940)."""
+    if timeout is None:
+        timeout = max(0, bar - eng.bar) * 240.0 / eng.bpm * 2 + 5.0
     end = time.monotonic() + timeout
     while eng.bar < bar and eng.playing():
         assert time.monotonic() < end, f"sequencer never reached bar {bar}"

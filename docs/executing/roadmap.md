@@ -1,6 +1,6 @@
 # Whiplash roadmap: v0.6 and beyond
 
-Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups", and **v0.6.2 (transitions, mix levels)** in PR "Whiplash v0.6.2: transitions + mix levels"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
+Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups", and **v0.6.2 (transitions, mix levels)** in PR "Whiplash v0.6.2: transitions + mix levels"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). **v0.7.0 (audio capture, `whiplash_listen`, safety rails)** is implemented in PR "Whiplash v0.7.0: listening loop (capture + listen + safety rails)"; the v0.7 split is in [v07-build-plan.md](v07-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
 
 **How the versions are ordered:**
 
@@ -81,6 +81,11 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 ---
 
 ## v0.7: the listening loop
+
+**Status:** split into two PRs ([v07-build-plan.md](v07-build-plan.md)).
+- **v0.7.0** (features 1, 2 and 4: capture, `whiplash_listen`, safety rails) is implemented. Route (a) was chosen on Phil's behalf, reversibly: `sounddevice` + `numpy` as an optional `[listen]` extra, lazily imported. Route (b) stays a later option.
+- **v0.7.1** (feature 3: `whiplash_scan_kit`, labels proposed, never applied) is planned.
+- None of v0.7 has been tested on hardware yet.
 
 **Goal:** Hermes hears the unit's real output and reasons about it. This also gives the automatic kit scan queued in v0.5 (item 12).
 

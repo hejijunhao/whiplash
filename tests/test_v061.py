@@ -10,7 +10,7 @@ import whiplash
 from whiplash import arrange, engine, harmony, kitmap, mutate, patterns, schemas, tools
 from test_whiplash import call, make_engine, tool_engine  # noqa: F401  (fixture)
 from test_live import bar_events, ons_per_bar, pretend_playing, wait_bar
-from test_v051 import TimedPort, _jitter
+from test_v051 import TimedPort, assert_jitter
 
 P = patterns.PATTERNS
 ROOT = Path(whiplash.__path__[0])
@@ -555,7 +555,7 @@ def test_clock_jitter_is_unchanged_with_an_arrangement():
     t = port.clock_times
     base, arranged_ = t[:at * engine.TICKS_PER_BAR], t[at * engine.TICKS_PER_BAR:(at + 2) * engine.TICKS_PER_BAR]
     assert len(arranged_) == 2 * engine.TICKS_PER_BAR
-    assert _jitter(arranged_) <= max(_jitter(base) * 2, _jitter(base) + 0.003), (_jitter(base), _jitter(arranged_))
+    assert_jitter(base, arranged_, "arrangement")
 
 
 # ---- safety, docs, version -------------------------------------------------------------------

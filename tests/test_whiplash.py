@@ -83,7 +83,7 @@ def test_register_is_fast_and_lazy():
 
 
 def test_every_tool_is_namespaced():
-    assert len(tools.HANDLERS) == 20  # v0.6.2: whiplash_mix
+    assert len(tools.HANDLERS) == 21  # v0.7.0: whiplash_listen
     assert all(name.startswith("whiplash_") for name in tools.HANDLERS)
 
 
