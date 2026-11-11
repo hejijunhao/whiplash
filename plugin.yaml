@@ -24,7 +24,6 @@ provides_tools:
   - whiplash_close_view
 # Visualiser conversation overlay only: in-memory observers that return None (see chat.py).
 provides_hooks:
-  - on_session_start
   - pre_llm_call
   - on_stream_start
   - on_stream_delta

@@ -13,6 +13,11 @@ Two sources, both read-only and in memory only (nothing is written to disk):
 Hermes delivers stream hooks on one worker thread per callback, so start/delta/end can arrive
 in any order relative to each other and to post_llm_call. Parts are keyed by
 (turn_id, iteration) and the final reply is reconciled when the turn is serialised.
+
+Sessions: only pre_llm_call decides which conversation is shown. A subagent's first turn
+(parent_session_id == the shown session, no history) is remembered as a child and all of its
+events are ignored. A new session id that continues the shown one (context compression) is
+adopted without clearing; any other new session (e.g. /new) clears the panel.
 """
 import json
 import logging
@@ -103,6 +108,7 @@ class Conversation:
         self._turns = deque(maxlen=MAX_TURNS)
         self._seq = 0
         self._parts = {}  # (turn_id, iteration) -> text part being streamed
+        self._children = set()  # subagent session ids: never shown
 
     # ---- internals (caller holds _lock) ----------------------------------
     def _bump(self, source):
@@ -133,12 +139,15 @@ class Conversation:
         self._turns.clear()
         self._parts.clear()
 
-    def _session(self, session_id):
-        """Switch to session_id if it is new. Returns True when the store was reset."""
-        if session_id and session_id != self.session_id:
-            self._reset(session_id)
-            return True
-        return False
+    def _accept(self, session_id):
+        """For every hook but pre_llm_call: False for a subagent's events, else adopt the id."""
+        if session_id and session_id in self._children:
+            return False
+        if session_id and self.session_id is None:
+            self.session_id = session_id
+        elif session_id and session_id != self.session_id:
+            self.session_id = session_id  # e.g. compression rotated the id mid-turn: same conversation
+        return True
 
     def _load_messages(self, messages):
         """Append turns rebuilt from an OpenAI-format message list (history or state.db rows)."""
@@ -181,17 +190,27 @@ class Conversation:
         return None
 
     # ---- hook entry points -----------------------------------------------
-    def session_start(self, session_id=None, **_):
+    def user_turn(self, session_id=None, user_message=None, conversation_history=None, turn_id=None,
+                  parent_session_id=None, is_first_turn=None, **_):
         with self._lock:
-            self._reset(session_id)
-            self._bump("hooks")
-
-    def user_turn(self, session_id=None, user_message=None, conversation_history=None, turn_id=None, **_):
-        with self._lock:
+            if session_id and session_id in self._children:
+                return
+            history = list(conversation_history or [])
+            first = is_first_turn if is_first_turn is not None else not any(
+                isinstance(m, dict) and m.get("role") == "assistant" for m in history)
+            if parent_session_id and self.session_id and parent_session_id == self.session_id and session_id \
+                    and session_id != self.session_id and first:
+                self._children.add(session_id)  # a subagent working for the shown conversation
+                return
+            fresh = not self._turns
+            if session_id and session_id != self.session_id:
+                if self.session_id is not None and parent_session_id == self.session_id:
+                    self.session_id = session_id  # continuation (compression): keep what's shown
+                else:
+                    self._reset(session_id)
+                    fresh = True
             text = _clip(_text(user_message), MAX_TEXT)
-            fresh = self._session(session_id) or not self._turns
-            if fresh and conversation_history:
-                history = list(conversation_history)
+            if fresh and history:
                 last = history[-1] if history else None
                 if isinstance(last, dict) and last.get("role") == "user" and _text(last.get("content")).strip() == text.strip():
                     history = history[:-1]  # the history may already hold this turn's message
@@ -206,7 +225,8 @@ class Conversation:
 
     def stream_start(self, turn_id=None, iteration=None, session_id=None, **_):
         with self._lock:
-            self._session(session_id)
+            if not self._accept(session_id):
+                return
             self._stream_part(turn_id, iteration)
             self._bump("hooks")
 
@@ -227,7 +247,8 @@ class Conversation:
         if kind not in (None, "text") or not delta:
             return
         with self._lock:
-            self._session(session_id)
+            if not self._accept(session_id):
+                return
             part = self._stream_part(turn_id, iteration)
             if part["live"] and len(part["text"]) < MAX_TEXT:
                 part["text"] = _clip(part["text"] + str(delta), MAX_TEXT)
@@ -236,7 +257,8 @@ class Conversation:
     def stream_end(self, final_text=None, finished=True, error=None, turn_id=None, iteration=None,
                    session_id=None, **_):
         with self._lock:
-            self._session(session_id)
+            if not self._accept(session_id):
+                return
             part = self._stream_part(turn_id, iteration)
             if final_text:
                 part["text"] = _clip(final_text, MAX_TEXT)
@@ -247,7 +269,8 @@ class Conversation:
 
     def tool_start(self, tool_name=None, args=None, tool_call_id=None, turn_id=None, session_id=None, **_):
         with self._lock:
-            self._session(session_id)
+            if not self._accept(session_id):
+                return
             turn = self._current(turn_id)
             turn["parts"].append({"kind": "tool", "name": str(tool_name or "tool"), "args": _args(args or {}),
                                   "result": None, "status": "running", "ms": None, "live": True,
@@ -257,7 +280,8 @@ class Conversation:
     def tool_end(self, tool_name=None, args=None, result=None, duration_ms=None, status=None, tool_call_id=None,
                  turn_id=None, session_id=None, error_message=None, **_):
         with self._lock:
-            self._session(session_id)
+            if not self._accept(session_id):
+                return
             turn = self._current(turn_id)
             part = self._find_tool(turn, tool_call_id, tool_name, live_only=True)
             if part is None:
@@ -271,7 +295,8 @@ class Conversation:
 
     def reply(self, session_id=None, user_message=None, assistant_response=None, turn_id=None, **_):
         with self._lock:
-            self._session(session_id)
+            if not self._accept(session_id):
+                return
             turn = self._current(turn_id)
             if not turn["user"] and user_message:
                 turn["user"] = _clip(_text(user_message), MAX_TEXT)
@@ -287,6 +312,7 @@ class Conversation:
         """Replace the store with a session rebuilt from state.db rows (oldest first)."""
         with self._lock:
             self._reset(session_id)
+            self._children.clear()
             self._load_messages(rows)
             if self._turns:
                 last = self._turns[-1]
@@ -337,7 +363,6 @@ def _guard(fn):
 
 def make_hooks(conv):
     return {
-        "on_session_start": _guard(conv.session_start),
         "pre_llm_call": _guard(conv.user_turn),
         "on_stream_start": _guard(conv.stream_start),
         "on_stream_delta": _guard(conv.stream_delta),

@@ -9,7 +9,7 @@ Added
   - **Analyser:** spectrum, scope and L/R meters from the Digitakt's USB audio via `getUserMedia`, or an honestly labelled MIDI fallback.
   - **Conversation:** the live Hermes conversation, streamed word by word, with tool calls behind a toggle.
   - **Log:** recent Whiplash actions.
-- Hermes conversation hooks: `on_session_start`, `pre_llm_call`, `on_stream_start`/`delta`/`end`, `pre_tool_call`, `post_tool_call` and `post_llm_call`. They keep in-memory observers only and return `None`. Without hook support, the view falls back to a read-only poll of `~/.hermes/state.db`.
+- Hermes conversation hooks: `pre_llm_call`, `on_stream_start`/`delta`/`end`, `pre_tool_call`, `post_tool_call` and `post_llm_call`. They keep in-memory observers only, return `None` and ignore subagent sessions. Without hook support, the view falls back to a read-only poll of `~/.hermes/state.db`.
 - The engine publishes the playhead (`position`) and the current bar's hits (`bar_hits`) from the clock thread by plain assignment, and `view_state()` gives a lock-short copy of the state for the view.
 - `docs/visualiser-design.md`: the approved design.
 - CI also runs on `feat/visualiser`.

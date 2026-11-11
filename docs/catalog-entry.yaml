@@ -42,7 +42,6 @@ capabilities:
     - whiplash_open_view
     - whiplash_close_view
   provides_hooks:
-    - on_session_start
     - pre_llm_call
     - on_stream_start
     - on_stream_delta

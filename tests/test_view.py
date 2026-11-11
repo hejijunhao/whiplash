@@ -245,7 +245,6 @@ def tool_engine(monkeypatch):
 
 def test_conversation_streams_and_reconciles_out_of_order_hooks():
     c = chat.Conversation()
-    c.session_start(session_id="s")
     c.user_turn(session_id="s", user_message="play deep house")
     c.tool_start(tool_name="whiplash_play_pattern", args={"genre": "deephouse"}, tool_call_id="c1")
     c.tool_end(tool_name="whiplash_play_pattern", result='{"success": true}', duration_ms=12.4, status="success",
@@ -286,6 +285,28 @@ def test_conversation_backfills_history_and_resets_on_new_session():
     assert c.snapshot()["turns"][-2]["state"] == "interrupted"  # never got a post_llm_call
     c.user_turn(session_id="s2", user_message="new chat")
     assert [t["user"] for t in c.snapshot()["turns"]] == ["new chat"]
+
+
+def test_subagents_are_ignored_and_compression_keeps_the_conversation():
+    c = chat.Conversation()
+    c.user_turn(session_id="main", user_message="research some grooves", parent_session_id="")
+    c.tool_start(tool_name="delegate_task", args={}, session_id="main")
+    # a subagent starts its own conversation under the main session
+    c.user_turn(session_id="child", user_message="subagent prompt", parent_session_id="main", is_first_turn=True)
+    c.tool_start(tool_name="web_search", args={}, session_id="child")
+    c.stream_delta(delta="child text", turn_id="ct", iteration=1, session_id="child")
+    c.reply(session_id="child", assistant_response="child reply")
+    snap = c.snapshot()
+    assert snap["session"] == "main" and [t["user"] for t in snap["turns"]] == ["research some grooves"]
+    assert [p["name"] for p in snap["turns"][0]["parts"]] == ["delegate_task"] and snap["turns"][0]["state"] == "running"
+    # compression rotates the session id but continues the same conversation
+    c.reply(session_id="main", assistant_response="done")
+    c.user_turn(session_id="main-2", user_message="next", parent_session_id="main", is_first_turn=False,
+                conversation_history=[{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}])
+    assert [t["user"] for t in c.snapshot()["turns"]] == ["research some grooves", "next"]
+    # a genuinely new chat clears the panel
+    c.user_turn(session_id="fresh", user_message="hello again", parent_session_id="")
+    assert [t["user"] for t in c.snapshot()["turns"]] == ["hello again"]
 
 
 def test_conversation_is_bounded():

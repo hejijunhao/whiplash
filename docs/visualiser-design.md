@@ -261,5 +261,9 @@ The overlay matters most in full-frame shots, where the terminal is off-screen. 
 ### Implementation notes (as built)
 
 - **Streaming hooks:** Hermes delivers `on_stream_*` on one worker thread per callback, so start, delta and end can arrive out of order relative to each other and to `post_llm_call`. Streamed text is keyed by `(turn_id, iteration)`, and `post_llm_call`'s final reply supersedes any streamed copy of the same text when the turn is serialised. This guarantees a reply never shows twice.
+- **Sessions:** `on_session_start` was dropped. A brand-new subagent session can fire it too, and that would wipe the panel. Only `pre_llm_call` switches the conversation it shows.
+  - A **subagent** is ignored, together with all its tool and stream events. Hermes marks it with `parent_session_id` equal to the shown session on its first turn.
+  - A **continuation** (a new id with that parent and existing history, e.g. after compression) is adopted without clearing.
+  - Any other new session, such as `/new`, clears the panel.
 - **Tool calls:** `pre_tool_call` adds a running tool row and `post_tool_call` completes it. This is what drives the "thinking… ⚙ whiplash_ramp_param…" line while tools are hidden.
 - **Captions:** in narrow windows they show the latest exchange and fade 8 s after the turn finishes. `C` hides them.

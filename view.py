@@ -12,6 +12,7 @@ JSON encoding happen outside that lock. The browser interpolates the playhead be
 so the plugin never has to push at frame rate. The view is read-only: nothing here sends MIDI.
 """
 import atexit
+import itertools
 import json
 import logging
 import threading
@@ -38,7 +39,7 @@ NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LOG_SIZE = 40
 
 ACTIONS = deque(maxlen=LOG_SIZE)  # recent Whiplash tool calls, appended by tools._tool
-_action_seq = [0]
+_action_ids = itertools.count(1)  # next() is atomic under the GIL: tools may run in parallel
 
 
 def note_name(note):
@@ -84,8 +85,7 @@ def record_action(name, params, out):
     """Called by every tool after it ran. Cheap and never raises."""
     try:
         args = {k: v for k, v in (params or {}).items() if v not in (None, "")}
-        _action_seq[0] += 1
-        ACTIONS.append({"id": _action_seq[0], "ts": time.time(), "tool": name,
+        ACTIONS.append({"id": next(_action_ids), "ts": time.time(), "tool": name,
                         "args": json.dumps(args, separators=(",", ":"), default=str)[:200],
                         "ok": bool(out.get("success", True)), "summary": _summary(name, out),
                         "tracks": _tracks(params or {})})
@@ -208,7 +208,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
         self.close_connection = True
-        seq, chat_rev, last_write = -1, -1, time.monotonic()
+        seq, chat_rev, last_state, last_write = -1, -1, None, time.monotonic()
         with view.clients_lock:
             view.clients += 1
         view.wake.set()
@@ -216,10 +216,10 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"retry: 1000\n\n")
             self.wfile.flush()
             while not view.stopping.is_set():
-                state_seq, state, chat_data = view.wait(seq, SSE_PING)
+                seq, state, chat_data = view.wait(seq, SSE_PING)
                 out = []
-                if state_seq != seq and state is not None:
-                    seq = state_seq
+                if state is not None and state is not last_state:
+                    last_state = state
                     out.append(b"event: state\ndata: " + state + b"\n\n")
                 if chat_data is not None and chat_data[0] != chat_rev:
                     chat_rev = chat_data[0]

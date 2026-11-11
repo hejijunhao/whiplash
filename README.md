@@ -66,8 +66,9 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
 How it stays out of the way:
 - **Off the clock thread.** The sequencer thread only stores its current step and the bar's notes in two attributes, with no lock and no I/O. A single `whiplash-view` thread builds a snapshot at most 10 times a second, and only while a browser is connected. That snapshot is a short copy under the same lock `whiplash_status` uses, and JSON encoding happens outside it. The browser interpolates the playhead between frames, so the plugin never pushes at frame rate.
 - **Localhost only.** The server binds to `127.0.0.1` and answers only requests addressed to `127.0.0.1` or `localhost`, which blocks DNS rebinding. The page is one self-contained HTML file: no CDN, no fonts to fetch, no build step.
-- **Conversation source.** Whiplash subscribes to Hermes's plugin hooks: `pre_llm_call`, `on_stream_start`/`on_stream_delta`/`on_stream_end`, `pre_tool_call`/`post_tool_call`, `post_llm_call` and `on_session_start`.
+- **Conversation source.** Whiplash subscribes to Hermes's plugin hooks: `pre_llm_call`, `on_stream_start`/`on_stream_delta`/`on_stream_end`, `pre_tool_call`/`post_tool_call` and `post_llm_call`.
   - The callbacks copy text into a bounded in-memory buffer (60 turns) and return `None`. They never block, never raise and never write anything to disk.
+  - Subagent sessions are ignored, so a delegated task doesn't take over the panel.
   - On a Hermes without `register_hook`, the view instead reads the newest session from `~/.hermes/state.db` (or `$HERMES_HOME/state.db`) once a second, through a read-only SQLite connection.
   - The page shows which source is in use (`· hooks` or `· state.db`).
 - **Opening the browser** uses Python's `webbrowser` module on a short-lived daemon thread. On macOS that runs the system opener.
@@ -153,7 +154,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-123 tests, covering:
+124 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - clock-synced ramps: no duplicate sends, replace, cancel, concurrency
