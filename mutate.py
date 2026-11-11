@@ -10,7 +10,14 @@ import statistics
 
 from . import patterns
 
-DRUM_TRACKS = (1, 2, 3, 4, 5)
+DRUM_TRACKS = (1, 2, 3, 4, 5)  # the default layout's drum tracks (no kit map)
+TRACK_ROLES = {1: "kick", 2: "snare", 3: "clap", 4: "closed hat", 5: "open hat"}
+# v0.6.1: fills follow the role, not the track number. Cymbal gets the open-hat shape, perc the clap push.
+FILL_SHAPES = {"kick": "kick", "snare": "snare", "rim": "snare", "clap": "clap", "closed hat": "closed hat",
+               "open hat": "open hat", "cymbal": "open hat", "perc": "clap"}
+# Played by a fill with no tracks named. Cymbal and perc only fill when named: a labelled "tuned cymbal" or
+# perc track often plays a pitched or borrowed line, and the default keeps the v0.5.3 demo's fills unchanged.
+DEFAULT_FILL_ROLES = frozenset({"kick", "snare", "rim", "clap", "closed hat", "open hat"})
 DENSITY_WORDS = {"thin": -0.5, "thicken": 0.5, "normal": 0.0}
 HUMANIZE_VEL = 16  # max velocity change at amount 1
 HUMANIZE_TICKS = 0.25  # max timing offset at amount 1, in MIDI clock ticks (~5 ms at 120 BPM)
@@ -71,27 +78,29 @@ def density(bars, amount, seed, track):
     return [fn(bar, abs(amount), rng(seed, "density", track, i)) for i, bar in enumerate(bars)]
 
 
-def fill(track, hits):
-    """A one-bar fill for a drum track (1 kick, 2 snare/rim, 3 clap, 4 closed hat, 5 open hat).
+def fill(role, hits):
+    """A one-bar fill for a drum role (kick, snare/rim, clap, closed hat, open hat; cymbal, perc).
 
-    Fills are keyed by track number. A melodic line on tracks 1-5 (a bass the kit map routed onto
-    track 2, or a written melody there) is left alone, so it never turns into a roll of bass notes.
+    role is a kit role, or a default-layout track number 1-5 (1 kick, 2 snare, 3 clap, 4 closed hat, 5 open
+    hat). A melodic line (any note other than 60: a bass the kit map routed onto a drum track, or a written
+    melody) is left alone, so it never turns into a roll of bass notes. Other roles are left alone too.
     """
     if any(h[1] != patterns.DRUM for h in hits):
         return list(hits)
+    shape = FILL_SHAPES.get(TRACK_ROLES.get(role) if isinstance(role, int) else role)
     note = hits[0][1] if hits else patterns.DRUM
     early = [h for h in hits if h[0] < 12]
-    if track == 1:  # kick sits out the last beat: tension before the one
+    if shape == "kick":  # kick sits out the last beat: tension before the one
         return early
-    if track == 2:  # snare roll through the second half, crescendo
+    if shape == "snare":  # snare roll through the second half, crescendo
         roll = [(s, note, 40 + (s - 8) * 11, 1, 0.0) for s in range(8, 16)]
         return [h for h in hits if h[0] < 8] + roll
-    if track == 3:
+    if shape == "clap":
         return early + [(12, note, 90, 1, 0.0), (14, note, 102, 1, 0.0), (15, note, 115, 1, 0.0)]
-    if track == 4:  # 32nd-note ratchets on the last beat
+    if shape == "closed hat":  # 32nd-note ratchets on the last beat
         rat = [(s, note, 50 + (s - 12) * 16 + half * 8, 0.5, half * 3.0) for s in range(12, 16) for half in (0, 1)]
         return early + rat
-    if track == 5:  # open hat out of the way of the roll
+    if shape == "open hat":  # open hat out of the way of the roll
         return early
     return list(hits)
 

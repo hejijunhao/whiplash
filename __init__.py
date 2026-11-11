@@ -12,12 +12,13 @@ from . import chat
 from .schemas import SCHEMAS
 from .tools import HANDLERS
 
+__version__ = "0.6.1"  # keep in sync with pyproject.toml, plugin.yaml and docs/catalog-entry.yaml (tests check)
 log = logging.getLogger("whiplash")
 TOOLSET = "whiplash"
 SKILL_NAME = "digitakt"  # resolves as "whiplash:digitakt"
 SKILL_PATH = Path(__file__).resolve().parent / "skills" / SKILL_NAME / "SKILL.md"
 SKILL_DESCRIPTION = ("How to drive a Digitakt II through Whiplash: the kit map and one-call start, keys and chord "
-                     "progressions, pitch and register, "
+                     "progressions, song arrangement, pitch and register, "
                      "sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that "
                      "come out wrong.")
 

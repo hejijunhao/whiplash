@@ -5,6 +5,39 @@
 Added
 - **Offline demo rehearsal** (`scripts/rehearse_demo.py`). Runs the hackathon demo's tool calls (checklist Part A, A1-A9) through the real handlers and engine against a recording port, at real or accelerated clock, with no Digitakt or rtmidi. Writes a Standard MIDI File of everything sent (one track per channel, markers for steps, Start/Stop and bars), a per-step report (tracks sounded, CCs, bar landing, warnings) and every tool result. It fails (exit 1) on SysEx, program change, a blocked CC, a hanging note, clock jitter past the test suite's bound, or any Part A expectation the MIDI can show. `tests/test_rehearsal.py` runs it at 4x in CI. Linked from README and the demo script. Not a hardware test.
 
+## 0.6.1
+
+The second v0.6 PR: arrangement (item 2 of [docs/executing/v06-build-plan.md](docs/executing/v06-build-plan.md)), fills that follow the kit map (item 3, the open v0.5.3 follow-up), and the review follow-ups from PRs #15 and #16. 19 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, and `scripts/rehearse_demo.py` still passes it.
+
+Added
+- **`whiplash_arrange(sections | preset, seconds, loop, clear)`.** It plays the beat as a song from the next bar line.
+  - **Sections:** name, `bars` (1-64), `tracks` that play (others are muted by Whiplash, never with CC 94) or `mute`, `ramps` started on the first bar, `fill` and `drop` on the last bar, and `chords` (+ `bars_per_chord`) to swap the progression. Up to 16 sections and 512 bars.
+  - **Group words:** tracks are numbers or groups (`all`, `drums`, `kick`, `hats`, `perc`, `bass`, `music`, any kit role). Each section resolves them again at its first bar, so an arrangement follows a switch or relabel.
+  - **Presets:**
+    - `club` is intro 16 / build 8 / drop 16 / break 8 / drop 16 / outro 16.
+    - `short_demo` is intro, build, drop (with a break when it is long enough) and outro, about 75 s at the current tempo (`seconds` 30-600), in 4-bar phrases.
+    - The build's filter rises 20 → 127 on the music tracks while the kick sits out its last bar. Every section but the outro ends on a fill.
+  - **Ending:** with `loop: false` (the default) the run stops cleanly on the bar line after the last section. `clear: true` ends the arrangement and unmutes what it muted. `whiplash_stop` ends it too.
+  - **No new clock path:** it schedules existing mutes, drops, fills, ramps and progressions. The sequencer only looks up "does a section start here?" once per bar. Everything is validated before anything is scheduled.
+  - **Status:** `arrangement` gives the sections, `current` (section, `bars_left`, `next`, `next_at_bar`), `skipped_ramps` and `muted_by_arrangement`. A queued play result carries `arrangement_carried`.
+- **`routing` on every `whiplash_play_pattern` result** (fresh start and queued switch) and in `whiplash_status`. When the kit map routes a generated part onto tracks 9-16, or `tracks` setup names one, the result carries `channel_note` and `tracks_9_16` (also on `whiplash_label_tracks`).
+- **`routing.vacated`** reports an unlabelled default track that a label emptied (labelling 7-8 "tuned cymbal" moves the open hat off track 5), with a `vacated_note` for the user. This only reports it. Whether it should happen is an open design question for Phil (reference §15.1 #26).
+- `whiplash.__version__`.
+
+Changed
+- **Fills follow the kit map** (`mutate.fill(role, hits)`, `schedule_fill`). A kick labelled on track 9 gets the kick fill. Cymbal gets the open-hat shape and perc the clap push. A fill with no tracks covers every kick, snare/rim, clap and hat track playing, and cymbal and perc only fill when named. Tracks 1-16 are accepted, and melodic tracks are refused. With no labels the fills are exactly as before.
+- **Written parts in routing.** A track playing a written part is never a routing target. The generated part goes to the next matching label, or `routing.replaced_by_written` (and `replaces_generated` on the write_part result) reports it. Before, a routed bass under a written part was silently lost. Writing or resetting a part re-routes at once.
+- **Relabelling while playing moves transpose and density with the part** (`follows_part` in the result). A part routed nowhere drops its settings instead of leaving them for the next part on that track.
+- **Queued play results show their own setup:** `tracks` include the switch's slot, tune (also in `pitch`), transpose and mutes, marked `setup_at_switch`, and `muted_at_switch` lists the mutes after the switch.
+- **No second panic before a fresh start.** A fresh `whiplash_play_pattern` after a stop sent All Notes Off and MIDI Stop again just before MIDI Start. The last run had already sent them, so the call now skips it, unless a note is still sounding. `whiplash_stop` is still a full panic when idle. Reference §15.1 #31.
+- `length_audible` no longer repeats its own key (`"length_audible: ..."`).
+- Tool descriptions were trimmed to fit `whiplash_arrange` inside the unchanged 3,000-character total and 400-character per-tool caps, keeping every pinned caveat. The params and JSON budgets rise to 7,400 characters and 17,500 bytes.
+- The wording in `plugin.yaml`, `docs/catalog-entry.yaml` and the skill is refreshed. Generated beats are no longer described as "tracks 1-8", fills no longer as "tracks 1-5", and the skill gains an Arrangement section plus diagnostics rows.
+- Version 0.6.1 in `pyproject.toml`, `plugin.yaml`, `docs/catalog-entry.yaml` and `__init__.py`. `whiplash_arrange` is added to `provides_tools` in both manifests, after `whiplash_set_progression`.
+- Reference: §15.1 #26 updated, new #30-31, new §15.3 Q14, and notes in §9 and §10.
+
+Not touched: `docs/testing/hardware-checklist.md`, `docs/demo/`, `scripts/`, `view.py`, `view.html` (owned by the visualiser agent). The PR lists the new hardware checks. Checklist A3/A7 still say "play results carry no `routing` field", which is now stale.
+
 ## 0.6.0
 
 The first v0.6 PR: keys, scales and chord progressions (item 1 of [docs/executing/v06-build-plan.md](docs/executing/v06-build-plan.md)), plus the v0.6 plan itself. 18 tools. Nothing here has been tested on a real Digitakt II yet.
