@@ -1,6 +1,6 @@
 # Whiplash roadmap: v0.6 and beyond
 
-Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", and **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
+Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups", and **v0.6.2 (transitions, mix levels)** in PR "Whiplash v0.6.2: transitions + mix levels"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
 
 **How the versions are ordered:**
 
@@ -35,8 +35,8 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 **Status:** split into three PRs ([v06-build-plan.md](v06-build-plan.md)).
 - **v0.6.0** (feature 1: keys, scales, progressions) is implemented.
 - **v0.6.1** (feature 2: arrangement, plus fills that follow the kit map) is implemented.
-- Neither has been tested on hardware yet.
-- v0.6.2 (transitions and mix levels) is not started.
+- **v0.6.2** (features 3 and 4: transitions and mix levels) is implemented. With it every v0.6 feature except more genres (5) is built.
+- None of v0.6 has been tested on hardware yet.
 
 **Goal:** go from a looping beat to a short arranged track that follows a key and a chord progression.
 
@@ -47,16 +47,16 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
    - `whiplash_set_progression(chords: ["i", "VI", "III", "VII"], bars_per_chord, voicing)`. Chord tracks voice the progression; bass and lead parts follow the root, or snap to the scale.
    - It is bar-quantized and keeps to the native register from v0.5.
    - (Phil hasn't greenlit chord work for v0.5. This is where it would go.)
-2. **Arrangement** (M-L). **Implemented in v0.6.1** as `whiplash_arrange`, with presets `club` and `short_demo`, group words for tracks, and a clean stop after the last section. Section `transition` waits for v0.6.2.
+2. **Arrangement** (M-L). **Implemented in v0.6.1** as `whiplash_arrange`, with presets `club` and `short_demo`, group words for tracks, and a clean stop after the last section. Sections take a `transition` and a `mix` since v0.6.2.
    - `whiplash_arrange(sections: [{name: "intro", bars: 8, tracks: [1, 4], ...}, {name: "build", bars: 8, ramps: [...]}, {name: "drop", bars: 16}, ...])`.
    - A section is a set of active tracks, mutations, ramps and fills, scheduled on bar lines. That is mostly scheduling of existing primitives: queued switch, drop, fill, ramp.
    - Presets: `club` (intro 16 / build 8 / drop 16 / break 8 / drop 16 / outro 16) and `short demo` (60-90 s).
    - Status shows the current section, the bars left, and the next section.
-3. **DJ-style transitions** (M).
+3. **DJ-style transitions** (M). **Implemented in v0.6.2:** `cut`, `filter_swap` (low-pass closes on everything but kick and bass, then reopens after the switch), `drop_swap` and `riser`, on a queued switch or between sections.
    - `transition: "cut" | "filter_swap" | "drop_swap" | "riser"` on a queued switch.
    - For example, `filter_swap` ramps a high-pass on the outgoing tracks over N bars, then switches on the one.
    - These are built from existing ramps, drops and fills, so no new clock paths.
-4. **Mixing** (S).
+4. **Mixing** (S). **Implemented in v0.6.2** as `whiplash_mix`, with genre presets, group words, pan words, ramps over bars, and snapshots that sections recall.
    - `whiplash_mix(levels: {"1": 110, "6": 95}, pan: {...})` sends CC 95 (track level) and CC 90 (pan) in one call.
    - It adds named mix snapshots ("drop mix", "break mix") that sections can recall.
    - CCs are as in Appendix B, B.1 and B.5, pp. 109-110.

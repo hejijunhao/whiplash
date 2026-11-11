@@ -9,7 +9,8 @@ description: >-
   Let Hermes jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats with MIDI clock, routed
   onto a session kit map of what each track holds (tracks 1-16), in any key with chord progressions,
   arranged into song sections (whiplash_arrange: intro, build, drop, outro on bar lines), written melodies
-  and rhythms, bar-quantized pattern switches, named sound parameters, clock-synced parameter ramps, live
+  and rhythms, bar-quantized pattern switches with DJ-style transitions (filter swap, drop swap, riser),
+  track levels and pan with saved mixes (whiplash_mix), named sound parameters, clock-synced parameter ramps, live
   fills/drops/density/swing/humanize, switching a track among samples already in the project pool, mutes
   and tempo. Disclosure: controls MIDI hardware (MIDI Start also starts the unit's own sequencer; a
   clock-only mode is available), can change which already-loaded sample a track plays, runs a background
@@ -22,7 +23,7 @@ maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.6.1"
+version: "0.6.2"
 readme: true
 platforms: [linux, macos]
 known_issues:
@@ -44,6 +45,7 @@ capabilities:
     - whiplash_write_part
     - whiplash_set_progression
     - whiplash_arrange
+    - whiplash_mix
     - whiplash_ramp_param
     - whiplash_mutate
     - whiplash_mute_track

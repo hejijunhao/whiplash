@@ -2,8 +2,9 @@
 
 Status:
 - **v0.6.0 shipped** (PR #14; item 1: keys, scales, chord progressions).
-- **v0.6.1 is implemented** in PR "Whiplash v0.6.1: arrangement + follow-ups": items 2 and 3, plus the review follow-ups from PRs #15 and #16. §6 lists the decisions taken.
-- v0.6.2 (transitions and mix levels) is not started.
+- **v0.6.1 shipped** (PR #17; items 2 and 3, plus the review follow-ups from PRs #15 and #16). §6 lists the decisions taken.
+- **v0.6.2 is implemented** in PR "Whiplash v0.6.2: transitions + mix levels": items 4 and 5. §7 lists the decisions taken.
+- **The v0.6 plan is complete** once v0.6.2 merges: every item is built. What is left is hardware testing (§3) and the open questions in §6.8 and [reference](../digitakt-ii/reference.md) §15.3.
 - Nothing in v0.6 has been tested on a real Digitakt II yet. The hardware checks below are for Phil's Air.
 
 - **Branch:** `feat/v06-keys`, cut from `main` at `caf2209` (v0.5.3 merged, PR #12).
@@ -129,6 +130,8 @@ Every claim marked **HW** needs a check on the unit.
 
 ## Item 4 (v0.6.2): DJ-style transitions
 
+**Status: implemented in v0.6.2** as below, with the changes in §7.
+
 **Change.** A queued switch, or a section change, takes `transition: "cut" | "filter_swap" | "drop_swap" | "riser"` and `transition_bars` (1-8, default 4).
 
 - `cut`: today's behaviour.
@@ -143,6 +146,8 @@ Everything is built from ramps, drops and fills, so there is no new clock path.
 **HW check:** "Switch to breaks with a filter swap over 4 bars." The outgoing highs close over 4 bars, and breaks lands on the one with no click.
 
 ## Item 5 (v0.6.2): mix levels
+
+**Status: implemented in v0.6.2** as below, plus genre presets, group words, pan words and ramps (§7).
 
 **Change.** `whiplash_mix(levels: {"1": 110, "6": 95}, pan: {"4": 40}, save_as, recall)`. Level is CC 95 (TRACK LEVEL) and pan is CC 90, per track ([M] Appendix B, B.1 and B.5, p. 109-110; [G]; already in `ccmap` as `track_level` (alias `level`) and `pan`). All CCs go out in one call. Named snapshots ("drop mix") hold the last values Whiplash sent, and `recall` sends exactly the stored values (sections can recall them after v0.6.1). A level change replaces a running ramp on the same param, like `set_param`.
 
@@ -210,3 +215,21 @@ v0.6.1 was built from `main` after PR #16, as `feat/v061-arrangement`. Phil was 
 10. **Tool-description budget:**
     - The per-tool (400) and total (3,000) caps stay. Other tool descriptions were trimmed to make room for `whiplash_arrange`, keeping every caveat the tests pin.
     - The params cap rises to 7,400 characters and the JSON cap to 17,500 bytes.
+
+## 7. Decisions taken for v0.6.2 (on Phil's behalf; each is reversible)
+
+v0.6.2 was built from `main` after PR #17, as `feat/v062-transitions`. Phil was asleep and had asked to keep building toward 1.0, so the orchestrator scoped it. Part A of the hardware checklist and `scripts/rehearse_demo.py` had to stay unchanged.
+
+1. **The switch lands after the transition.** A transition runs from the next bar line for `transition_bars` bars, and the switch lands on the bar after it, so a 4-bar `filter_swap` switches 5 bars after the call (the plan said "switch on the one" without saying which one). A section's transition runs over its own last bars instead, so sections keep their lengths.
+2. **Default lengths per kind:** `filter_swap` and `riser` 4 bars, `drop_swap` 1 bar (the plan's "drops the low end for the last bar"). `drop_swap` with more bars keeps the low end out for all of them, a drop-out/drop-in.
+3. **`filter_swap` leaves kick and bass alone** and closes everything else to 30 (dark, not silent), linear. It reopens over one bar (log curve, fast start) to the value it closed from. Why: the groove holds through the swap, and the incoming pattern sounds open almost at once. Q15 checks the floor on hardware.
+4. **No guessing the cutoff.** A queued `filter_swap` is refused when Whiplash never sent `filter_freq` on a track it would close and there is no `filter_from`. A section skips that track and lists it in `skipped_ramps` (the v0.6.1 rule for section ramps).
+5. **Cancelling puts things back.** A new switch before the old one lands cancels the old transition's pending ramps, drops and fills (tagged by `owner`, so the user's own ramps survive) and reopens any closed cutoff at the new switch. `arrange(clear: true)` does the same for a section transition, reopening at once. `whiplash_stop` (and a run that ends mid-transition) sends each closed cutoff back with one CC after the panic. Before this the plan only said "ramps are cancelled cleanly".
+6. **A fresh start ignores `transition`** with a `transition_note`, rather than refusing the start.
+7. **The riser ramps `filter_freq` 20 → 127 (exp)** on fx-labelled tracks, like the build, and leaves it at 127 until the kit is reloaded. No fx label: fill only, said in the result.
+8. **The presets stay as they were.** `club` and `short_demo` carry no transition or mix, so the demo (Part A) and the v0.6.1 arrangement checks are unchanged. Adding them is a one-line change per section once the hardware checks pass.
+9. **Mixes land on the next bar line**, or ramp over `bars`, rather than going out the moment the call arrives (the plan said "in one call"; the brief asked for bar-quantized and ramped). With nothing playing they go out at once. Keys can be group words, and pan takes words.
+10. **Genre presets set levels only**, by role, kick loudest and hats, cymbal and fx under the music; `flat` is 100 everywhere ([G]'s TRACK LEVEL default). They are starting points, not measured on hardware.
+11. **Saved mixes live for the session** and survive `whiplash_stop`, like the kit map. At most 16. `save_as` stores the mix as it will be after the call. Only values Whiplash sent are known, so a snapshot holds those, never the unit's own levels.
+12. **Tool-description budget:** the per-tool (400) and total (3,000) caps stay; `whiplash_list_params`, `whiplash_ramp_param` and `whiplash_stop` were trimmed to make room for `whiplash_mix`. The params cap rises to 7,800 characters and the JSON cap to 19,000 bytes.
+13. **The cymbal/track 5 question (§6.8) stays open** for Phil.
