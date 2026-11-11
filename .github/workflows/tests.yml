@@ -64,3 +64,12 @@ jobs:
           echo "WHIPLASH_JSDOM=required" >> "$GITHUB_ENV"
       - name: Tests
         run: uv run pytest -q -rs
+      - name: Clock timing on this runner (informational; docs/testing/clock-jitter.md)
+        if: always()
+        continue-on-error: true
+        run: |
+          uv run python scripts/clock_jitter.py --runs 3 --seconds 20
+          uv run python scripts/clock_jitter.py --runs 3 --seconds 40 --speed 4
+          uv run python scripts/clock_jitter.py --runs 2 --seconds 20 --load 3
+          uv run python scripts/clock_jitter.py --runs 2 --seconds 20 --qos
+          uv run python scripts/clock_jitter.py --runs 2 --seconds 20 --spin 1

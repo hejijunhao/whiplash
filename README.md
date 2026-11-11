@@ -323,7 +323,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-673 tests, covering:
+683 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -359,7 +359,8 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - refusals: while a beat plays (both transport modes, the beat untouched), the unit already sounding, no Digitakt on MIDI or audio, without numpy
   - clean errors with no hanging note on an audio unplug, a MIDI unplug or `whiplash_stop` mid-scan; muted tracks skipped
 - input validation, single panic per stop, exit hook, SysEx refusal
-- the offline demo rehearsal (`scripts/rehearse_demo.py`, below) at 4x clock: every Part A check passes, the MIDI file holds exactly what was sent, and its checks catch SysEx, program change, blocked CCs and hanging notes; with `--v06`, the progression beat (chord changes on the bar, roots on the bass, drums never transposed, nothing on cymbal or fx tracks) passes too, and its checks catch a chord tone on the cymbal or a change a bar early
+- the offline demo rehearsal (`scripts/rehearse_demo.py`, below) at 4x clock: every Part A check passes, the MIDI file holds exactly what was sent, and its checks catch SysEx, program change, blocked CCs and hanging notes; with `--v06`, the progression beat (chord changes on the bar, roots on the bass, drums never transposed, nothing on cymbal or fx tracks) passes too, and its checks catch a chord tone on the cymbal or a change a bar early; with `--v061`, a 30-second `short_demo` (sections on their bar lines, only their own tracks, the stop by itself) and a fill on a kick labelled on track 9 pass, and its checks catch a muted track sounding or a note after the end
+- clock timing (`scripts/clock_jitter.py`, [docs/testing/clock-jitter.md](docs/testing/clock-jitter.md)): lateness against the engine's own grid, a canary process that excuses machine stalls, a burst passing and a per-bar stall failing, and a busy Python thread in the process seen as lateness
 - the visualiser:
   - the state snapshot and which lanes appear
   - written parts, transpose, the amp envelope, kit and slot labels and tracks 9-16 in the snapshot, and the page handling frames without them
@@ -379,14 +380,32 @@ Wall-clock timing bounds (clock jitter, a tempo measured from real send times) a
 uv run python scripts/rehearse_demo.py             # real time, about 30 s
 uv run python scripts/rehearse_demo.py --speed 4   # 4x clock, about 8 s (what CI runs)
 uv run python scripts/rehearse_demo.py --v06       # plus the optional v0.6 progression encore
+uv run python scripts/rehearse_demo.py --v061      # plus the optional v0.6.1 arrangement beat and fill
 ```
 
 No Digitakt, no rtmidi and no MIDI system needed. It runs the tool calls behind the [hackathon demo](docs/demo/hackathon-demo.md) (hardware checklist Part A, A1-A9) through the real tool handlers and engine, with the beat running between calls and each call landing mid-bar. Output goes to a recording port named like the unit. It writes to `<tmp>/whiplash-rehearsal/` (or `--out DIR`):
 - `demo.mid`: everything sent, one track per MIDI channel, with markers for each step, MIDI Start/Stop and every bar. An SMF can't hold real-time bytes, so the clock is kept as timing: events sit at the engine's own musical time and the file plays back at the speed of the demo.
-- `report.txt`: per step, the calls, which tracks sounded, the CCs sent, where each change landed against the bar line, warnings and the checks. Then global checks: no SysEx or program change, no blocked CC, no hanging notes, and clock jitter within the bound `tests/test_v051.py` uses.
+- `report.txt`: per step, the calls, which tracks sounded, the CCs sent, where each change landed against the bar line, warnings and the checks. Then global checks: no SysEx or program change, no blocked CC, no hanging notes, and clock timing. Each tick's real-time lateness is measured against the engine's own grid. Ticks more than 4 ms late (or later than a 1 ms sleep takes on this machine, p99) form a stall, which counts unless a separate canary process saw the machine stall at the same moment. A segment may have one such stall plus one per 10 s ([docs/testing/clock-jitter.md](docs/testing/clock-jitter.md)).
 - `results.json`: every tool result, as Hermes would see it.
 
 `--v06` (off by default, so the default run stays the demo) adds the demo's optional encore after Part A: deep house in A minor, i-VI-III-VII, two bars per chord, pads (the synth, slot 11) on track 7. It checks that the progression starts on the next bar, every chord change lands exactly on a bar line, every pad note is a tone of that bar's chord, the bass plays the roots, drums and the tuned cymbal stay on note 60, the fx track gets nothing, and the visualiser's frame shows the key and the chords.
+
+`--v061` (off by default) adds two runs.
+- **The demo's optional arrangement beat:** *"Play techno, and make it a 30-second track"*, using `whiplash_arrange` `short_demo`. The checks:
+  - each section starts on its bar line and sounds only its own tracks,
+  - the kick sits out the build's last bar,
+  - status names the section,
+  - and the run stops by itself on the bar line after the outro, with MIDI Stop and no hanging notes.
+- **A kick labelled on track 9 and a fill** (checklist R2): the kick plays only on track 9 and sits out the fill bar's last beat.
+
+### Measure clock timing on this machine
+
+```bash
+uv run python scripts/clock_jitter.py --runs 3          # 1x, 30 s each
+uv run python scripts/clock_jitter.py --load 8 --calls  # with busy cores and tool calls every 0.25 s
+```
+
+It reports how late each MIDI clock went out against its slot (p50, p95, p99, max), stalls over 4 ms, and whether a canary process saw the machine stall then. Options add busy processes, tool calls, a busy Python thread in the process (`--gil-hog`) or full garbage collections of a large heap (`--gc-heap`). CI prints it on every runner. Method, numbers and the verdict on the old macOS flake: [docs/testing/clock-jitter.md](docs/testing/clock-jitter.md). It measures the computer, not the unit.
 
 It exits 1 on any violation and 2 if the run crashed. `--speed` scales the engine's clock, not the order or bar timing of the calls. A pass says the plugin does what the demo needs; it says nothing about the unit. That still takes Part A on a real Digitakt II.
 
