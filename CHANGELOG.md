@@ -37,7 +37,7 @@ Open decisions (plan recommendations taken, see the plan's §5)
 - The session key sticks across switches until stop.
 - `set_progression` needs a pattern playing. There is no `progression` argument on `play_pattern` yet.
 
-### Also in 0.6.0: the visualiser catches up with v0.5.x (PR #13)
+### Also in 0.6.0: visualiser catch-up (PR #13), v0.5.3 hardware checklist and demo script (PR #15)
 
 The visualiser catches up with v0.5.x. Mostly the page and `view.py`. The only engine change is one read-only line: `Engine.view_state()` also copies the slot labels (`kit_slots`). There are no tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
 
