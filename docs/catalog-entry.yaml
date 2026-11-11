@@ -8,17 +8,19 @@ sha: "<40-hex sha placeholder>"
 description: >-
   Let Hermes jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8 with MIDI
   clock, bar-quantized pattern switches, named sound parameters, clock-synced parameter ramps, live
-  fills/drops/density/swing/humanize, mutes and tempo. Disclosure: controls MIDI hardware, runs a background
+  fills/drops/density/swing/humanize, switching a track among samples already in the project pool, mutes
+  and tempo. Disclosure: controls MIDI hardware (MIDI Start also starts the unit's own sequencer; a
+  clock-only mode is available), can change which already-loaded sample a track plays, runs a background
   sequencer thread while a pattern plays, and opens a virtual MIDI port named "Whiplash" when no Digitakt
   is connected. Optional visualiser (whiplash_open_view): a read-only local web page served on 127.0.0.1 from
   a background thread, opened in the default browser, showing the beat and the live Hermes conversation
-  (taken from in-memory observer hooks; nothing is stored). Never sends SysEx or program changes; no
-  shell or credentials, and no network beyond that localhost page.
+  (taken from in-memory observer hooks; nothing is stored). Never sends SysEx or program changes; no file
+  transfer, project writes, shell or credentials, and no network beyond that localhost page.
 maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.3.0"
+version: "0.4.0"
 readme: true
 platforms: [linux, macos]
 known_issues:
@@ -26,12 +28,15 @@ known_issues:
   - With no device connected, Whiplash plays into a virtual MIDI port, which is silent unless a DAW or soft synth listens to it. Every tool result says so.
   - Windows has no virtual MIDI ports, so the fallback is unavailable there.
   - On Linux, python-rtmidi needs the ALSA runtime (libasound2).
+  - MIDI Start also starts the Digitakt's own sequencer; select an empty pattern on the unit or use send_transport=false (clock only).
+  - Sample select picks a slot in the unit's current sample bank and can't list or preview samples.
 capabilities:
   provides_tools:
     - whiplash_list_midi_ports
     - whiplash_list_params
     - whiplash_play_pattern
     - whiplash_set_param
+    - whiplash_select_sample
     - whiplash_ramp_param
     - whiplash_mutate
     - whiplash_mute_track

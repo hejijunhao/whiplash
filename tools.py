@@ -18,6 +18,24 @@ VIRTUAL_WARNING = (
     "whiplash_list_midi_ports, then call whiplash_play_pattern with that port.")
 
 
+SAMPLE_NOTE = ("Whiplash can't list, preview or hear samples: the slot picks a sample already loaded in the "
+               "project pool, counted within the sample bank selected on the unit. Ask the user what the slot "
+               "holds or try neighbouring slots. Nothing is loaded onto or saved to the unit; reloading the "
+               "pattern/kit on the unit restores its own sample.")
+
+
+def overlap_warning(send_transport):
+    """Shown on every whiplash_play_pattern result (start and queued switch)."""
+    if send_transport:
+        return ("Whiplash sends MIDI Start, which also starts the Digitakt's own sequencer: any trigs stored in "
+                "the pattern selected on the unit play on top of Whiplash, and Whiplash mutes can't silence them. "
+                "Tell the user to select an empty pattern on the unit unless they want it layered, or restart with "
+                "send_transport=false (clock only).")
+    return ("Clock only: Whiplash sent no MIDI Start, so the Digitakt's own sequencer stays stopped and only "
+            "Whiplash's notes play. If the user presses Play on the unit, its selected pattern plays on top in "
+            "sync; Whiplash won't send Stop, so the user stops it on the unit.")
+
+
 def device_notice(name):
     return (f"DIGITAKT CONNECTED: '{name}' is now available but Whiplash is still playing into the silent "
             f"virtual port. Tell the user, then call whiplash_play_pattern with port='{name}' to move the beat "
@@ -67,13 +85,20 @@ def list_params(p):
     return {"params": ccmap.table(), "count": len(ccmap.PARAMS),
             "notes": ("Named params are 7-bit CC (0-127) on the track's channel; values outside a param's range "
                       "are clamped (switches like mute/play_mode are rejected instead). Centred params rest at "
-                      "64. Raw cc / nrpn stay available on whiplash_set_param.")}
+                      "64. Raw cc / nrpn stay available on whiplash_set_param. sample_slot (or "
+                      "whiplash_select_sample) picks a sample already in the project pool by slot number in the "
+                      "unit's current sample bank; Whiplash can't list or preview samples, and sample bank select "
+                      "stays blocked.")}
 
 
 @_tool
 def play_pattern(p):
     pattern = patterns.resolve(p.get("genre"), p.get("mood"))
-    result = ENGINE.play(pattern, bpm=p.get("bpm"), bars=p.get("bars"), port=p.get("port"))
+    result = ENGINE.play(pattern, bpm=p.get("bpm"), bars=p.get("bars"), port=p.get("port"),
+                         send_transport=p.get("send_transport"))
+    transport = {"send_transport": result["send_transport"],
+                 "transport_mode": eng.transport_mode(result["send_transport"]),
+                 "overlap_warning": overlap_warning(result["send_transport"])}
     if result["mode"] == "queued":
         status = ENGINE.status()
         out = {"mode": "queued", "playing": status["pattern"], "next": pattern.name,
@@ -81,14 +106,14 @@ def play_pattern(p):
                "bpm_at_switch": result_bpm(p, pattern), "swing": pattern.swing,
                "bars": eng.check_bars(p.get("bars")), "tracks": pattern.roles,
                "muted_carried": status["muted"], "ramps_carried": [r["id"] for r in status["ramps"]],
-               "port": ENGINE.port_name, "virtual": ENGINE.virtual}
+               "port": ENGINE.port_name, "virtual": ENGINE.virtual, **transport}
         if result["replaced_queued"]:
             out["replaced_queued"] = result["replaced_queued"]
         return out
     return {"mode": "started", "playing": pattern.name, "bpm": ENGINE.bpm, "swing": pattern.swing,
             "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual, "tracks": pattern.roles,
             "replaced_playing": result["was_playing"], "mutes_cleared": result["mutes_cleared"],
-            "ramps_cancelled": result["ramps_cancelled"]}
+            "ramps_cancelled": result["ramps_cancelled"], **transport}
 
 
 def result_bpm(p, pattern):
@@ -99,6 +124,13 @@ def result_bpm(p, pattern):
 def set_param(p):
     ENGINE.ensure_port()
     return ENGINE.set_param(p["track"], p["value"], param=p.get("param"), cc=p.get("cc"), nrpn=p.get("nrpn"))
+
+
+@_tool
+def select_sample(p):
+    ENGINE.ensure_port()
+    out = ENGINE.set_param(p["track"], p["slot"], param="sample_slot")
+    return {"track": out["track"], "slot": out["value"], "cc": out["cc"], "note": SAMPLE_NOTE}
 
 
 @_tool
@@ -194,6 +226,6 @@ def close_view(p):
     return view.close_view()
 
 
-HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param, ramp_param,
-                                             mutate, mute_track, unmute_track, set_tempo, stop, status,
-                                             open_view, close_view)}
+HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
+                                             select_sample, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
+                                             status, open_view, close_view)}

@@ -34,7 +34,8 @@ IDLE_HEARTBEAT = 2.0  # seconds between frames when nothing changes and nothing 
 SSE_PING = 15.0
 PAGE = Path(__file__).with_name("view.html")
 CC_NAMES = {p.cc: p.name for p in ccmap.PARAMS.values()}
-HIDDEN_CCS = ccmap.BLOCKED_CCS | {123, eng.MUTE_CC}  # all-notes-off, NRPN plumbing, mute (shown as a badge)
+SAMPLE_SLOT_CC = ccmap.PARAMS["sample_slot"].cc
+HIDDEN_CCS = ccmap.BLOCKED_CCS | {123, eng.MUTE_CC, SAMPLE_SLOT_CC}  # all-notes-off, NRPN plumbing; mute/slot are badges
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LOG_SIZE = 40
 
@@ -114,6 +115,7 @@ def snapshot(engine, now=None):
         "port": {"name": st["port"], "virtual": st["virtual"], "fallback": st["fallback"],
                  "lost": st["port_lost"], "error": st["last_error"]},
         "messages_sent": st["messages_sent"], "pos": None, "lanes": [],
+        "transport_mode": st.get("transport_mode"),
     }
     position = st["position"]
     if playing and position:
@@ -127,8 +129,10 @@ def snapshot(engine, now=None):
     fills_now = bar_hits[2] if bar_hits and bar_hits[0] == bar else frozenset()
     roles = dict(pattern.roles)
     next_roles = queued["pattern"].roles if queued else {}
-    params = {}
+    params, slots = {}, {}
     for (ch, cc), value in st["cc_values"].items():
+        if cc == SAMPLE_SLOT_CC:
+            slots[ch + 1] = value
         if cc not in HIDDEN_CCS:
             params.setdefault(ch + 1, []).append({"name": CC_NAMES.get(cc, f"cc {cc}"), "cc": cc, "value": value})
     ramps = {}
@@ -136,7 +140,7 @@ def snapshot(engine, now=None):
         ramps.setdefault(ramp["track"], []).append(ramp)
     in_use = {t for t, bars in work.items() if any(bars)}
     in_use |= {t for t, bars in (queued["pattern"].bars.items() if queued else ()) if any(bars)}
-    in_use |= st["muted"] | st["hw_muted"] | set(st["drops"]) | set(st["density"]) | set(ramps) | set(params)
+    in_use |= st["muted"] | st["hw_muted"] | set(st["drops"]) | set(st["density"]) | set(ramps) | set(params) | set(slots)
     in_use |= {t for ts in st["fills"].values() for t in ts} | set(fills_now)
     future_fills = {t for b, ts in st["fills"].items() if b > bar for t in ts}
 
@@ -158,6 +162,7 @@ def snapshot(engine, now=None):
             "density": st["density"].get(track),
             "params": sorted(params.get(track, []), key=lambda p: p["cc"]),
             "ramps": ramps.get(track, []),
+            "sample_slot": slots.get(track),
         }
         for hit in lane["steps"]:
             hit.append(note_name(hit[1]) if lane["melodic"] else "")

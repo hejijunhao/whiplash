@@ -32,7 +32,10 @@ SCHEMAS = {
                         "(mode 'queued', with switch_at_bar); mutes, ramps and drops carry over, mutations "
                         "(density/swing/humanize) reset. Passing a different port restarts on that port. Falls back "
                         "to a virtual MIDI port named 'Whiplash' when no Digitakt is connected: the result then "
-                        "carries a 'warning' and the hardware is silent. If the user wants to watch the beat, "
+                        "carries a 'warning' and the hardware is silent. MIDI Start also starts the Digitakt's own "
+                        "sequencer, so trigs in the pattern selected on the unit play on top: every result carries "
+                        "an overlap_warning to pass on (select an empty pattern on the unit, or use "
+                        "send_transport=false). If the user wants to watch the beat, "
                         "whiplash_open_view shows it live in a local browser page."),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
@@ -41,6 +44,11 @@ SCHEMAS = {
                     "description": "Tempo; default is the genre's. On a live switch it applies at the switch."},
             "bars": {"type": "integer", "minimum": 1, "maximum": BARS_MAX, "description": "Stop after N bars; omit to loop until stop"},
             "port": {"type": "string", "description": "Exact output port name (optional; auto-detects Digitakt)"},
+            "send_transport": {"type": "boolean",
+                               "description": ("true (default, or WHIPLASH_SEND_TRANSPORT): send MIDI Start/Stop "
+                                               "with the clock. false: clock only, no Start and no Stop, so the "
+                                               "Digitakt's own sequencer stays stopped. Changing it while playing "
+                                               "restarts instead of queueing.")},
         }},
     },
     "whiplash_set_param": {
@@ -57,6 +65,20 @@ SCHEMAS = {
             "value": {"type": "integer", "minimum": 0, "maximum": 16383,
                       "description": ("0-127 for param and cc. For nrpn, the full 14-bit value 0-16383 "
                                       "(data MSB = value >> 7, LSB = value & 127); a 7-bit amount v is v * 128")},
+        }},
+    },
+    "whiplash_select_sample": {
+        "name": "whiplash_select_sample",
+        "description": ("Switch which sample a track plays, among samples already loaded in the Digitakt II "
+                        "project's sample pool (e.g. put a pad on track 7). Sends Sample Slot Select (CC 19) with "
+                        "the slot number 0-127 within the sample bank currently selected on the unit. Whiplash "
+                        "can't list, preview or hear samples, and can't load new ones: ask the user which slot "
+                        "holds what, or try slots and listen. The unit's SMP list starts with OFF (no sound). "
+                        "Same as whiplash_set_param with param 'sample_slot'."),
+        "parameters": {"type": "object", "required": ["track", "slot"], "properties": {
+            "track": TRACK,
+            "slot": {"type": "integer", "minimum": 0, "maximum": 127,
+                     "description": "Sample slot 0-127 in the unit's current sample bank"},
         }},
     },
     "whiplash_ramp_param": {
@@ -122,7 +144,8 @@ SCHEMAS = {
     },
     "whiplash_stop": {
         "name": "whiplash_stop",
-        "description": ("Stop playback: note-offs, All Notes Off on channels 1-8, and MIDI transport Stop. "
+        "description": ("Stop playback: note-offs, All Notes Off on channels 1-8, and MIDI transport Stop (not in "
+                        "clock-only mode, so a pattern running on the unit isn't halted). "
                         "Also resets mutes, ramps, mutations and any queued switch. Safe to call when nothing is "
                         "playing (acts as a panic button)."),
         "parameters": EMPTY,
@@ -130,7 +153,7 @@ SCHEMAS = {
     "whiplash_status": {
         "name": "whiplash_status",
         "description": ("Show what Whiplash is doing: port (and whether it is the silent virtual fallback, or a "
-                        "Digitakt that has become available), pattern, bpm, bar, queued switch, muted tracks, active "
+                        "Digitakt that has become available), transport_mode (start_stop or clock_only), pattern, bpm, bar, queued switch, muted tracks, active "
                         "ramps with progress, mutations, and last_error if the sequencer stopped on a fault."),
         "parameters": EMPTY,
     },

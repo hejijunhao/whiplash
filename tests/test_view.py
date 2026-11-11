@@ -140,10 +140,25 @@ def test_snapshot_lanes_follow_what_the_agent_drives(fake):
     assert lanes[5]["density"] == 0.5
     assert lanes[6]["melodic"] and lanes[6]["steps"][0][-1] == view.note_name(lanes[6]["steps"][0][1])
     assert lanes[6]["params"] == [{"name": "filter_freq", "cc": 74, "value": 20}]
+    assert frame["transport_mode"] in ("start_stop", "clock_only")
+    assert lanes[1]["sample_slot"] is None
     assert lanes[11]["role"] == "cc only" and lanes[11]["steps"] == [] and lanes[11]["params"][0]["value"] == 90
     assert len(lanes[1]["loop"]) == patterns.BARS and lanes[1]["loop"][0][0] == [0, 118]
     assert frame["pos"]["bar"] == 0 and frame["pos"]["step"] == 3 and frame["pos"]["age"] >= 0
     json.dumps(frame)
+
+
+def test_snapshot_shows_sample_slot_badge_and_clock_only_mode(fake):
+    eng, _ = fake
+    eng.play(P["techno"], bpm=300, send_transport=False)
+    try:
+        eng.set_param(3, 12, param="sample_slot")
+        frame = view.snapshot(eng)
+        lane = {l["track"]: l for l in frame["lanes"]}[3]
+        assert frame["transport_mode"] == "clock_only"
+        assert lane["sample_slot"] == 12 and all(p["cc"] != view.SAMPLE_SLOT_CC for p in lane["params"])
+    finally:
+        eng.stop()
 
 
 def test_snapshot_hides_plumbing_ccs_and_shows_ramps_and_queue(fake):

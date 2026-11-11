@@ -83,7 +83,7 @@ def test_register_is_fast_and_lazy():
 
 
 def test_every_tool_is_namespaced():
-    assert len(tools.HANDLERS) == 13
+    assert len(tools.HANDLERS) == 14
     assert all(name.startswith("whiplash_") for name in tools.HANDLERS)
 
 
@@ -273,7 +273,8 @@ def test_set_param_cc_and_blocks(fake):
     eng.set_param(2, 100, param="resonance")
     assert port.messages[-1].channel == 1 and port.messages[-1].control == 75
     sent = len(port.messages)
-    for bad in (dict(cc=19), dict(cc=24), dict(cc=0), dict(nrpn=[1, 3]), dict(param="sample"),
+    for bad in (dict(cc=19), dict(cc=24), dict(cc=0), dict(nrpn=[1, 3]), dict(nrpn=[1, 8]), dict(nrpn=[1, 9]),
+                dict(param="sample_bank"), dict(param="sample", value=200),
                 dict(cc=74, value=200), dict(nrpn=[1, 200]), dict(nrpn=[1]), dict(),
                 dict(param="cutoff", cc=74), dict(cc=74, nrpn=[1, 20]), dict(cc=74, track=17)):
         kwargs = {"value": 1, "track": 1, **bad}

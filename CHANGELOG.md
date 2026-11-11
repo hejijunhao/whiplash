@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: visualiser (`feat/visualiser`, still 0.3.0)
+## Unreleased: visualiser (`feat/visualiser`, on top of 0.4.0)
 
 Added
 - `whiplash_open_view` / `whiplash_close_view`: a live, read-only web page served on `127.0.0.1` and opened in the default browser. It shows:
@@ -12,7 +12,23 @@ Added
 - Hermes conversation hooks: `pre_llm_call`, `on_stream_start`/`delta`/`end`, `pre_tool_call`, `post_tool_call` and `post_llm_call`. They keep in-memory observers only, return `None` and ignore subagent sessions. Without hook support, the view falls back to a read-only poll of `~/.hermes/state.db`.
 - The engine publishes the playhead (`position`) and the current bar's hits (`bar_hits`) from the clock thread by plain assignment, and `view_state()` gives a lock-short copy of the state for the view.
 - `docs/visualiser-design.md`: the approved design.
+- The page shows the v0.4 transport mode (`START/STOP` or `CLOCK ONLY`) and each track's last selected sample slot.
 - CI also runs on `feat/visualiser`.
+
+## 0.4.0
+
+Two fixes from the first live session on a Digitakt II: tracks can now switch to another sample already in the project, and the beat can run on clock alone so the unit's own pattern doesn't layer in. 12 tools.
+
+Added
+- `whiplash_select_sample(track, slot)` and the named param `sample_slot` (aliases `sample`, `smp`, `slot`): sends Sample Slot Select, CC 19, slot 0-127 within the sample bank selected on the unit. Verified in the manual's Appendix B (B.3, p. 109; B.9, p. 113) and on midi.guide. It only picks among samples already loaded in the project pool: Whiplash can't list, preview or load samples. Out-of-range slots are rejected, and it can't be ramped.
+- `send_transport` on `whiplash_play_pattern`, with a `WHIPLASH_SEND_TRANSPORT` env default. `true` (the default, as before) sends Start, clock and Stop. `false` sends clock only: no Start, and no Stop either, so Whiplash can't halt a pattern running on the unit. Changing it while playing restarts instead of queueing. `whiplash_status` shows `transport_mode`.
+- `overlap_warning` on every `whiplash_play_pattern` result (start and queued switch). MIDI Start also starts the Digitakt's own sequencer, so trigs in the pattern selected on the unit play on top; the warning tells the user to select an empty pattern, or to use clock only.
+- CI also runs on `feat/v04`.
+
+Changed
+- **Sample policy relaxed, narrowly.** CC 19 is now sent, but only through the named param, so raw `cc: 19` is still refused. Sample bank select (CC 24, NRPN 1:9), the sample NRPNs 1:3 and 1:8, MIDI bank select, SysEx and program change all stay blocked.
+- Machine type (Oneshot, Werp, ...) is not controllable: neither the manual nor midi.guide documents a CC or NRPN for it.
+- README and the catalog drafts say what sample select can and can't do, and add the empty-pattern advice.
 
 ## 0.3.0
 

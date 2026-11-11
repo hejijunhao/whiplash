@@ -250,6 +250,7 @@ select.btn { max-width: 260px; background: var(--panel); }
       <div class="stack" id="portBlock">
         <div class="label">midi out</div>
         <span id="portPill" class="chip"><span class="dot"></span><span id="portName">no port yet</span></span>
+        <span id="transportMode" class="label"></span>
         <div id="portErr"></div>
       </div>
     </header>
@@ -418,6 +419,8 @@ function renderTransport(prev) {
   else if (port.name && port.virtual) { pill.classList.add("amber"); $("portName").textContent = `VIRTUAL · ${port.name}`; }
   else if (port.name) { pill.classList.add("cyan"); $("portName").textContent = port.name; }
   else $("portName").textContent = "no port yet";
+  $("transportMode").textContent = S.transport_mode === "clock_only" ? "CLOCK ONLY · unit sequencer stays stopped"
+    : S.transport_mode === "start_stop" ? "START/STOP · unit sequencer follows" : "";
   $("portErr").textContent = port.error || "";
   $("portErr").title = port.error || "";
 }
@@ -478,6 +481,7 @@ function updateLane(L, lane) {
     b.push(`<span class="badge fill">${at === bar + 1 ? "FILL ▸ next bar" : `FILL @ bar ${at + 1}`}</span>`);
   }
   if (lane.fill === "now") b.push(`<span class="badge fill">FILL</span>`);
+  if (lane.sample_slot !== null && lane.sample_slot !== undefined) b.push(`<span class="badge">SMP ${String(lane.sample_slot).padStart(3, "0")}</span>`);
   if (lane.density) b.push(`<span class="badge dens">DENS ${lane.density > 0 ? "+" : "−"}${Math.round(Math.abs(lane.density) * 100)}%</span>`);
   const html = b.join("");
   if (L.badges.innerHTML !== html) L.badges.innerHTML = html;
