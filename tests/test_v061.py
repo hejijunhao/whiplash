@@ -582,7 +582,8 @@ def test_version_is_0_6_1():
     assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.6.1"
     assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.6.1"
     assert whiplash.__version__ == "0.6.1"
-    assert (ROOT / "CHANGELOG.md").read_text().split("\n## ", 1)[1].startswith("0.6.1")
+    releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
+    assert releases[0].startswith("0.6.1")
     for manifest in (yaml.safe_load(open(ROOT / "plugin.yaml"))["provides_tools"],
                      yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["capabilities"]["provides_tools"]):
         assert manifest.index("whiplash_arrange") == manifest.index("whiplash_set_progression") + 1
@@ -602,3 +603,46 @@ def test_stale_wording_is_gone():
         assert fact in skill, fact
     readme = (ROOT / "README.md").read_text()
     assert "whiplash_arrange" in readme and "Arrangement" in readme
+
+
+# ---- follow-ups from PR #16 (demo rehearsal) -------------------------------------------------
+
+def test_a_fresh_play_after_stop_sends_no_second_panic_before_start(fake):
+    eng, port = fake
+    eng.play(P["techno"], bpm=300)
+    wait_bar(eng, 1)
+    eng.stop()
+    port.messages.clear()
+    eng.play(P["techno"], bpm=300)
+    wait_bar(eng, 1)
+    eng.stop()
+    first_start = next(i for i, m in enumerate(port.messages) if m.type == "start")
+    before = port.messages[:first_start]
+    assert not [m for m in before if m.type == "stop" or (m.type == "control_change" and m.control == 123)]
+    assert [m for m in port.messages if m.type == "stop"]  # the explicit stop still sends one
+
+
+def test_stop_when_idle_is_still_a_panic_button(fake):
+    eng, port = fake
+    eng.ensure_port()
+    eng.stop()
+    assert {m.channel for m in port.messages if m.type == "control_change" and m.control == 123} >= set(range(8))
+    assert [m for m in port.messages if m.type == "stop"]
+
+
+def test_a_fresh_play_still_silences_notes_left_sounding(fake):
+    eng, port = fake
+    eng.ensure_port()
+    eng._sounding.add((5, 57))  # e.g. a run whose own panic failed
+    eng.play(P["techno"], bpm=300)
+    eng.stop()
+    assert any(m.type == "note_off" and m.channel == 5 and m.note == 57 for m in port.messages)
+
+
+def test_length_audible_does_not_repeat_its_own_key(fake):
+    eng, _ = fake
+    pretend_playing(eng, P["techno"])
+    text = eng.write_part(7, rhythm="8ths")["length_audible"]
+    assert not text.startswith("length_audible") and "length_audible:" not in text
+    eng.set_param(7, 1, param="amp_mode")
+    assert "length_audible:" not in eng.write_part(7, rhythm="8ths")["length_audible"]

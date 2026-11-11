@@ -67,7 +67,7 @@ PITCH_NOTE = ("pitch: MIDI note 60 plays a sample at its own pitch, if tune is 6
               "sent (null = not sent, counted as 64); Whiplash can't see the OCTAVE setting or an LFO on tune. "
               "Names use Elektron octaves (0 = C0, C5 = MIDI 60). A line far below native sounds stretched or "
               "grainy: raise it with whiplash_transpose (or tune) before touching the envelope.")
-LENGTH_NOTE = ("length_audible: length sets the exact MIDI note-off, but the Digitakt only ends a sound on note-off "
+LENGTH_NOTE = ("length sets the exact MIDI note-off, but the Digitakt only ends a sound on note-off "
                "when the track's AMP MODE is ADSR (amp_mode 1, CC 87) or, in AHD, HOLD is NOTE (amp_hold 127, CC 80). "
                "With a fixed HOLD (0-126) every hit sounds the same length, and a long DECAY still rings after "
                "note-off. Whiplash can't read the unit's envelope: ask the user, or pass envelope: 'note' to set "
@@ -532,7 +532,9 @@ class Engine:
             self._check_transpose_targets(transpose, pattern, carried=set())  # a fresh start clears written parts
             if send_transport is None:
                 send_transport = default_send_transport()
-            stopped = self.stop()  # stops in the old mode (no Stop if the old run was clock-only)
+            # stops in the old mode (no Stop if the old run was clock-only); an idle, already-silenced port gets
+            # no second All Notes Off / MIDI Stop just before this run's Start
+            stopped = self.stop(silence_idle=False)
             self.ensure_port(port)
             with self._lock:
                 self.send_transport = send_transport
@@ -628,8 +630,12 @@ class Engine:
         key = self.effective_key()
         return key.name if key else None
 
-    def stop(self):
-        """Stop the sequencer, silence the port once, and reset mutes, ramps and mutations."""
+    def stop(self, silence_idle=True):
+        """Stop the sequencer, silence the port once, and reset mutes, ramps and mutations.
+
+        silence_idle=False (play() before a fresh start) skips the panic when nothing was playing and no note
+        is sounding: the last run already silenced the port on its way out.
+        """
         with self._transport:
             thread, stop, done = self._thread, self._stop, self._done
             self._thread = self._stop = self._done = None
@@ -643,7 +649,8 @@ class Engine:
             try:
                 # A run that was just stopped silences the port itself on the way out; only
                 # send the panic here when that did not happen (idle, or the thread is stuck).
-                if self._port is not None and not (was_playing and done.is_set()):
+                idle_quiet = not was_playing and not silence_idle and not self._sounding
+                if self._port is not None and not (was_playing and done.is_set()) and not idle_quiet:
                     self._panic()
             except Exception as exc:
                 self._record("stop", exc)

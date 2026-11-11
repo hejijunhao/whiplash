@@ -1,6 +1,10 @@
 # Whiplash v0.6 build plan
 
-Status: **v0.6.0 shipped in this PR** (item 1: keys, scales, chord progressions). v0.6.1 (arrangement, plus the v0.5.3 fill follow-up) and v0.6.2 (transitions and mix levels) are not started. Nothing in v0.6 has been tested on a real Digitakt II yet; the hardware checks below are for Phil's Air.
+Status:
+- **v0.6.0 shipped** (PR #14; item 1: keys, scales, chord progressions).
+- **v0.6.1 is implemented** in PR "Whiplash v0.6.1: arrangement + follow-ups": items 2 and 3, plus the review follow-ups from PRs #15 and #16. §6 lists the decisions taken.
+- v0.6.2 (transitions and mix levels) is not started.
+- Nothing in v0.6 has been tested on a real Digitakt II yet. The hardware checks below are for Phil's Air.
 
 - **Branch:** `feat/v06-keys`, cut from `main` at `caf2209` (v0.5.3 merged, PR #12).
 - **Input:** the v0.6 section of [roadmap.md](roadmap.md), the open v0.5.3 follow-up in [reference.md](../digitakt-ii/reference.md) §15.1 #26, and Phil's instruction of Nov 11 2026 to keep building toward 1.0. Phil was asleep, so the orchestrator took the scope decisions listed in §5 on his behalf. Each one can be reverted.
@@ -182,3 +186,27 @@ Merge order: v0.6.0 → v0.6.1 → v0.6.2. Each PR is cut from `main` after the 
 4. **Drum, cymbal, perc and fx tracks can never follow a progression,** even when asked explicitly. This matches the v0.5.3 rule that a cymbal never gets a melodic line.
 5. **`set_progression` needs a pattern playing**, like `write_part` and `transpose`. There is no `progression` argument on `play_pattern` yet, so it is two calls. This keeps the tool descriptions inside the budget.
 6. **Tool-description budget:** the per-tool and total tool-description caps stay (≤400 and ≤3000 characters). The params and JSON caps go up by about 700 characters and 1.5 KB for the new tool.
+
+## 6. Decisions taken for v0.6.1 (on Phil's behalf; each is reversible)
+
+v0.6.1 was built from `main` after PR #16, as `feat/v061-arrangement`. Phil was asleep and had asked to keep building toward 1.0, so the orchestrator scoped it. The hackathon smoke test (hardware checklist Part A, `docs/demo/`) had to stay unchanged, and `scripts/rehearse_demo.py` still passes it.
+
+1. **Section tracks are group words resolved at each section's first bar.** The words are `all`, `drums`, `kick`, `hats`, `perc`, `bass`, `music`, or any kit role, and track numbers work too. Why: the presets have to work on any kit map and survive a pattern switch or relabel. The result's `plays_now` shows how the groups resolve at the time of the call.
+2. **Sections mute with Whiplash's own mutes, never CC 94.** A section's `tracks` also unmute a track the user muted. `clear: true` unmutes only what the arrangement muted.
+3. **Presets.**
+   - Intro: kick and hats.
+   - Build: adds perc and the music tracks, with `filter_freq` going 20 → 127 (exp). The kick sits out its last bar.
+   - Drop: everything.
+   - Break: no kick or bass.
+   - Outro: drums only.
+
+   Every section but the outro ends on a fill. `short_demo` defaults to 75 s and is rounded to 4-bar phrases, so it lands within 60-90 s at every genre's tempo. `seconds` can set another length (30-600). The build's ramp leaves the filter at 127 until the kit is reloaded, and the result says so.
+4. **`transition` is refused until v0.6.2,** with a hint. `mix` snapshot recall in sections waits for item 5.
+5. **A ramp without `from` starts from the last value Whiplash sent.** If there is none, it is skipped at the bar line and listed in status. This is the same rule as `whiplash_ramp_param`, applied when the section starts.
+6. **Default fills skip cymbal and perc tracks.** They still get the open-hat and clap shapes when named. Why: a labelled "tuned cymbal" often plays a pitched or borrowed line, and with this rule the demo's drop with fill (A6) is unchanged.
+7. **Written parts win their track in routing.** If a generated part's labelled match is written, it moves to the next matching label, or is reported under `replaced_by_written`. It never falls back to its default track, which would add a second bass when the user wrote one.
+8. **The cymbal/track 5 question stays open.** Labelling a cymbal still moves the open hat off an unlabelled track 5. v0.6.1 only reports it (`routing.vacated`, `vacated_note`). Phil decides between the documented routing order and "unlabelled tracks keep the default layout".
+9. **No idle panic before a fresh start.** The previous run already sent its panic, so a fresh start after a stop doesn't send another one just before MIDI Start. `whiplash_stop` is still a full panic when idle.
+10. **Tool-description budget:**
+    - The per-tool (400) and total (3,000) caps stay. Other tool descriptions were trimmed to make room for `whiplash_arrange`, keeping every caveat the tests pin.
+    - The params cap rises to 7,400 characters and the JSON cap to 17,500 bytes.
