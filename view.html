@@ -1,0 +1,1064 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Whiplash Live</title>
+<style>
+:root {
+  --void: #05060A; --panel: #0B0E15; --glass: rgba(11, 14, 21, 0.74); --grid: #171C28; --line: #252C3D;
+  --text: #E8ECF5; --dim: #6E778C; --cyan: #2EE6FF; --magenta: #FF2E9A; --lime: #B6FF3B;
+  --amber: #FFB22E; --red: #FF3D4D;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Inter", "Segoe UI", sans-serif;
+  --agent-w: 480px; --header-h: 132px; --analyser-h: 280px; --log-h: 48px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--void); color: var(--text); overflow: hidden; }
+body {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  background-color: var(--void);
+  background-image: linear-gradient(rgba(23, 28, 40, 0.4) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(23, 28, 40, 0.4) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+button, select { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+
+#app { display: grid; height: 100vh; grid-template-columns: minmax(0, 1fr) var(--agent-w); transition: grid-template-columns 260ms ease; }
+#app.collapsed { grid-template-columns: minmax(0, 1fr) 56px; }
+#main { display: grid; min-width: 0; grid-template-rows: var(--header-h) minmax(0, 1fr) var(--analyser-h) var(--log-h); padding: 0 16px; }
+
+/* ---- transport ---------------------------------------------------------- */
+#transport { display: flex; align-items: center; gap: 40px; border-bottom: 1px solid var(--line); min-width: 0; }
+.bpm-block { position: relative; display: flex; align-items: baseline; gap: 12px; padding-bottom: 10px; }
+#bpm { font-size: 120px; line-height: 1; font-weight: 200; letter-spacing: -0.02em; transition: color 300ms; }
+#bpm.idle { color: var(--dim); }
+.bpm-unit { font-size: 22px; color: var(--dim); letter-spacing: 0.12em; }
+#beatline { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--cyan); border-radius: 2px; opacity: 0.25; box-shadow: 0 0 14px var(--cyan); }
+#bpmDelta { position: absolute; right: -6px; top: 4px; font-size: 22px; color: var(--cyan); opacity: 0; transition: opacity 600ms; }
+#bpmDelta.down { color: var(--amber); }
+.stack { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.label { font-size: 14px; color: var(--dim); letter-spacing: 0.14em; text-transform: uppercase; }
+.value { font-size: 28px; }
+#beats { display: inline-flex; gap: 8px; margin-left: 14px; vertical-align: middle; }
+#beats i { width: 12px; height: 12px; border-radius: 50%; background: var(--grid); border: 1px solid var(--line); display: inline-block; }
+#beats i.on { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+#pattern { font-size: 28px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); font-size: 16px; letter-spacing: 0.08em; white-space: nowrap; }
+.chip.amber { color: var(--amber); border-color: var(--amber); box-shadow: 0 0 12px rgba(255, 178, 46, 0.25); }
+.chip.red { color: var(--red); border-color: var(--red); background: rgba(255, 61, 77, 0.1); }
+.chip.cyan { color: var(--cyan); border-color: rgba(46, 230, 255, 0.5); }
+.chip.flash { animation: flash 1s steps(2, start) infinite; }
+@keyframes flash { to { visibility: hidden; } }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.spacer { flex: 1; }
+#portBlock { align-items: flex-end; }
+#portErr { font-size: 14px; color: var(--red); max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- lanes (runway) ---------------------------------------------------- */
+#lanesWrap { position: relative; min-height: 0; padding: 18px 0 8px; perspective: 1600px; perspective-origin: 50% 0%; }
+#runway { height: 100%; display: flex; flex-direction: column; transform-origin: 50% 100%; transform: rotateX(16deg); transition: transform 400ms ease; will-change: transform; }
+body.flat #runway { transform: none; }
+#lanes { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0; justify-content: flex-end; }
+.lane { --hue: #888; position: relative; display: grid; grid-template-columns: 220px minmax(0, 1fr) 320px 40px; grid-template-rows: minmax(0, 1fr); gap: 14px; align-items: center;
+  height: var(--lane-h, 77px); padding: 0 10px; border-radius: 12px; border: 1px solid transparent; background: rgba(11, 14, 21, 0.55);
+  transition: opacity 300ms, transform 300ms, filter 300ms, background 300ms; }
+.lane.enter { opacity: 0; transform: translateX(-30px); }
+.lane.hi { border-style: dotted; border-color: var(--line); }
+.lane .lh { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lane .tn { font-size: 18px; letter-spacing: 0.08em; color: var(--hue); }
+.lane .role { font-size: 18px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { font-size: 14px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim); letter-spacing: 0.06em; white-space: nowrap; }
+.badge.mute { color: var(--text); border-color: var(--dim); }
+.badge.hw { color: var(--red); border-color: var(--red); }
+.badge.drop { color: var(--text); background: #000; border-color: var(--text); }
+.badge.fill { color: var(--amber); border-color: var(--amber); }
+.badge.dens { color: var(--cyan); border-color: rgba(46, 230, 255, 0.5); }
+.cvbox { position: relative; height: 100%; min-width: 0; min-height: 0; }
+.cvbox > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.lane .gridbox { height: calc(100% - 10px); }
+.lane.muted { filter: saturate(0.25); opacity: 0.45; }
+.lane.muted::after { content: ""; position: absolute; inset: 0; border-radius: 12px; pointer-events: none;
+  background: repeating-linear-gradient(45deg, rgba(232, 236, 245, 0.09) 0 2px, transparent 2px 12px); }
+.lane.dropped { background: #000; filter: brightness(0.45); }
+.lane.filling { border-color: var(--amber); animation: fillpulse 0.5s ease-in-out infinite alternate; }
+@keyframes fillpulse { to { box-shadow: 0 0 22px rgba(255, 178, 46, 0.45); } }
+.lane.returning { animation: sweep 600ms ease-out; }
+@keyframes sweep { from { background: linear-gradient(90deg, var(--hue) 0%, transparent 30%); } }
+.lane.ping { animation: ping 700ms ease-out; }
+@keyframes ping { from { box-shadow: 0 0 0 2px var(--magenta), 0 0 30px var(--magenta); } to { box-shadow: 0 0 0 0 transparent; } }
+.lp { display: flex; flex-direction: column; gap: 5px; justify-content: center; min-width: 0; }
+.param { display: grid; grid-template-columns: 112px minmax(0, 1fr) 76px; gap: 8px; align-items: center; font-size: 14px; color: var(--dim); }
+.param .pn { text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: 0.04em; }
+.param .pv { text-align: right; color: var(--text); white-space: nowrap; }
+.param .track { position: relative; height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+.param .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--hue); border-radius: 4px; transition: width 120ms ease; }
+.param.ramp { color: var(--magenta); }
+.param.ramp .track { overflow: visible; }
+.param.ramp .fill { background: var(--magenta); transition: none; box-shadow: 0 0 10px var(--magenta);
+  background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.22) 0 4px, transparent 4px 14px); background-size: 28px 8px; animation: chev 0.8s linear infinite; }
+.param.ramp.down .fill { animation-direction: reverse; }
+@keyframes chev { to { background-position: 28px 0; } }
+.param .ghost { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1px; border: 1px solid var(--magenta); border-radius: 2px; }
+.param .pv .rid { color: var(--magenta); }
+.param.done .fill { animation: flashdone 400ms; }
+@keyframes flashdone { 50% { background: #fff; } }
+.more { font-size: 14px; color: var(--dim); }
+#minimapBox { height: 28px; margin: 8px 10px 0; flex: none; }
+#empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--dim); text-align: center; }
+#empty .big { font-size: 28px; letter-spacing: 0.2em; color: var(--text); opacity: 0.8; }
+
+/* ---- analyser ------------------------------------------------------------ */
+#analyser { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 280px 160px; grid-template-rows: minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); min-height: 0; }
+#analyser canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.panel { position: relative; background: rgba(11, 14, 21, 0.6); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+#srcBadge { position: absolute; left: 12px; top: 10px; z-index: 2; font-size: 14px; letter-spacing: 0.1em; padding: 3px 10px; border-radius: 6px; }
+#srcBadge.audio { color: var(--lime); border: 1px solid var(--lime); background: rgba(182, 255, 59, 0.08); }
+#srcBadge.fallback { color: var(--amber); border: 1px dashed var(--amber); background: rgba(255, 178, 46, 0.08); }
+#audioCtl { position: absolute; right: 12px; top: 8px; z-index: 2; display: flex; gap: 8px; }
+.btn { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; font-size: 14px; letter-spacing: 0.08em; color: var(--text); cursor: pointer; }
+.btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn.on { border-color: var(--cyan); color: var(--cyan); }
+select.btn { max-width: 260px; background: var(--panel); }
+.plabel { position: absolute; left: 12px; bottom: 8px; font-size: 14px; color: var(--dim); letter-spacing: 0.1em; z-index: 2; }
+#meterLabel { position: absolute; left: 0; right: 0; bottom: 6px; text-align: center; font-size: 14px; color: var(--dim); }
+
+/* ---- log ------------------------------------------------------------------ */
+#log { display: flex; align-items: center; gap: 22px; border-top: 1px solid var(--line); overflow: hidden; white-space: nowrap; font-size: 14px; color: var(--dim); cursor: pointer; min-width: 0; }
+#log .tag { color: var(--magenta); letter-spacing: 0.14em; }
+#logEntries { display: flex; gap: 28px; min-width: 0; }
+#log .entry { flex: none; }
+#log .entry b { color: var(--text); font-weight: 500; }
+#log .entry.err b, #log .entry.err { color: var(--red); }
+#log .entry.new { animation: logIn 500ms ease-out; }
+@keyframes logIn { from { color: var(--magenta); transform: translateY(6px); opacity: 0; } }
+#logDrawer { position: absolute; left: 16px; bottom: 56px; width: min(900px, calc(100% - 32px)); max-height: 50vh; overflow: auto; z-index: 20;
+  background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 14px; }
+#logDrawer div { padding: 4px 0; border-bottom: 1px solid var(--grid); white-space: pre-wrap; word-break: break-word; color: var(--dim); }
+#logDrawer b { color: var(--text); font-weight: 500; }
+
+/* ---- agent overlay ---------------------------------------------------------- */
+#agent { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--glass);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border-left: 1px solid var(--line); }
+#agentHead { display: flex; align-items: center; gap: 10px; padding: 0 14px; height: 64px; border-bottom: 1px solid var(--line); flex: none; }
+#agentHead .title { font-size: 16px; letter-spacing: 0.16em; }
+#agentHead .title .live { color: var(--magenta); }
+#chatSrc { font-size: 14px; color: var(--dim); }
+#chat { flex: 1; overflow-y: auto; padding: 16px 16px 40px; font-family: var(--sans); font-size: 18px; line-height: 1.45; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+#chat.blur { filter: blur(9px); }
+.msg { margin: 0 0 18px; padding-left: 14px; border-left: 2px solid var(--cyan); animation: msgIn 220ms ease-out; }
+.msg.hermes { border-left-color: var(--magenta); }
+@keyframes msgIn { from { opacity: 0; transform: translateY(12px); } }
+.who { font-family: var(--mono); font-size: 14px; color: var(--dim); letter-spacing: 0.14em; display: flex; justify-content: space-between; margin-bottom: 4px; }
+.body { white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
+.body + .body { margin-top: 10px; }
+.body code { font-family: var(--mono); font-size: 0.85em; background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; }
+.body pre { font-family: var(--mono); font-size: 14px; background: rgba(0, 0, 0, 0.35); padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: pre; margin: 6px 0; }
+.body.live::after { content: "▍"; color: var(--magenta); animation: flash 0.9s steps(2, start) infinite; }
+.thinking { font-family: var(--mono); font-size: 15px; color: var(--magenta); display: flex; align-items: center; gap: 10px; }
+.breathe { width: 10px; height: 10px; border-radius: 50%; background: var(--magenta); animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: 0.25; transform: scale(0.7); } }
+.toolchip { margin-top: 8px; display: inline-flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 14px; color: var(--dim);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 12px; cursor: pointer; background: transparent; }
+.toolchip:hover { color: var(--text); border-color: var(--dim); }
+.tools { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.tool { font-family: var(--mono); font-size: 14px; color: var(--dim); border: 1px solid var(--grid); border-radius: 8px; padding: 6px 9px; background: rgba(0, 0, 0, 0.25); }
+.tool .tname { color: var(--text); display: flex; gap: 8px; align-items: center; }
+.tool .tname .ms { margin-left: auto; color: var(--dim); }
+.tool.wl .tname { color: var(--magenta); }
+.tool.err .tname { color: var(--red); }
+.tool .targs, .tool .tres { white-space: pre-wrap; word-break: break-all; margin-top: 3px; max-height: 6.5em; overflow: hidden; }
+.tool .tres { color: #9aa3b8; }
+.tdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+#rail { display: none; flex-direction: column; align-items: center; gap: 14px; padding-top: 22px; }
+#app.collapsed #rail { display: flex; }
+#app.collapsed #agentHead, #app.collapsed #chat { display: none; }
+#railBtn { writing-mode: vertical-rl; letter-spacing: 0.3em; font-size: 14px; }
+#railPulse { width: 12px; height: 12px; border-radius: 50%; background: var(--magenta); opacity: 0; }
+#railPulse.on { opacity: 1; animation: breathe 1.2s ease-in-out infinite; }
+
+/* ---- captions (narrow windows) -------------------------------------------------- */
+#captions { display: none; position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%); width: min(92vw, 900px); z-index: 30;
+  background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 20px; font-family: var(--sans); transition: opacity 600ms; pointer-events: none; }
+#captions .cu { font-size: 16px; color: var(--cyan); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#captions .cu::before { content: "PHIL  "; font-family: var(--mono); color: var(--dim); letter-spacing: 0.12em; font-size: 13px; }
+#captions .ch { font-size: 26px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+#captions .ch::before { content: "HERMES  "; font-family: var(--mono); color: var(--magenta); letter-spacing: 0.12em; font-size: 14px; vertical-align: middle; }
+#captions.faded { opacity: 0; }
+#captions.blur { filter: blur(9px); }
+
+/* ---- status overlays ------------------------------------------------------------ */
+#offline { position: fixed; left: 0; right: 0; top: 0; z-index: 50; padding: 8px; text-align: center; background: #2a2f3a; color: var(--text); letter-spacing: 0.16em; font-size: 16px; }
+#help { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(5, 6, 10, 0.7); }
+#help .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px 32px; font-size: 18px; line-height: 2; }
+#help kbd { display: inline-block; min-width: 30px; text-align: center; border: 1px solid var(--line); border-radius: 6px; margin-right: 14px; color: var(--cyan); }
+
+/* ---- narrow: terminal beside the page --------------------------------------------- */
+@media (max-width: 1099px) {
+  :root { --header-h: 88px; --analyser-h: 190px; --log-h: 40px; }
+  #app, #app.collapsed { grid-template-columns: minmax(0, 1fr) 0; }
+  #agent { display: none; }
+  #captions { display: block; }
+  #captions.off { display: none; }
+  #transport { gap: 22px; }
+  #bpm { font-size: 72px; }
+  .bpm-unit { font-size: 16px; }
+  .value, #pattern { font-size: 20px; }
+  #portBlock .label, #barLabel { display: none; }
+  .lane { grid-template-columns: 120px minmax(0, 1fr) 24px; gap: 8px; }
+  .lane .lp { display: none; }
+  .lane.has-params .lh .badges::after { content: attr(data-param); font-size: 13px; color: var(--magenta); }
+  .lane .tn, .lane .role { font-size: 15px; }
+  #analyser { grid-template-columns: minmax(0, 1fr) 110px; }
+  #scopePanel { display: none; }
+}
+@media (max-width: 699px) {
+  #main { padding: 0 8px; }
+  .lane { grid-template-columns: 70px minmax(0, 1fr); }
+  .lane .meterbox { display: none; }
+  .lane .role { display: none; }
+  #transport { gap: 12px; flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="main">
+    <header id="transport">
+      <div class="bpm-block">
+        <div id="bpm" class="idle">120</div><div class="bpm-unit">BPM</div>
+        <div id="bpmDelta"></div><div id="beatline"></div>
+      </div>
+      <div class="stack">
+        <div class="label" id="barLabel">bar</div>
+        <div class="value"><span id="bar">----</span><span id="beats"><i></i><i></i><i></i><i></i></span></div>
+        <div class="label" id="loopInfo"></div>
+      </div>
+      <div class="stack" style="min-width:0">
+        <div class="label">pattern</div>
+        <div id="pattern">idle</div>
+        <div><span id="queued" class="chip amber hidden"></span> <span id="swing" class="label"></span></div>
+      </div>
+      <div class="spacer"></div>
+      <div class="stack" id="portBlock">
+        <div class="label">midi out</div>
+        <span id="portPill" class="chip"><span class="dot"></span><span id="portName">no port yet</span></span>
+        <div id="portErr"></div>
+      </div>
+    </header>
+
+    <section id="lanesWrap">
+      <div id="runway"><div id="lanes"></div><div id="minimapBox" class="cvbox"><canvas id="minimap"></canvas></div></div>
+      <div id="empty"><div class="big">NO PATTERN PLAYING</div><div>ask Hermes to play something — this page follows along</div></div>
+    </section>
+
+    <section id="analyser">
+      <div class="panel" id="specPanel">
+        <div id="srcBadge" class="fallback">MIDI FALLBACK · NOT REAL AUDIO</div>
+        <div id="audioCtl">
+          <select id="audioDev" class="btn hidden" title="audio input"></select>
+          <button id="audioBtn" class="btn">CONNECT AUDIO</button>
+        </div>
+        <canvas id="spectrum"></canvas>
+        <div class="plabel" id="specLabel">SPECTRUM</div>
+      </div>
+      <div class="panel" id="scopePanel"><canvas id="scope"></canvas><div class="plabel" id="scopeLabel">SCOPE</div></div>
+      <div class="panel" id="meterPanel"><canvas id="meters"></canvas><div id="meterLabel">—</div></div>
+    </section>
+
+    <footer id="log"><span class="tag">LOG</span><span id="logEntries">no Whiplash actions yet</span></footer>
+  </div>
+
+  <aside id="agent">
+    <div id="agentHead">
+      <div class="title">HERMES · <span class="live">LIVE</span></div>
+      <span id="chatSrc"></span>
+      <div class="spacer"></div>
+      <button id="toolsBtn" class="btn" title="show tool calls (T)">TOOLS: OFF</button>
+      <button id="collapseBtn" class="btn" title="collapse (C)">⟩</button>
+    </div>
+    <div id="chat"></div>
+    <div id="rail"><button id="railBtn" class="btn" title="expand (C)">HERMES</button><div id="railPulse"></div></div>
+  </aside>
+</div>
+<div id="captions" class="faded"><div class="cu" id="capUser"></div><div class="ch" id="capHermes"></div></div>
+<div id="logDrawer" class="hidden"></div>
+<div id="offline" class="hidden">VIEW OFFLINE · RECONNECTING</div>
+<div id="help" class="hidden"><div class="card">
+  <div><kbd>C</kbd>collapse / show conversation</div>
+  <div><kbd>T</kbd>show tool calls</div>
+  <div><kbd>A</kbd>connect audio input</div>
+  <div><kbd>B</kbd>blur conversation</div>
+  <div><kbd>R</kbd>runway tilt on / off</div>
+  <div><kbd>F</kbd>fullscreen</div>
+  <div><kbd>?</kbd>this help</div>
+</div></div>
+
+<script>
+"use strict";
+// Whiplash live view. Read-only: it renders what the plugin streams over /events and never
+// sends anything back. Lanes, minimap and analyser are canvas; text and chat are DOM.
+
+const HUES = ["#FF6B6B", "#FFA552", "#F5D547", "#7BE35B", "#3FE0C5", "#4FB6FF", "#8E8CFF", "#E07BFF"];
+const STEPS = 16;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("whiplash." + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("whiplash." + k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
+};
+const hue = (t) => HUES[(t - 1) % 8];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const CURVES = { linear: (p) => p, exp: (p) => p ** 3, log: (p) => 1 - (1 - p) ** 3 };
+const CURVE_GLYPH = { linear: "lin", exp: "exp", log: "log" };
+
+let S = null;               // last state frame
+let frameAt = 0;            // performance.now() when S arrived
+let lastFrameWall = 0;
+const clock = { abs: null, at: 0 };   // playhead: absolute step `abs` started at page time `at`
+const lanes = new Map();    // track -> {el, grid, meter, data, energy, paramsKey, ...}
+const energy = new Float32Array(17);
+let lastStepSeen = null;
+let seenLog = null;
+
+// ---- canvas helpers -----------------------------------------------------------
+function fit(canvas) {
+  const w = Math.max(1, Math.round(canvas.clientWidth * DPR)), h = Math.max(1, Math.round(canvas.clientHeight * DPR));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  return [ctx, canvas.clientWidth, canvas.clientHeight];
+}
+function rrect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function alpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+// ---- timing ------------------------------------------------------------------
+function stepLen() { return S ? 60 / S.bpm / 4 : 0.125; }
+function playheadAbs(now) {
+  if (!S || !S.playing || clock.abs === null) return null;
+  let p = clock.abs + (now - clock.at) / 1000 / stepLen();
+  const ceiling = S.pos ? S.pos.bar * STEPS + S.pos.step + 2 : p;   // never run far past the last frame
+  return Math.min(p, ceiling);
+}
+function syncClock(frame, now) {
+  if (!frame.playing || !frame.pos) { clock.abs = null; return; }
+  const abs = frame.pos.bar * STEPS + frame.pos.step;
+  const at = now - frame.pos.age * 1000;                      // page time this step started
+  if (clock.abs === null) { clock.abs = abs; clock.at = at; return; }
+  const predicted = clock.abs + (now - clock.at) / 1000 / stepLen();
+  const actual = abs + (now - at) / 1000 / stepLen();
+  const err = actual - predicted;
+  if (Math.abs(err) > 1) { clock.abs = abs; clock.at = at; return; }   // jump (tempo change, restart)
+  // ease toward the server's clock instead of snapping: shift the start time by part of the error
+  clock.at -= err * 0.25 * stepLen() * 1000;
+}
+
+// ---- state handling --------------------------------------------------------------
+function onState(frame) {
+  const now = performance.now();
+  const prev = S;
+  S = frame; frameAt = now; lastFrameWall = now;
+  syncClock(frame, now);
+  renderTransport(prev);
+  renderLanes(prev);
+  renderLog();
+  $("chatSrc").textContent = frame.chat_source === "hooks" ? "· hooks" : "· state.db" + (frame.chat_error ? " (unavailable)" : "");
+}
+
+let bpmShown = null, bpmTween = null;
+function renderTransport(prev) {
+  const bpmEl = $("bpm");
+  bpmEl.classList.toggle("idle", !S.playing);
+  if (bpmShown === null) { bpmShown = S.bpm; bpmEl.textContent = fmtBpm(S.bpm); }
+  else if (S.bpm !== (bpmTween ? bpmTween.to : bpmShown)) {
+    const delta = S.bpm - (bpmTween ? bpmTween.to : bpmShown);
+    bpmTween = { from: bpmShown, to: S.bpm, t0: performance.now() };
+    const d = $("bpmDelta");
+    d.textContent = (delta > 0 ? "▲ +" : "▼ ") + fmtBpm(delta);
+    d.className = delta > 0 ? "" : "down";
+    d.style.opacity = 1;
+    clearTimeout(d._t); d._t = setTimeout(() => { d.style.opacity = 0; }, 2 * 4 * 60000 / S.bpm);
+  }
+  $("bar").textContent = S.playing ? String(S.bar + 1).padStart(4, "0") : "----";
+  let loop = "";
+  if (S.playing) {
+    loop = `loop ${S.loop_bar + 1}/4`;
+    if (S.bars) loop += ` · bar ${S.pattern_bar + 1}/${S.bars}`;
+  }
+  $("loopInfo").textContent = loop;
+  $("pattern").textContent = S.pattern ? S.pattern : "idle";
+  $("pattern").style.color = S.playing ? "" : "var(--dim)";
+  $("swing").textContent = S.playing && S.swing !== 50 ? `SW ${S.swing}%` : "";
+  const q = $("queued");
+  if (S.queued && S.playing) {
+    q.classList.remove("hidden");
+    q.dataset.at = S.queued.at;
+    q.dataset.label = `⇢ ${S.queued.pattern.toUpperCase()} @ BAR ${S.queued.at + 1}` +
+      (S.queued.bpm && S.queued.bpm !== S.bpm ? ` · ${fmtBpm(S.queued.bpm)}` : "");
+  } else q.classList.add("hidden");
+  const pill = $("portPill"), port = S.port;
+  pill.className = "chip";
+  if (port.lost) { pill.classList.add("red", "flash"); $("portName").textContent = `PORT LOST: ${port.lost}`; }
+  else if (port.name && port.virtual && port.fallback) { pill.classList.add("red"); $("portName").textContent = "VIRTUAL · SILENT (no Digitakt)"; }
+  else if (port.name && port.virtual) { pill.classList.add("amber"); $("portName").textContent = `VIRTUAL · ${port.name}`; }
+  else if (port.name) { pill.classList.add("cyan"); $("portName").textContent = port.name; }
+  else $("portName").textContent = "no port yet";
+  $("portErr").textContent = port.error || "";
+  $("portErr").title = port.error || "";
+}
+function fmtBpm(v) { return Number.isInteger(v) ? String(v) : v.toFixed(1); }
+
+const DROP_SWEEP = new Set();
+function renderLanes(prev) {
+  const wanted = new Set(S.lanes.map((l) => l.track));
+  for (const [t, L] of lanes) {
+    if (!wanted.has(t)) {
+      L.el.classList.add("enter");
+      lanes.delete(t);
+      setTimeout(() => L.el.remove(), 320);
+    }
+  }
+  const box = $("lanes");
+  const n = S.lanes.length;
+  const avail = box.clientHeight || 600;
+  const h = n ? Math.max(44, Math.min(120, Math.floor((avail - (n - 1) * 6) / n))) : 77;
+  box.style.setProperty("--lane-h", h + "px");
+  for (const lane of S.lanes) {
+    let L = lanes.get(lane.track);
+    if (!L) {
+      L = makeLane(lane);
+      lanes.set(lane.track, L);
+      const after = [...lanes.keys()].filter((t) => t > lane.track).sort((a, b) => a - b)[0];
+      box.insertBefore(L.el, after !== undefined ? lanes.get(after).el : null);
+      requestAnimationFrame(() => L.el.classList.remove("enter"));
+    }
+    updateLane(L, lane);
+  }
+  $("empty").classList.toggle("hidden", n > 0);
+  $("minimapBox").classList.toggle("hidden", n === 0);
+}
+function makeLane(lane) {
+  const el = document.createElement("div");
+  el.className = "lane enter" + (lane.track > 8 ? " hi" : "");
+  el.style.setProperty("--hue", hue(lane.track));
+  el.innerHTML = `<div class="lh"><div><span class="tn">T${lane.track}</span> <span class="role"></span></div><div class="badges"></div></div>
+    <div class="cvbox gridbox"><canvas class="grid"></canvas></div><div class="lp"></div><div class="cvbox meterbox"><canvas class="meterc"></canvas></div>`;
+  return { el, grid: el.querySelector(".grid"), meter: el.querySelector(".meterc"), role: el.querySelector(".role"),
+           badges: el.querySelector(".badges"), lp: el.querySelector(".lp"), data: lane, paramsKey: "", rampSeen: {}, wasDropped: false };
+}
+function updateLane(L, lane) {
+  L.data = lane;
+  L.role.textContent = lane.role || "";
+  const bar = S.bar;
+  const dropActive = lane.drop && lane.drop.from <= bar && bar < lane.drop.back;
+  const b = [];
+  if (lane.muted) b.push(`<span class="badge mute">MUTE</span>`);
+  if (lane.hw) b.push(`<span class="badge hw">HW</span>`);
+  if (lane.drop) {
+    b.push(dropActive ? `<span class="badge drop">DROP · back in ${lane.drop.back - bar} bar${lane.drop.back - bar === 1 ? "" : "s"}</span>`
+                      : `<span class="badge drop">DROP from next bar</span>`);
+  }
+  if (lane.fill === "next") {
+    const at = lane.fill_bars.find((x) => x > bar);
+    b.push(`<span class="badge fill">${at === bar + 1 ? "FILL ▸ next bar" : `FILL @ bar ${at + 1}`}</span>`);
+  }
+  if (lane.fill === "now") b.push(`<span class="badge fill">FILL</span>`);
+  if (lane.density) b.push(`<span class="badge dens">DENS ${lane.density > 0 ? "+" : "−"}${Math.round(Math.abs(lane.density) * 100)}%</span>`);
+  const html = b.join("");
+  if (L.badges.innerHTML !== html) L.badges.innerHTML = html;
+  L.el.classList.toggle("muted", lane.muted);
+  L.el.classList.toggle("dropped", !!dropActive);
+  L.el.classList.toggle("filling", lane.fill === "now");
+  if (L.wasDropped && !dropActive) { L.el.classList.remove("returning"); void L.el.offsetWidth; L.el.classList.add("returning"); }
+  L.wasDropped = !!dropActive;
+  // params column: rebuild when the set of params/ramps changes, update values every frame
+  const rampByCc = {};
+  for (const r of lane.ramps) rampByCc[r.cc] = r;
+  const rows = lane.params.map((p) => ({ cc: p.cc, name: p.name, value: p.value, ramp: rampByCc[p.cc] || null }));
+  for (const r of lane.ramps) if (!rows.find((x) => x.cc === r.cc)) rows.push({ cc: r.cc, name: r.param, value: r.current, ramp: r });
+  rows.sort((a, b2) => (b2.ramp ? 1 : 0) - (a.ramp ? 1 : 0) || a.cc - b2.cc);
+  const maxRows = Math.max(1, Math.floor(((parseInt(getComputedStyle($("lanes")).getPropertyValue("--lane-h")) || 77) - 8) / 19));
+  const shown = rows.slice(0, maxRows);
+  const key = shown.map((r) => r.cc + (r.ramp ? "r" + r.ramp.id : "")).join(",") + "|" + rows.length;
+  if (key !== L.paramsKey) {
+    // a ramp that just finished flashes once
+    const finished = Object.keys(L.rampSeen).filter((cc) => !rampByCc[cc]);
+    L.paramsKey = key;
+    L.lp.innerHTML = shown.map((r) => `<div class="param${r.ramp ? " ramp" + (r.ramp.to < r.ramp.from ? " down" : "") : ""}${finished.includes(String(r.cc)) ? " done" : ""}" data-cc="${r.cc}">
+      <span class="pn">${esc(r.name)}</span><span class="track"><span class="fill"></span>${r.ramp ? '<span class="ghost"></span>' : ""}</span><span class="pv"></span></div>`).join("") +
+      (rows.length > shown.length ? `<div class="more">+${rows.length - shown.length} more</div>` : "");
+    L.rows = [...L.lp.querySelectorAll(".param")].map((el, i) => ({ el, fill: el.querySelector(".fill"), ghost: el.querySelector(".ghost"), pv: el.querySelector(".pv"), row: shown[i] }));
+  } else {
+    L.rows.forEach((r, i) => { r.row = shown[i]; });
+  }
+  L.rampSeen = {};
+  for (const r of lane.ramps) { L.rampSeen[r.cc] = true; r._t0 = frameAt; }
+  L.el.classList.toggle("has-params", rows.length > 0);
+  L.badges.dataset.param = lane.ramps.length ? `⟿ ${lane.ramps[0].param}` : "";
+}
+function rampNow(r, now) {
+  const p0 = r.progress;
+  const secs = r.remaining_beats * 60 / S.bpm;
+  const p = secs > 0 ? Math.min(1, p0 + (1 - p0) * ((now - r._t0) / 1000) / secs) : 1;
+  return { p, v: Math.round(r.from + (r.to - r.from) * (CURVES[r.curve] || CURVES.linear)(p)) };
+}
+function drawParams(L, now) {
+  if (!L.rows) return;
+  for (const R of L.rows) {
+    const row = R.row;
+    if (!row) continue;
+    if (row.ramp) {
+      const { p, v } = rampNow(row.ramp, now);
+      R.fill.style.width = (v / 127 * 100).toFixed(1) + "%";
+      if (R.ghost) R.ghost.style.left = (row.ramp.to / 127 * 100).toFixed(1) + "%";
+      R.pv.innerHTML = `${v} <span class="rid">${Math.round(p * 100)}%</span>`;
+      R.el.title = `${row.ramp.id} · ${CURVE_GLYPH[row.ramp.curve] || row.ramp.curve} · ${row.ramp.from} → ${row.ramp.to}`;
+    } else {
+      R.fill.style.width = (row.value / 127 * 100).toFixed(1) + "%";
+      R.pv.textContent = row.value;
+    }
+  }
+}
+
+// hits for whichever bar the (extrapolated) playhead is in
+function hitsFor(lane, bar) {
+  if (!S) return [];
+  if (bar === S.bar || !lane.loop.length) return lane.steps;
+  const idx = ((S.loop_bar + (bar - S.bar)) % 4 + 4) % 4;
+  return (lane.loop[idx] || []).map(([s, v]) => [s, 0, v, 1, ""]);
+}
+function audible(lane, bar) {
+  if (lane.muted) return false;
+  return !(lane.drop && lane.drop.from <= bar && bar < lane.drop.back);
+}
+
+function drawGrid(L, ph, now) {
+  const [ctx, w, h] = fit(L.grid);
+  ctx.clearRect(0, 0, w, h);
+  const lane = L.data, col = hue(lane.track);
+  const gap = 6, cw = (w - gap * (STEPS - 1)) / STEPS;
+  const bar = ph === null ? S.bar : Math.floor(ph / STEPS);
+  const stepF = ph === null ? -1 : ph - bar * STEPS;
+  const hits = hitsFor(lane, bar);
+  const byStep = new Map();
+  for (const hit of hits) byStep.set(hit[0], hit);
+  const fillNow = lane.fill === "now" && bar === S.bar;
+  for (let s = 0; s < STEPS; s++) {
+    const x = s * (cw + gap);
+    rrect(ctx, x, 0, cw, h, 7);
+    ctx.fillStyle = s % 4 === 0 ? "#1C2231" : "#151A25";
+    ctx.fill();
+  }
+  for (const [s, note, vel, gate, name] of hits) {
+    const x = s * (cw + gap);
+    const a = 0.4 + 0.6 * (vel / 127);
+    const c = fillNow ? "#FFB22E" : col;
+    if (gate > 1) {   // gate tail into the following steps
+      ctx.fillStyle = alpha(c, a * 0.35);
+      const tw = Math.min(gate, STEPS - s) * (cw + gap) - gap;
+      rrect(ctx, x, h * 0.38, tw, h * 0.24, 4); ctx.fill();
+    }
+    rrect(ctx, x, 0, cw, h, 7);
+    ctx.fillStyle = alpha(c, a);
+    ctx.fill();
+    // trigger flash while the playhead sits on this step
+    if (stepF >= s && stepF < s + 1 && audible(lane, bar)) {
+      const f = 1 - (stepF - s);
+      ctx.fillStyle = `rgba(255,255,255,${0.75 * f})`;
+      ctx.fill();
+    }
+    if (name && cw > 30 && h > 34) {
+      ctx.fillStyle = "rgba(5,6,10,0.85)";
+      ctx.font = `12px ui-monospace, "SF Mono", Menlo, monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(name, x + cw / 2, h / 2);
+    }
+  }
+  if (ph !== null && !REDUCED) {   // playhead with a short trail
+    const px = stepF * (cw + gap);
+    const trail = 3 * (cw + gap);
+    const g = ctx.createLinearGradient(px - trail, 0, px, 0);
+    g.addColorStop(0, "rgba(46,230,255,0)"); g.addColorStop(1, "rgba(46,230,255,0.22)");
+    ctx.fillStyle = g; ctx.fillRect(Math.max(0, px - trail), 0, Math.min(trail, px), h);
+  }
+  if (ph !== null) {
+    const px = stepF * (cw + gap);
+    ctx.fillStyle = "rgba(46,230,255,0.25)"; ctx.fillRect(px - 5, 0, 10, h);
+    ctx.fillStyle = "#2EE6FF"; ctx.fillRect(px - 2, 0, 4, h);
+  }
+}
+function drawMeter(L) {
+  const [ctx, w, h] = fit(L.meter);
+  ctx.clearRect(0, 0, w, h);
+  const e = energy[L.data.track];
+  rrect(ctx, w / 2 - 6, 4, 12, h - 8, 4); ctx.fillStyle = "#151A25"; ctx.fill();
+  const bh = (h - 8) * e;
+  rrect(ctx, w / 2 - 6, h - 4 - bh, 12, bh, 4); ctx.fillStyle = hue(L.data.track); ctx.fill();
+}
+function drawMinimap(ph) {
+  const cv = $("minimap");
+  if ($("minimapBox").classList.contains("hidden") || !S || !S.playing) return;
+  const [ctx, w, h] = fit(cv);
+  ctx.clearRect(0, 0, w, h);
+  const list = S.lanes.filter((l) => l.loop.length);
+  if (!list.length) return;
+  const cycle = S.bar - S.loop_bar;
+  const segW = w / 4, gap = 6, rowH = h / list.length;
+  for (let b = 0; b < 4; b++) {
+    const x0 = b * segW + gap / 2, sw = segW - gap;
+    const abs = cycle + b;
+    rrect(ctx, x0, 0, sw, h, 4);
+    ctx.fillStyle = abs === S.bar ? "#1E2535" : "#10141D"; ctx.fill();
+    list.forEach((lane, i) => {
+      const y = i * rowH;
+      if (lane.drop && lane.drop.from <= abs && abs < lane.drop.back) {
+        ctx.fillStyle = "#000"; ctx.fillRect(x0, y, sw, rowH); return;
+      }
+      const fill = lane.fill_bars.includes(abs) || (abs === S.bar && lane.fill === "now");
+      ctx.fillStyle = fill ? "#FFB22E" : alpha(hue(lane.track), 0.8);
+      for (const [s] of lane.loop[b] || []) ctx.fillRect(x0 + (s / STEPS) * sw, y + 0.5, Math.max(1.5, sw / STEPS - 2), Math.max(1, rowH - 1));
+    });
+  }
+  if (ph !== null) {
+    const loopPos = ((ph - cycle * STEPS) % 64 + 64) % 64;
+    const x = (loopPos / 64) * w;
+    ctx.fillStyle = "#2EE6FF"; ctx.fillRect(x - 1, 0, 2, h);
+  }
+}
+
+// ---- log ticker ---------------------------------------------------------------
+function short(tool) { return tool.replace(/^whiplash_/, ""); }
+function hhmmss(ts) { return new Date(ts * 1000).toTimeString().slice(0, 8); }
+function renderLog() {
+  const log = S.log || [];
+  const maxId = log.length ? log[log.length - 1].id : 0;
+  const fresh = seenLog === null ? [] : log.filter((e) => e.id > seenLog);
+  if (seenLog !== null && !fresh.length && $("logEntries").dataset.max == maxId) return;
+  seenLog = maxId;
+  $("logEntries").dataset.max = maxId;
+  if (!log.length) { $("logEntries").textContent = "no Whiplash actions yet"; return; }
+  const freshIds = new Set(fresh.map((e) => e.id));
+  $("logEntries").innerHTML = log.slice(-8).reverse().map((e) =>
+    `<span class="entry${e.ok ? "" : " err"}${freshIds.has(e.id) ? " new" : ""}">${hhmmss(e.ts)} <b>${esc(short(e.tool))}</b> ${esc(e.summary)}</span>`).join("");
+  $("logDrawer").innerHTML = log.slice().reverse().map((e) =>
+    `<div>${hhmmss(e.ts)} <b>${esc(e.tool)}</b> ${esc(e.args)}\n→ ${esc(e.summary)}</div>`).join("");
+  for (const e of fresh) for (const t of e.tracks) ping(t);
+}
+function ping(track) {
+  const L = lanes.get(track);
+  if (!L) return;
+  L.el.classList.remove("ping"); void L.el.offsetWidth; L.el.classList.add("ping");
+}
+$("log").addEventListener("click", () => $("logDrawer").classList.toggle("hidden"));
+
+// ---- audio analyser -------------------------------------------------------------
+const audio = { ctx: null, stream: null, an: null, anL: null, anR: null, freq: null, time: null, tl: null, tr: null, label: "" };
+const BANDS = 72;
+const peaks = new Float32Array(BANDS);
+const meterState = { L: { peak: -90, hold: -90 }, R: { peak: -90, hold: -90 }, clip: 0 };
+let synthHistory = new Float32Array(240);
+
+async function connectAudio(deviceId) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setAudioError("no audio capture in this browser"); return; }
+  const constraints = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 2 } } };
+  if (deviceId) constraints.audio.deviceId = { exact: deviceId };
+  try {
+    stopAudio();
+    let stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+    const track = stream.getAudioTracks()[0];
+    let current = track.getSettings().deviceId;
+    if (!deviceId) {   // labels are only visible after permission: now prefer the Digitakt
+      const saved = store.get("audioDevice", null);
+      const pick = devices.find((d) => d.deviceId === saved) || devices.find((d) => /digitakt|elektron/i.test(d.label));
+      if (pick && pick.deviceId !== current) {
+        stream.getTracks().forEach((t) => t.stop());
+        constraints.audio.deviceId = { exact: pick.deviceId };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        current = pick.deviceId;
+      }
+    }
+    const sel = $("audioDev");
+    sel.innerHTML = devices.map((d) => `<option value="${esc(d.deviceId)}">${esc(d.label || "input " + d.deviceId.slice(0, 6))}</option>`).join("");
+    sel.value = current; sel.classList.remove("hidden");
+    store.set("audioDevice", current);
+    const label = (devices.find((d) => d.deviceId === current) || {}).label || stream.getAudioTracks()[0].label || "audio input";
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser(); an.fftSize = 4096; an.smoothingTimeConstant = 0.75; an.minDecibels = -100; an.maxDecibels = -12;
+    const split = ctx.createChannelSplitter(2);
+    const anL = ctx.createAnalyser(), anR = ctx.createAnalyser();
+    anL.fftSize = anR.fftSize = 2048;
+    src.connect(an); src.connect(split); split.connect(anL, 0); split.connect(anR, src.channelCount > 1 ? 1 : 0);
+    Object.assign(audio, { ctx, stream, an, anL, anR, label, freq: new Float32Array(an.frequencyBinCount),
+      time: new Float32Array(2048), tl: new Float32Array(2048), tr: new Float32Array(2048) });
+    if (ctx.state === "suspended") await ctx.resume();
+    $("audioBtn").textContent = "DISCONNECT"; $("audioBtn").classList.add("on");
+    stream.getAudioTracks()[0].addEventListener("ended", () => stopAudio());
+    setBadge();
+  } catch (err) {
+    setAudioError(err && err.name === "NotAllowedError" ? "audio permission refused" : (err && err.message) || String(err));
+  }
+}
+function stopAudio() {
+  if (audio.stream) audio.stream.getTracks().forEach((t) => t.stop());
+  if (audio.ctx) audio.ctx.close().catch(() => {});
+  Object.assign(audio, { ctx: null, stream: null, an: null });
+  $("audioBtn").textContent = "CONNECT AUDIO"; $("audioBtn").classList.remove("on");
+  setBadge();
+}
+let audioError = "";
+function setAudioError(msg) { audioError = msg; setBadge(); }
+function setBadge() {
+  const b = $("srcBadge");
+  if (audio.an) {
+    b.className = "audio"; b.textContent = "AUDIO · " + audio.label.toUpperCase();
+    $("specLabel").textContent = "SPECTRUM"; $("scopeLabel").textContent = "SCOPE";
+    audioError = "";
+  } else {
+    b.className = "fallback"; b.textContent = "MIDI FALLBACK · NOT REAL AUDIO" + (audioError ? " · " + audioError.toUpperCase() : "");
+    $("specLabel").textContent = "NOTE ENERGY BY TRACK"; $("scopeLabel").textContent = "MIDI ACTIVITY";
+    $("meterLabel").textContent = "— no audio";
+  }
+}
+$("audioBtn").addEventListener("click", () => (audio.an ? stopAudio() : connectAudio()));
+$("audioDev").addEventListener("change", (e) => { store.set("audioDevice", e.target.value); connectAudio(e.target.value); });
+
+function bandEdges() {
+  const out = [], lo = Math.log(30), hi = Math.log(16000);
+  for (let i = 0; i <= BANDS; i++) out.push(Math.exp(lo + (hi - lo) * (i / BANDS)));
+  return out;
+}
+const EDGES = bandEdges();
+// MIDI fallback: each track owns a band region by role, so the display moves with the beat
+function roleBand(lane) {
+  const r = (lane.role || "").toLowerCase();
+  if (/kick/.test(r)) return 6; if (/bass|sub/.test(r)) return 12; if (/snare|rim/.test(r)) return 30;
+  if (/clap/.test(r)) return 36; if (/closed|hat/.test(r)) return /open/.test(r) ? 58 : 64;
+  if (/chord|stab|chop|pad|minor|major|lead/.test(r)) return 44 + (lane.track % 3) * 4;
+  return 20 + ((lane.track * 7) % 40);
+}
+function drawSpectrum(dt) {
+  const [ctx, w, h] = fit($("spectrum"));
+  ctx.clearRect(0, 0, w, h);
+  const top = 40, base = h - 34, avail = base - top;
+  const bw = w / BANDS;
+  const vals = new Float32Array(BANDS);
+  if (audio.an) {
+    audio.an.getFloatFrequencyData(audio.freq);
+    const nyq = audio.ctx.sampleRate / 2, bins = audio.freq.length;
+    for (let i = 0; i < BANDS; i++) {
+      let a = Math.floor(EDGES[i] / nyq * bins), b = Math.max(a + 1, Math.floor(EDGES[i + 1] / nyq * bins));
+      let m = -200;
+      for (let k = a; k < b && k < bins; k++) if (audio.freq[k] > m) m = audio.freq[k];
+      vals[i] = Math.max(0, Math.min(1, (m - audio.an.minDecibels) / (audio.an.maxDecibels - audio.an.minDecibels)));
+    }
+  } else if (S && S.playing) {
+    for (const lane of S.lanes) {
+      const e = energy[lane.track];
+      if (e < 0.01) continue;
+      const c = roleBand(lane), width = /hat/.test((lane.role || "").toLowerCase()) ? 7 : 4;
+      for (let i = 0; i < BANDS; i++) vals[i] += e * Math.exp(-((i - c) ** 2) / (2 * width * width)) * 0.9;
+    }
+  }
+  const grad = ctx.createLinearGradient(0, base, 0, top);
+  grad.addColorStop(0, "#B6FF3B"); grad.addColorStop(1, "#2EE6FF");
+  for (let i = 0; i < BANDS; i++) {
+    const v = Math.min(1, vals[i]);
+    peaks[i] = Math.max(v, peaks[i] - dt * 0.6);
+    const bh = Math.max(2, v * avail), x = i * bw + 1.5, bwi = Math.max(1, bw - 3);
+    rrect(ctx, x, base - bh, bwi, bh, Math.min(3, bwi / 2));
+    if (audio.an) { ctx.fillStyle = grad; ctx.fill(); ctx.fillStyle = "rgba(182,255,59,0.10)"; ctx.fillRect(x, base + 3, bwi, bh * 0.18); }
+    else { ctx.strokeStyle = "rgba(255,178,46,0.85)"; ctx.lineWidth = 1.5; ctx.stroke(); }
+    ctx.fillStyle = audio.an ? "rgba(232,236,245,0.6)" : "rgba(255,178,46,0.5)";
+    ctx.fillRect(x, base - peaks[i] * avail - 3, bwi, 2);
+  }
+}
+function drawScope() {
+  const [ctx, w, h] = fit($("scope"));
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "#171C28"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (audio.an) {
+    const d = audio.time; audio.an.getFloatTimeDomainData(d);
+    let start = 0;
+    for (let i = 1; i < d.length / 2; i++) if (d[i - 1] < 0 && d[i] >= 0) { start = i; break; }
+    const n = 1024;
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * w, y = h / 2 - d[start + i] * (h / 2 - 10);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = "#2EE6FF"; ctx.shadowColor = "#2EE6FF"; ctx.shadowBlur = 8;
+  } else {
+    const hist = synthHistory, n = hist.length;
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * w, y = h - 34 - hist[i] * (h - 60);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = "rgba(255,178,46,0.8)"; ctx.setLineDash([4, 4]);
+  }
+  ctx.stroke(); ctx.setLineDash([]); ctx.shadowBlur = 0;
+}
+function dbOf(arr) { let p = 0; for (let i = 0; i < arr.length; i++) { const a = Math.abs(arr[i]); if (a > p) p = a; } return p > 0 ? 20 * Math.log10(p) : -90; }
+function drawMeters(dt, now) {
+  const [ctx, w, h] = fit($("meters"));
+  ctx.clearRect(0, 0, w, h);
+  const top = 22, base = h - 50, avail = base - top, mw = 34;
+  const xs = [w / 2 - mw - 8, w / 2 + 8];
+  const chans = [meterState.L, meterState.R];
+  if (audio.an) {
+    audio.anL.getFloatTimeDomainData(audio.tl); audio.anR.getFloatTimeDomainData(audio.tr);
+    [dbOf(audio.tl), dbOf(audio.tr)].forEach((db, i) => {
+      const m = chans[i];
+      m.peak = db > m.peak ? db : Math.max(db, m.peak - 30 * dt);
+      m.hold = db > m.hold ? db : m.hold - 12 * dt;
+      if (db >= -0.1) meterState.clip = now;
+    });
+    $("meterLabel").textContent = `${Math.max(chans[0].hold, chans[1].hold).toFixed(1)} dBFS`;
+  }
+  const segs = 30;
+  for (let c = 0; c < 2; c++) {
+    const level = audio.an ? Math.max(0, (chans[c].peak + 60) / 60) : 0;
+    const hold = audio.an ? Math.max(0, (chans[c].hold + 60) / 60) : -1;
+    for (let s = 0; s < segs; s++) {
+      const y = base - (s + 1) * (avail / segs) + 2, db = -60 + (s + 1) * 2;
+      const on = audio.an && s / segs < level;
+      ctx.fillStyle = !on ? "#151A25" : db > -1 ? "#FF3D4D" : db > -6 ? "#FFB22E" : "#B6FF3B";
+      ctx.fillRect(xs[c], y, mw, avail / segs - 3);
+    }
+    if (hold > 0) { ctx.fillStyle = "#E8ECF5"; ctx.fillRect(xs[c], base - hold * avail, mw, 2); }
+    ctx.fillStyle = "#6E778C"; ctx.font = "14px ui-monospace, Menlo, monospace"; ctx.textAlign = "center";
+    ctx.fillText(c ? "R" : "L", xs[c] + mw / 2, base + 17);
+  }
+  if (audio.an && now - meterState.clip < 2000) {
+    ctx.fillStyle = "#FF3D4D"; rrect(ctx, w / 2 - 22, 6, 44, 10, 4); ctx.fill();
+  }
+}
+
+// ---- frame loop -----------------------------------------------------------------
+let lastNow = performance.now(), bpmBeat = -1;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
+  if (bpmTween) {   // digits roll to the new tempo
+    const k = Math.min(1, (now - bpmTween.t0) / 400);
+    bpmShown = bpmTween.from + (bpmTween.to - bpmTween.from) * (1 - (1 - k) ** 3);
+    $("bpm").textContent = k < 1 ? fmtBpm(Math.round(bpmShown * 10) / 10) : fmtBpm(bpmTween.to);
+    if (k >= 1) { bpmShown = bpmTween.to; bpmTween = null; }
+  }
+  if (now - lastFrameWall > 3000 && es.readyState !== 1) $("offline").classList.remove("hidden");
+  const ph = playheadAbs(now);
+  // MIDI-derived energy: what Whiplash scheduled as the playhead crosses each step
+  const decay = Math.exp(-dt * 7);
+  for (let t = 1; t <= 16; t++) energy[t] *= decay;
+  if (S && ph !== null) {
+    const stepInt = Math.floor(ph);
+    if (lastStepSeen !== null && stepInt !== lastStepSeen && stepInt - lastStepSeen < 4) {
+      for (let s = lastStepSeen + 1; s <= stepInt; s++) {
+        const bar = Math.floor(s / STEPS), st = s - bar * STEPS;
+        for (const lane of S.lanes) {
+          if (!audible(lane, bar)) continue;
+          for (const hit of hitsFor(lane, bar)) if (hit[0] === st) energy[lane.track] = Math.max(energy[lane.track], hit[2] / 127);
+        }
+      }
+    }
+    lastStepSeen = stepInt;
+    const beatF = ph / 4, beat = Math.floor(beatF);
+    const frac = beatF - beat;
+    $("beatline").style.opacity = (0.25 + 0.75 * (1 - frac) ** 2).toFixed(3);
+    if (beat !== bpmBeat) {
+      bpmBeat = beat;
+      [...$("beats").children].forEach((el, i) => el.classList.toggle("on", i <= ((beat % 4) + 4) % 4));
+    }
+  } else {
+    lastStepSeen = null;
+    $("beatline").style.opacity = 0.15;
+    if (bpmBeat !== -1) { bpmBeat = -1; [...$("beats").children].forEach((el) => el.classList.remove("on")); }
+  }
+  let total = 0;
+  for (let t = 1; t <= 16; t++) total += energy[t];
+  synthHistory.copyWithin(0, 1); synthHistory[synthHistory.length - 1] = Math.min(1, total / 3);
+  const q = $("queued");
+  if (S && !q.classList.contains("hidden") && ph !== null) {
+    const beatsLeft = Math.max(0, Math.ceil((Number(q.dataset.at) * STEPS - ph) / 4));
+    const dots = "●".repeat(Math.max(0, 4 - Math.min(4, beatsLeft))) + "○".repeat(Math.min(4, beatsLeft));
+    q.textContent = `${q.dataset.label}  ${dots}`;
+  } else if (S && !q.classList.contains("hidden")) q.textContent = q.dataset.label;
+  if (S) {
+    for (const L of lanes.values()) { drawGrid(L, ph, now); drawMeter(L); drawParams(L, now); }
+    drawMinimap(ph);
+  }
+  drawSpectrum(dt); drawScope(); drawMeters(dt, now);
+  updateCaptionFade(now);
+}
+
+// ---- conversation -----------------------------------------------------------------
+let CHAT = null;
+let toolsOn = store.get("tools", false);
+const expanded = new Set();
+const turnCache = new Map();
+let lastChatRev = null, captionAt = 0;
+
+function md(text) {   // escaped first, then a safe subset: code fences, inline code, bold, bullets
+  let s = esc(text);
+  s = s.replace(/```[\w-]*\n?([\s\S]*?)```/g, (_, code) => `<pre>${code}</pre>`);
+  s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+  s = s.replace(/^(\s*)[-*] /gm, "$1• ");
+  return s;
+}
+function toolHtml(p) {
+  const wl = p.name.startsWith("whiplash_");
+  let track = null;
+  try { const a = JSON.parse(p.args || "{}"); track = a.track || (Array.isArray(a.tracks) ? a.tracks[0] : null); } catch (e) { /* clipped args */ }
+  const dot = wl && track ? `<span class="tdot" style="background:${hue(track)}"></span>` : "";
+  const status = p.status === "running" ? "…" : p.ms !== null && p.ms !== undefined ? `${p.ms} ms` : "";
+  return `<div class="tool${wl ? " wl" : ""}${p.status === "error" ? " err" : ""}">
+    <div class="tname">${wl ? "🥁" : "⚙"} ${esc(p.name)} ${dot}<span class="ms">${status}</span></div>
+    ${p.args && p.args !== "{}" ? `<div class="targs">${esc(p.args)}</div>` : ""}
+    ${p.result ? `<div class="tres">→ ${esc(p.result)}</div>` : ""}</div>`;
+}
+function turnHtml(t) {
+  let html = "";
+  if (t.user) html += `<div class="msg user"><div class="who"><span>PHIL</span><span>${hhmmss(t.ts)}</span></div><div class="body">${md(t.user)}</div></div>`;
+  const texts = t.parts.filter((p) => p.kind === "text");
+  const tools = t.parts.filter((p) => p.kind === "tool");
+  const open = toolsOn || expanded.has(t.id);
+  let inner = "";
+  if (open) {
+    inner = t.parts.map((p) => (p.kind === "text" ? `<div class="body${p.live ? " live" : ""}">${md(p.text)}</div>` : `<div class="tools">${toolHtml(p)}</div>`)).join("");
+  } else {
+    inner = texts.map((p) => `<div class="body${p.live ? " live" : ""}">${md(p.text)}</div>`).join("");
+  }
+  if (t.state === "running" && !texts.some((p) => p.live)) {
+    const live = [...tools].reverse().find((p) => p.status === "running") || tools[tools.length - 1];
+    inner += `<div class="thinking"><span class="breathe"></span>thinking…${live && !open ? ` <span style="color:var(--dim)">⚙ ${esc(live.name)}${live.status === "running" ? "…" : ""}</span>` : ""}</div>`;
+  }
+  if (t.state === "interrupted") inner += `<div class="thinking" style="color:var(--dim)">interrupted</div>`;
+  if (t.error) inner += `<div class="thinking" style="color:var(--red)">${esc(t.error)}</div>`;
+  if (tools.length && !toolsOn) inner += `<button class="toolchip" data-turn="${t.id}">⚙ ${tools.length} tool call${tools.length === 1 ? "" : "s"} ${expanded.has(t.id) ? "▾" : "▸"}</button>`;
+  if (inner) html += `<div class="msg hermes"><div class="who"><span>HERMES</span></div>${inner}</div>`;
+  return html;
+}
+function renderChat(force) {
+  if (!CHAT) return;
+  const box = $("chat");
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const keep = new Set();
+  let prevEl = null;
+  for (const t of CHAT.turns) {
+    keep.add(t.id);
+    const sig = JSON.stringify(t) + toolsOn + expanded.has(t.id);
+    let entry = turnCache.get(t.id);
+    if (!entry) {
+      const el = document.createElement("div"); el.className = "turn";
+      entry = { el, sig: "" }; turnCache.set(t.id, entry);
+      box.insertBefore(el, prevEl ? prevEl.nextSibling : box.firstChild);
+    }
+    if (entry.sig !== sig || force) { entry.el.innerHTML = turnHtml(t); entry.sig = sig; }
+    prevEl = entry.el;
+  }
+  for (const [id, entry] of turnCache) if (!keep.has(id)) { entry.el.remove(); turnCache.delete(id); }
+  if (!CHAT.turns.length) box.innerHTML = `<div style="color:var(--dim);font-size:16px">${CHAT.mode === "sqlite" && CHAT.error ? "conversation unavailable: " + esc(CHAT.error) : "waiting for the conversation…"}</div>`;
+  else if (box.firstElementChild && !box.firstElementChild.classList.contains("turn")) box.firstElementChild.remove();
+  if (nearBottom || force) box.scrollTop = box.scrollHeight;
+}
+function onChat(data) {
+  CHAT = data;
+  if (lastChatRev !== null && data.rev !== lastChatRev && $("app").classList.contains("collapsed")) $("railPulse").classList.add("on");
+  lastChatRev = data.rev;
+  renderChat(false);
+  renderCaptions();
+}
+$("chat").addEventListener("click", (e) => {
+  const chip = e.target.closest(".toolchip");
+  if (!chip) return;
+  const id = Number(chip.dataset.turn);
+  expanded.has(id) ? expanded.delete(id) : expanded.add(id);
+  renderChat(false);
+});
+function setTools(on) {
+  toolsOn = on; store.set("tools", on);
+  $("toolsBtn").textContent = on ? "TOOLS: ON" : "TOOLS: OFF";
+  $("toolsBtn").classList.toggle("on", on);
+  renderChat(true);
+}
+function setCollapsed(c) {
+  $("app").classList.toggle("collapsed", c); store.set("collapsed", c);
+  if (!c) $("railPulse").classList.remove("on");
+  $("collapseBtn").textContent = c ? "⟨" : "⟩";
+  $("captions").classList.toggle("off", c);
+  setTimeout(() => S && renderLanes(S), 300);
+}
+$("toolsBtn").addEventListener("click", () => setTools(!toolsOn));
+$("collapseBtn").addEventListener("click", () => setCollapsed(true));
+$("railBtn").addEventListener("click", () => setCollapsed(false));
+
+function renderCaptions() {
+  if (!CHAT || !CHAT.turns.length) return;
+  const t = CHAT.turns[CHAT.turns.length - 1];
+  const texts = t.parts.filter((p) => p.kind === "text");
+  const last = texts[texts.length - 1];
+  $("capUser").textContent = t.user || "";
+  let h = last ? last.text : t.state === "running" ? "thinking…" : "";
+  if (h.length > 260) h = "…" + h.slice(-260);
+  $("capHermes").textContent = h;
+  captionAt = performance.now();
+  $("captions").classList.remove("faded");
+}
+function updateCaptionFade(now) {
+  const running = CHAT && CHAT.turns.length && CHAT.turns[CHAT.turns.length - 1].state === "running";
+  if (!running && captionAt && now - captionAt > 8000) $("captions").classList.add("faded");
+}
+
+// ---- keys ------------------------------------------------------------------------
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === "SELECT") return;
+  const k = e.key.toLowerCase();
+  if (k === "c") setCollapsed(!$("app").classList.contains("collapsed"));
+  else if (k === "t") setTools(!toolsOn);
+  else if (k === "a") audio.an ? stopAudio() : connectAudio();
+  else if (k === "b") { $("chat").classList.toggle("blur"); $("captions").classList.toggle("blur"); }
+  else if (k === "r") { document.body.classList.toggle("flat"); store.set("flat", document.body.classList.contains("flat")); }
+  else if (k === "f") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}); }
+  else if (k === "?" || k === "/") $("help").classList.toggle("hidden");
+  else if (k === "escape") { $("help").classList.add("hidden"); $("logDrawer").classList.add("hidden"); }
+});
+$("help").addEventListener("click", () => $("help").classList.add("hidden"));
+
+// ---- boot --------------------------------------------------------------------------
+if (store.get("flat", false) || REDUCED) document.body.classList.add("flat");
+if (store.get("collapsed", false)) setCollapsed(true);
+setTools(toolsOn);
+setBadge();
+let es;
+function connect() {
+  es = new EventSource("/events");
+  es.addEventListener("open", () => $("offline").classList.add("hidden"));
+  es.addEventListener("state", (e) => { try { onState(JSON.parse(e.data)); $("offline").classList.add("hidden"); } catch (err) { console.error(err); } });
+  es.addEventListener("chat", (e) => { try { onChat(JSON.parse(e.data)); } catch (err) { console.error(err); } });
+  es.addEventListener("error", () => { $("offline").classList.remove("hidden"); });
+}
+connect();
+window.addEventListener("resize", () => S && renderLanes(S));
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
