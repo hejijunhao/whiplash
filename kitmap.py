@@ -101,7 +101,7 @@ def check_tracks(tracks):
             label = _label(value.get("label") or value.get("role") or "", f"label for track {track}")
             role = value.get("role")
             if role not in (None, ""):
-                role = " ".join(str(role).strip().lower().split())
+                role = " ".join(str(role).strip().lower().replace("_", " ").split())
                 if role not in ROLES:
                     raise KitError(f"track {track}: role must be one of {', '.join(ROLES)}, got {value['role']!r}")
             else:
