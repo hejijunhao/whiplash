@@ -34,6 +34,7 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 - Generated melodic parts (bass, chords, stabs) are placed near 60. Each `whiplash_play_pattern` and `whiplash_status` result shows `tracks[n].pitch`, including `semitones_from_native`.
 - If a line sounds **stretched, grainy, muddy or distorted**, look at `pitch` before anything else. Raise it with `whiplash_transpose(track, octaves: 1)` or `semitones`, or with `tune` (`whiplash_set_param`, 64 = none, 76 = +12). Do this before you touch the envelope or density.
 - Note names follow Elektron's numbering: C0 = MIDI 0, so C5 = MIDI 60. Logic Pro calls 60 "C3" and General MIDI "C4", so quote raw numbers when it matters.
+- Transpose works on any track that plays, including written parts on 9-16. On a track that plays nothing it is refused: write the part first.
 - Transpose lands on the next bar, carries across pattern switches, and `whiplash_stop` resets it. You can also pass it at start: `whiplash_play_pattern(genre, transpose: {"6": 12})`.
 
 ## Track roles are assumptions
@@ -50,10 +51,11 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 ## Note length and the amp envelope
 
 - `whiplash_write_part` sends `length` as the exact MIDI note-off. Every result carries `length_audible`: read it before you promise shorter notes.
-- To make length audible, ask the user, then either pass `envelope: "note"` on `whiplash_write_part` (one CC 80 = 127, HOLD = NOTE) or set `amp_hold` 127 yourself. For release tails, `amp_mode` 1 (ADSR) plus `amp_release`.
+- To make length audible, ask the user, then either pass `envelope: "note"` on `whiplash_write_part` (one CC 80 = 127, HOLD = NOTE) or call `whiplash_set_param(track, param: "amp_hold", value: "note")`. The result says `hold: "NOTE"`. For release tails, `amp_mode` 1 (ADSR) plus `amp_release`.
 - A note's length only shortens the sound if the track's envelope listens to note-off. That is the case in **AMP MODE = ADSR** (`amp_mode` 1, CC 87) or in **AHD with HOLD = NOTE** (`amp_hold` 127, CC 80). midi.guide lists AHD with HOLD = NOTE as the default, but a given preset may differ, so ask.
 - In AHD with a fixed hold (0-126), note-off is ignored and every hit is the same length.
-- "Plays non-stop" or "too droney" usually means a long decay (127 = infinite) or a fixed hold on the unit. Shorten `amp_decay`, or set `amp_hold` to 127 so the note length counts.
+- `amp_hold` 127 is not "the most hold": it switches HOLD to NOTE. So `amp_hold` clamps to 0-126 and ramps never go past 126. Only `"note"` or exactly 127 sends NOTE, and the result says so.
+- "Plays non-stop" or "too droney" usually means a long decay (127 = infinite) or a fixed hold on the unit. Shorten `amp_decay`, or (with the user's OK) set `amp_hold` to `"note"` so the note length counts.
 - Never change the envelope mode without telling the user. It changes the sound of their kit until they reload it.
 
 ## Transport and the unit's own pattern

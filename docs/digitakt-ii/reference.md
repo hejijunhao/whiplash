@@ -189,7 +189,7 @@ Whiplash implication: on a track that has the MIDI machine, CC 70-77 sent to its
 | Param | CC | Notes |
 | --- | --- | --- |
 | ATK | 79 | |
-| HOLD | 80 | 0-126 = fixed hold, which **ignores note-off**. 127 = **NOTE**: hold lasts from note-on to note-off. AHD mode only. [G] default 127 (NOTE). |
+| HOLD | 80 | 0-126 = fixed hold, which **ignores note-off**. 127 = **NOTE**: hold lasts from note-on to note-off. AHD mode only. [G] default 127 (NOTE). Whiplash (v0.5.2): `amp_hold` clamps and ramps within 0-126, and sends 127 only on an explicit `"note"` or exactly 127, labelled "HOLD = NOTE" in the result (§15.1 #25). |
 | DEC | 81 | [G]: 127 = infinite |
 | SUS | 82 | ADSR mode only |
 | REL | 83 | ADSR mode only. [G]: 127 = infinite. |
@@ -390,7 +390,7 @@ This is exactly what `ccmap.py` sends, on the track's channel. `tests/test_refer
 | `filter_env_delay` | filter | 91 | | 0-127 | |
 | `filter_key_tracking` | filter | 92 | | 0-100 | |
 | `amp_attack` | amp | 79 | | 0-127 | |
-| `amp_hold` | amp | 80 | | 0-127 | |
+| `amp_hold` | amp | 80 | | 0-126 | |
 | `amp_decay` | amp | 81 | | 0-127 | |
 | `amp_sustain` | amp | 82 | | 0-127 | |
 | `amp_release` | amp | 83 | | 0-127 | |
@@ -466,7 +466,7 @@ This is exactly what `ccmap.py` sends, on the track's channel. `tests/test_refer
 | Param | CC | NRPN | Range / default [G] | Whiplash |
 | --- | --- | --- | --- | --- |
 | Attack | 79 | 1:30 | / 0 | `amp_attack` |
-| Hold | 80 | 1:31 | / 127 (= NOTE) | `amp_hold` |
+| Hold | 80 | 1:31 | / 127 (= NOTE) | `amp_hold` (0-126; 127 = NOTE only when asked for explicitly) |
 | Decay | 81 | 1:32 | / 64 (127 = inf) | `amp_decay` |
 | Sustain | 82 | 1:33 | / 127 | `amp_sustain` |
 | Release | 83 | 1:34 | / 32 (127 = inf) | `amp_release` |
@@ -749,14 +749,15 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | 14 | Parameter changes last "until you reload" (README safety) | ⚠️ | True, but the edit lives in the active pattern's kit. It survives pattern switches, and (interpretation) power cycles, until a reload: [FUNC] + [NO] (p. 49), RELOAD FROM PROJ (p. 77), or [TRK] + [TRIG] + [NO] (p. 53). It is never written to the saved project unless the user saves. README updated to say so. |
 | 15 | Gate lengths shape notes (`engine.GATE`, pattern gates) | ⚠️ | Only with AMP MODE = AHD and HOLD = NOTE (the [G] defaults), or with ADSR. A fixed HOLD ignores note-off (p. 56). v0.5.0 adds `amp_mode` (CC 87) and documents `amp_hold` 127 = NOTE. v0.5.1 written parts send `length` as the exact note-off, report `length_audible` with this caveat, and send CC 80 = 127 only on `envelope: "note"`. |
 | 16 | Velocity accents, ghost notes and humanize are audible (`mutate.py`) | ⚠️ | Only if the preset's VELOCITY TO VOL is not OFF, or velocity is mod-routed (p. 38-39). HW: the default isn't documented. |
-| 17 | Stop/panic sends note-offs per sounding note, plus CC 123 on channels 1-8 (`engine._panic`) | ⚠️ | The note-offs are the real guarantee. CC 123 (All Notes Off) is standard MIDI but isn't in [M], so whether the unit honours it is HW. It does no harm. |
+| 17 | Stop/panic sends note-offs per sounding note, plus CC 123 on channels 1-8 and on every channel 9-16 that played a note since the last panic (`engine._panic`, v0.5.2) | ⚠️ | The note-offs are the real guarantee. CC 123 (All Notes Off) is standard MIDI but isn't in [M], so whether the unit honours it is HW. It does no harm. Channels 9-16 get it only after Whiplash played a written part there, so an AUTO or FX CONTROL channel on 9-16 sees no extra traffic otherwise. |
 | 18 | Raw `cc` and `nrpn` go to the track's channel (`set_param`) | ⚠️ | Raw CC numbers mean different things on a MIDI-machine track (CC 70-77 = VAL1-8) and on the FX channel. Raw access can't reach the FX channel unless it shares a track's channel, which §7.4 says to avoid. |
 | 19 | Retrig/ratchet and fills are done by sending notes (`mutate.py`) | ✅ | The unit's retrigs and fill mode have no MIDI control (§12). |
 | 20 | Swing and humanize live in Whiplash | ✅ | The unit's swing and micro timing apply only to its own sequencer (§9, §12). |
 | 21 | The visualiser captures "the stereo main mix" over USB (README) | ⚠️ | Needs USB CONFIG = USB AUDIO/MIDI. USB OUT is one pair: MAIN by choice, or selected tracks (p. 81). Check INT TO MAIN (§14). |
 | 22 | v0.5.0 clamps transpose to 16-84 (`engine.clamp_note`) | ✅ | Conservative: that is the documented chromatic range (AUTO channel, p. 25). The track-channel range is undocumented, and KEYBOARD mode spans C0-G10 (p. 25). v0.5.1 written notes are validated against the same 16-84. |
-| 23 | v0.5.1 written parts may play on tracks 9-16 (channels 9-16) (`whiplash_write_part`) | ⚠️ | Track n = channel n holds for 9-16 too ([M] p. 25, p. 79). But AUTO CHANNEL or FX CONTROL CH may sit on one of those channels (§7.3, §7.4; factory values are HW question 1), in which case notes and CCs reach a second target. Results on tracks 9-16 carry a `channel_note` saying so. Panic still sends CC 123 only on channels 1-8; held notes on 9-16 get their own note-offs. |
+| 23 | v0.5.1 written parts may play on tracks 9-16 (channels 9-16) (`whiplash_write_part`) | ⚠️ | Track n = channel n holds for 9-16 too ([M] p. 25, p. 79). But AUTO CHANNEL or FX CONTROL CH may sit on one of those channels (§7.3, §7.4; factory values are HW question 1), in which case notes and CCs reach a second target. Results on tracks 9-16 carry a `channel_note` saying so. Since v0.5.2, panic also sends CC 123 on each channel 9-16 that played (#17), and `whiplash_transpose` applies to written parts there; a transpose on a track that plays nothing is refused instead of silently doing nothing. |
 | 24 | A retrigger of the same note ends the held one (`engine._run`) | ⚠️ | When a written note is longer than the gap to the next hit of the same note, Whiplash sends that note's note-off just before the new note-on, so the old note-off can't cut the new note. Whether the unit retriggers or layers voices on one track isn't documented here (HW). |
+| 25 | `amp_hold` range 0-126; 127 (HOLD = NOTE) only on request (`ccmap.py`, `engine.set_param`/`ramp`, v0.5.2) | ✅ | [M] p. 56: 0-126 are hold times and NOTE is a separate setting; [G] puts NOTE at CC 80 value 127. So 127 is a mode switch, not the top of a range: clamping or a ramp to 127 would silently change how note-off behaves. Named `amp_hold` clamps to 126, every ramp on CC 80 (named or raw) stops at 126, and `set_param` sends 127 only for `"note"` or exactly 127, with `hold: "NOTE"` in the result. Whether the unit shows NOTE for CC 80 = 127 is HW question 9. |
 
 ### 15.2 Things Whiplash must keep never doing
 

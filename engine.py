@@ -45,6 +45,15 @@ TRANSPOSE_MAX = 48  # semitones either way (4 octaves); notes still clamp to the
 TUNE_CC = ccmap.PARAMS["tune"].cc
 AMP_MODE_CC = ccmap.PARAMS["amp_mode"].cc
 SLOT_CC = ccmap.PARAMS["sample_slot"].cc
+HOLD_CC = ccmap.PARAMS["amp_hold"].cc
+HOLD_NOTE = 127  # amp_hold 127 = HOLD NOTE, a mode switch (manual 11.7 p. 56; midi.guide): never reached by clamp or ramp
+HOLD_NOTE_INFO = {"hold": "NOTE", "meaning": "HOLD = NOTE (AHD mode): the hold lasts from note-on to note-off, so "
+                                            "note length is audible",
+                  "warning": "this changes the track's sound in the unit's kit until it is reloaded; tell the user"}
+HOLD_RAMP_NOTE = ("amp_hold ramps stop at 126: 127 is HOLD = NOTE, a mode switch, not the top of the range. Set it "
+                  "with whiplash_set_param amp_hold 'note' if the user wants it.")
+ALL_NOTES_OFF = 123
+LOW_CHANNELS = frozenset(range(8))  # channels 1-8 always get All Notes Off on panic
 _NOT_PARAMS = {123, 6, 38, 98, 99}  # All Notes Off and NRPN data entry: never shown as a track's last_cc
 KIT_NOTE = ("Track roles are the pattern's assumed layout, not what the unit holds: ask the user what each track "
             "plays. slot, tune and last_cc are the last values Whiplash sent (it can't read the unit; null = not "
@@ -170,6 +179,13 @@ def check_flag(value, what):
     raise WhiplashError(f"{what} must be true or false, got {value!r}")
 
 
+def _is_hold_note(value):
+    """amp_hold's explicit HOLD = NOTE request: the word 'note' or exactly 127."""
+    if isinstance(value, str) and value.strip().lower() == "note":
+        return True
+    return not isinstance(value, bool) and _number(value) == HOLD_NOTE
+
+
 def check_envelope(value):
     if value in (None, "") or (isinstance(value, str) and value.strip().lower() in ("keep", "none")):
         return None
@@ -267,6 +283,7 @@ class Engine:
         self._queued = None  # pending live switch: {pattern, bpm, bars, at}
         self.last_error = None
         self._sounding = set()  # (channel, note)
+        self._note_channels = set()  # channels with a note-on since the last panic (adds 9-16 to All Notes Off)
         self._cc_values = {}  # (channel, cc) -> last value sent
         self._ramps = {}  # (track, cc) -> Ramp
         self._ramp_seq = 0
@@ -410,11 +427,13 @@ class Engine:
             if (self.playing() and self._port is not None and (port is None or port == self.port_name)
                     and same_mode):
                 with self._lock:
+                    self._check_transpose_targets(transpose, pattern, carried=set(self._parts))
                     replaced = self._queued["pattern"].name if self._queued else None
                     at = self.bar + 1
                     self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at, "transpose": transpose}
                 return {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
                         "send_transport": self.send_transport}
+            self._check_transpose_targets(transpose, pattern, carried=set())  # a fresh start clears written parts
             if send_transport is None:
                 send_transport = default_send_transport()
             stopped = self.stop()  # stops in the old mode (no Stop if the old run was clock-only)
@@ -491,8 +510,11 @@ class Engine:
             for ch, note in list(self._sounding):
                 self.send(mido.Message("note_off", channel=ch, note=note))
             self._sounding.clear()
-            for ch in range(8):
-                self._cc(mido, ch, 123, 0)
+            # channels 1-8 always (the generated pattern's tracks), plus any channel 9-16 that played a
+            # note since the last panic (written parts): no CC 123 on channels Whiplash never played
+            for ch in sorted(LOW_CHANNELS | self._note_channels):
+                self._cc(mido, ch, ALL_NOTES_OFF, 0)
+            self._note_channels.clear()
             if self.transport_on():  # clock-only runs never sent Start, so they never send Stop
                 self.send(mido.Message("stop"))
 
@@ -570,6 +592,20 @@ class Engine:
                     note = clamp_note(note + shift)
                 events[step].append((track, note, vel, gate, offset))
         return events
+
+    @staticmethod
+    def _silent_tracks(tracks, pattern, carried):
+        """The tracks that would play nothing: no notes in pattern and no written part carried."""
+        work = mutate.working(pattern) if pattern is not None else {}
+        return sorted(t for t in tracks if t not in carried and not any(work.get(t) or []))
+
+    def _check_transpose_targets(self, transpose, pattern, carried):
+        """Refuse a non-zero transpose on a track that would play nothing (it would silently do nothing)."""
+        silent = self._silent_tracks([t for t, v in transpose.items() if v], pattern, carried)
+        if silent:
+            raise WhiplashError(f"track(s) {silent} play nothing in {pattern.name}, so transpose would do nothing. "
+                                "Tracks 9-16 only play a written part: start the pattern, write one with "
+                                "whiplash_write_part, then use whiplash_transpose")
 
     def _set_transposes(self, transpose):
         """Merge {track: semitones} into the live transposes (caller holds _lock); 0 removes one."""
@@ -663,6 +699,7 @@ class Engine:
         if vel:
             self.send(mido.Message("note_on", channel=ch, note=note, velocity=vel))
             self._sounding.add((ch, note))
+            self._note_channels.add(ch)
         else:
             self.send(mido.Message("note_off", channel=ch, note=note))
             self._sounding.discard((ch, note))
@@ -741,7 +778,11 @@ class Engine:
                     self._cc(mido, ch, control, v)
             return {"track": track, "nrpn": [msb, lsb], "value": value, "data_msb": hi, "data_lsb": lo}
         number, spec = self._target(param, cc)
-        value, clamped = self._value(value, spec)
+        hold_note = number == HOLD_CC and _is_hold_note(value)
+        if hold_note:  # the one explicit, labelled path to HOLD = NOTE: exactly 127 or 'note'
+            value, clamped = HOLD_NOTE, False
+        else:
+            value, clamped = self._value(value, spec)
         with self._lock:
             ramp = self._ramps.pop((track, number), None)
             self._cc(mido, ch, number, value)
@@ -754,6 +795,8 @@ class Engine:
             out["clamped"] = True
         if ramp is not None:
             out["cancelled_ramp"] = ramp.id
+        if hold_note:
+            out.update(HOLD_NOTE_INFO)
         return out
 
     def ramp(self, track, to, param=None, cc=None, start=None, beats=None, bars=None, curve="linear"):
@@ -763,6 +806,8 @@ class Engine:
         if spec is not None and spec.discrete:
             raise WhiplashError(f"{spec.name} is a switch; use whiplash_set_param")
         to, to_clamped = self._value(to, spec, "to")
+        if number == HOLD_CC and to >= HOLD_NOTE:  # raw cc 80 (named amp_hold already stops at 126)
+            to, to_clamped = HOLD_NOTE - 1, True  # a ramp never ends on HOLD = NOTE
         lengths = [k for k, v in (("beats", beats), ("bars", bars)) if v is not None]
         if len(lengths) != 1:
             raise WhiplashError("give exactly one of beats or bars")
@@ -794,6 +839,8 @@ class Engine:
                 from_clamped = False
             else:
                 start, from_clamped = self._value(start, spec, "from")
+                if number == HOLD_CC and start >= HOLD_NOTE:
+                    start, from_clamped = HOLD_NOTE - 1, True
             replaced = self._ramps.pop((track, number), None)
             self._ramp_seq += 1
             ramp = Ramp(f"r{self._ramp_seq}", track, number, label, start, to, max(1, round(ticks)), curve)
@@ -806,6 +853,8 @@ class Engine:
             out["replaced"] = replaced.id
         if to_clamped or from_clamped:
             out["clamped"] = True
+        if number == HOLD_CC and (to_clamped or from_clamped):
+            out["hold_note"] = HOLD_RAMP_NOTE
         return out
 
     def cancel_ramps(self, which):
@@ -923,6 +972,16 @@ class Engine:
             if not self.playing():
                 raise WhiplashError("nothing is playing: start a pattern first, or pass transpose to "
                                     'whiplash_play_pattern (e.g. {"6": 12})')
+            if value:
+                carried = set(self._parts)
+                silent = self._silent_tracks([track], self.pattern, carried)
+                queued = self._queued
+                if silent and queued:  # it may play in the pattern that is about to switch in
+                    silent = self._silent_tracks(silent, queued["pattern"], carried)
+                if silent:
+                    raise WhiplashError(f"track {track} plays nothing right now, so transpose would do nothing. "
+                                        + ("Tracks 9-16 only play a written part: " if track > 8 else "")
+                                        + "write one with whiplash_write_part first, then transpose it")
             previous = self._transpose.get(track, 0)
             self._set_transposes({track: value})
             out = {"track": track, "transpose": value, "previous": previous, "applies": "next bar",
@@ -960,7 +1019,7 @@ class Engine:
         hold, mode = self._cc_values.get((ch, ccmap.PARAMS["amp_hold"].cc)), self._cc_values.get((ch, AMP_MODE_CC))
         if mode == 1:
             return "Whiplash last sent amp_mode 1 (ADSR) on this track, so length and release should shape it. " + LENGTH_NOTE
-        if hold == 127:
+        if hold == HOLD_NOTE:
             return "Whiplash last sent amp_hold 127 (NOTE) on this track, so length should be audible. " + LENGTH_NOTE
         return LENGTH_NOTE
 
@@ -1009,7 +1068,7 @@ class Engine:
         sent = None
         if envelope == "note":  # opt-in, after validation: exactly one CC 80 = 127 on this track
             self.ensure_port()
-            sent = self.set_param(track, 127, param="amp_hold")
+            sent = self.set_param(track, "note", param="amp_hold")
         with self._lock:
             self._require_playing()
             replaced = track in self._parts
@@ -1041,9 +1100,7 @@ class Engine:
                 out["carries_into"] = (f"the queued switch to {self._queued['pattern'].name} at bar "
                                        f"{self._queued['at']}")
         if sent is not None:
-            out["envelope"] = {"amp_hold": 127, "cc": sent["cc"], "meaning": "HOLD = NOTE (AHD mode)",
-                               "warning": "this changes the track's sound in the unit's kit until it is reloaded; "
-                                          "tell the user"}
+            out["envelope"] = {"amp_hold": sent["value"], "cc": sent["cc"], **HOLD_NOTE_INFO}
         if track > 8:
             out["channel_note"] = HIGH_TRACK_NOTE
         return out
