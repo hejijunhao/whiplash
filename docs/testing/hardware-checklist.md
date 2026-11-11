@@ -1,6 +1,6 @@
 # Hardware test session: Whiplash on a Digitakt II
 
-This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.6.1** that hasn't been checked on a real unit yet:
+This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.6.1** that hasn't been checked on a real unit yet. v0.6.2's transitions and `whiplash_mix` (PR #19) have their hardware checks in that PR and reference §15.3 Q15-17; they aren't in this file yet:
 - v0.6.1: `whiplash_arrange` (`short_demo`, `club`), fills that follow the kit map (a kick labelled on track 9), `routing` on play results with `routing.vacated`, routing around written parts, settings that follow a relabelled part, queued results that show their own setup, and no extra Stop before a fresh Start (Part R, PR #17's HW 6.1-1 to 6.1-9),
 - v0.6.0: keys and scales on `whiplash_play_pattern`, chord progressions (`whiplash_set_progression`), and the visualiser's KEY module and per-track chord lines,
 - v0.5.3: the kit map (`whiplash_label_tracks`), one-call start (`tracks` on `whiplash_play_pattern`), the `techhouse` genre and aliases, and the shorter tool descriptions (turn latency),
@@ -34,7 +34,7 @@ Type the prompts as written; *italic* text in a prompt is a placeholder. If Herm
 ```bash
 git -C ~/whiplash pull          # symlinked checkout; or: hermes plugins update whiplash
 hermes gateway restart          # required: the gateway keeps old plugin code until it restarts
-hermes plugins list             # whiplash -> enabled (v0.6.1, 19 tools)
+hermes plugins list             # whiplash -> enabled (v0.6.2, 20 tools)
 ```
 
 A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` shows fewer tools or an older version, the gateway didn't restart: run it again.
@@ -474,7 +474,7 @@ Rehearse P1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 
 ## R. Arrangement, fills by role and the routing report, v0.6.1 (PR #17's HW 6.1-1 to 6.1-9; §15.1 #26, #30-31; §15.3 Q14)
 
-**Setup:** as in §0: `hermes plugins list` shows whiplash v0.6.1 with 19 tools, new chat, empty pattern selected, **don't touch project slots 1-3**, AUTO CHANNEL and FX CONTROL CH off channels 9-12. Reload the pattern ([FUNC] + [NO]) between checks, and **don't save**.
+**Setup:** as in §0: `hermes plugins list` shows whiplash v0.6.2 (20 tools; Part R needs v0.6.1 or later), new chat, empty pattern selected, **don't touch project slots 1-3**, AUTO CHANNEL and FX CONTROL CH off channels 9-12. Reload the pattern ([FUNC] + [NO]) between checks, and **don't save**.
 
 Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v061` (no unit needed) must end in `RESULT: PASS`. It runs R1 at 30 s and R2, and checks the MIDI, not the sound.
 
@@ -534,7 +534,7 @@ Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 - **Expect:** the unit's own sequencer starts cleanly from the top. Nothing from the old position carries on. (With a MIDI monitor: no second All Notes Off and MIDI Stop just before the Start.)
 - [ ] Pass · [ ] Fail. Notes:
 
-### R10. The unit follows Whiplash's clock steadily (§15.3 Q15; optional, during any long run such as R1's 90-second variant or R4)
+### R10. The unit follows Whiplash's clock steadily (§15.3 Q18; optional, during any long run such as R1's 90-second variant or R4)
 - **Look and listen:** the unit's tempo readout should sit still at the BPM Whiplash sends (130.0 on techno). Note any flicker, an audible hiccup or a tempo wobble, and the time it happened. Then ask *"What's the status?"*: if a later Whiplash version reports clock lateness there, copy those numbers next to your note.
 - [ ] Recorded: readout ____ hiccups ____
 
@@ -597,7 +597,7 @@ Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 ### G1. The plugin and skill load after a gateway restart
 - **Type:** `/plugins`, then *"List your skills. Is whiplash:digitakt there? Open it and tell me what it says about the kit map and pitch."*
 - **Expect:**
-  - whiplash is enabled, v0.6.1 (19 tools).
+  - whiplash is enabled, v0.6.2 (20 tools).
   - `skills_list` shows `whiplash:digitakt`.
   - `skill_view("whiplash:digitakt")` returns the "Fast path: label, then start in one call" section and the "note 60 plays a sample at its own pitch" section.
   - No stale local `whiplash-digitakt` skill appears alongside it.
@@ -800,7 +800,7 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 | Q12 Notes one audio track sounds at once | P2 |
 | Q13 A chord spread across chord tracks | P3 |
 | Q14 CC 74 build sweep sounds like a filter opening | R3 |
-| Q15 The unit follows Whiplash's clock steadily | R10 (and 0.2 for the laptop) |
+| Q18 The unit follows Whiplash's clock steadily | R10 (and 0.2 for the laptop) |
 
 | Plan item / §15.1 | Check |
 | --- | --- |

@@ -16,7 +16,7 @@ Added
 - **Hardware checklist for v0.6.1:**
   - A3 and A7 now describe `routing` on play results, including `vacated: {"5": 7}` and its note.
   - New Part R (R1-R9, PR #17's HW 6.1-1 to 6.1-9): `short_demo` and `club`, a kick fill on track 9, the build's filter sweep (§15.3 Q14), the vacated-track design question for Phil, transpose following a relabel, queued setup, written parts replacing routed ones, and no extra Stop.
-  - R10 and §0.2 cover clock steadiness (new reference §15.3 Q15) and running `clock_jitter.py` on the Air.
+  - R10 and §0.2 cover clock steadiness (new reference §15.3 Q18) and running `clock_jitter.py` on the Air.
 - **Demo:** an optional 30-second arrangement beat that ends the run by itself, gated on R1 and `--v061`. None of this is hardware-verified.
 - **Visualiser: key, scale and chord progression (v0.6.0).** A full-width KEY module shows the key the beat plays in (`SET` or the pattern's `HOME` key) and a key queued for the next switch. After `whiplash_set_progression` it shows one cell per chord: the numeral as typed (case kept), the chord name and its voiced notes. The chord playing is lit with a square per bar, the next chord is dashed with a four-beat countdown, and the highlight moves on the extrapolated playhead, so it changes on the bar line. Each track that follows the progression gets a chord line (`CHD`, `STK`, `ROOT`, `SNAP`) with the notes it plays in this chord and the next. Drum, cymbal and fx tracks never get one. Same flat grayscale pixel-art rack; no new dependencies.
   - The snapshot (`view.snapshot`) gains `harmony` (key, `key_source`, `next_key`, and the progression with `index`, `next_at`, `next_index` and every voiced chord), and lanes gain `harmony` (mode, notes now, notes in the next chord, bar of the change). A following track's `loop` now holds the next four bars as the sequencer will play them, each in its own chord (`harmony.apply`, outside the engine lock), so the page's between-frame extrapolation shows chord changes on time. An empty pad track's held tone gets a module too.
@@ -32,6 +32,35 @@ Changed
   - **Before:** it took the p95 of gap deviation against a 2-bar baseline plus 3 ms, and the test reran once on a jitter-only failure.
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks more than 4 ms late form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed.
+
+## 0.6.2
+
+The third and last v0.6 PR: DJ-style transitions (item 4 of [docs/executing/v06-build-plan.md](docs/executing/v06-build-plan.md)) and mix levels (item 5). 20 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged: the arrange presets carry no transition or mix, and `scripts/rehearse_demo.py` still passes it.
+
+Added
+- **Transitions on a queued switch:** `whiplash_play_pattern(transition, transition_bars, filter_from)` while something plays. The transition runs from the next bar line over `transition_bars` (1-8) and the switch lands on the bar after it, with no Stop/Start (`transition.py`).
+  - `cut`: the plain next-bar switch.
+  - `filter_swap` (default 4 bars): every outgoing track except kick and bass ramps `filter_freq` (CC 74) down to 30, the switch lands on the one, then each cutoff ramps back to where it was over one bar. The start is the cutoff Whiplash last sent, else `filter_from`; with neither, the call is refused before anything changes.
+  - `drop_swap` (default 1 bar): kick and bass sit out the last bar(s) and come back with the switch.
+  - `riser` (default 4 bars): fx-labelled tracks (riser, sweep, noise) ramp `filter_freq` 20 → 127 (exp), and the drums fill the last bar. With no fx label it is the fill only, and the result says so.
+  - Results carry `transition` (kind, bars, `starts_at_bar`, what it does, the tracks it touches, notes), status carries `queued.transition`. Replacing a queued switch cancels its transition (`replaced_transition`) and anything it closed reopens at the new switch. A fresh start ignores it (`transition_note`).
+- **Transitions between arrangement sections:** a section's `transition` (+ `transition_bars`, `filter_from`) runs over its last bars into the next section. A cutoff Whiplash never sent is skipped and listed in `skipped_ramps`. `arrange(clear: true)` cancels a section transition in progress and reopens its cutoffs.
+- **`whiplash_mix(levels, pan, preset, bars, save_as, recall)`.** TRACK LEVEL (CC 95) and PAN (CC 90) per track or group word, from the next bar line, or ramped over `bars` (1-32) on the clock (`mixer.py`).
+  - Only values that differ from the last one sent go out, one CC per change. A track with no known value jumps on the bar line instead of ramping (`jumps`). A mix change replaces a running ramp on the same param.
+  - Pan takes 0-127 or words (`left`, `hard right`, ...).
+  - Presets set levels by role: `techno`, `techhouse`, `deephouse`, `breaks`, `soul`, `flat`, and `auto` (the genre playing). They never touch pan.
+  - `save_as` stores the mix as it will be after the call; `recall` sends it back exactly. Saved mixes survive `whiplash_stop`. With nothing playing the CCs go out at once (no ramp).
+  - Status carries `mix` (levels and pan last sent, saved names). An arrangement section's `mix` recalls a saved mix or a preset on its first bar.
+- `whiplash_stop` mid-transition puts each closed cutoff back with one CC after the panic, and says so (`cutoff_restored`).
+
+Changed
+- **One timed-action path** in the sequencer: `_timed` holds ramp starts and mix CCs keyed by bar, run at that bar line with a dict lookup. Ramps carry an `owner`, so a transition can be cancelled without touching the user's own ramps. No new thread, no new lock, no port enumeration in the clock thread.
+- `arrange.py` drops the "transitions come in v0.6.2" refusal: `transition`, `transition_bars`, `filter_from` and `mix` are section keys. The `club` and `short_demo` presets are unchanged.
+- Tool descriptions were trimmed again (`whiplash_list_params`, `whiplash_ramp_param`, `whiplash_stop`) to fit `whiplash_mix` inside the unchanged 3,000-character total and 400-character per-tool caps. The params and JSON budgets rise to 7,800 characters and 19,000 bytes.
+- Version 0.6.2 in `pyproject.toml`, `plugin.yaml`, `docs/catalog-entry.yaml` and `__init__.py`. `whiplash_mix` is added to `provides_tools` in both manifests, after `whiplash_arrange`. The skill gains Transitions and Mix sections and diagnostics rows.
+- Reference: new §15.1 #32-33 and §15.3 Q15-17.
+
+Not touched: `docs/testing/hardware-checklist.md`, `docs/demo/`, `scripts/`, `view.py`, `view.html` (owned by the visualiser agent). The PR lists the new hardware checks.
 
 ## 0.6.1
 

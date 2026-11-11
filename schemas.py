@@ -3,6 +3,8 @@ from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
 from .arrange import GROUPS, PRESETS, RAMPS_MAX, SECONDS_MAX, SECONDS_MIN, SECTION_BARS_MAX, SECTIONS_MAX
+from .mixer import MIX_BARS_MAX, PRESETS as MIX_PRESETS
+from .transition import BARS_MAX as TX_BARS_MAX, KINDS as TX_KINDS
 from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .kitmap import ROLES
@@ -16,6 +18,11 @@ EMPTY = {"type": "object", "properties": {}}
 SKILL = " Details: skill whiplash:digitakt."
 KEY = {"type": "string", "description": "Key root, e.g. 'A', 'F#', 'Bb', 'Am' (minor)"}
 SCALE = {"type": "string", "enum": sorted(SCALES), "description": "Default major, or minor for keys like 'Am'"}
+MIX_MAP = {"type": "object", "additionalProperties": {"type": ["integer", "string"]}}
+TRANSITION = {"type": "string", "enum": list(TX_KINDS)}
+TX_BARS = {"type": "integer", "minimum": 1, "maximum": TX_BARS_MAX, "description": "Default 4 (drop_swap 1)"}
+FILTER_FROM = {"type": "integer", "minimum": 0, "maximum": 127,
+               "description": "filter_swap: cutoff where Whiplash hasn't sent one"}
 
 SCHEMAS = {
     "whiplash_list_midi_ports": {
@@ -25,7 +32,7 @@ SCHEMAS = {
     },
     "whiplash_list_params": {
         "name": "whiplash_list_params",
-        "description": "List the named sound params (CC, range, aliases) for whiplash_set_param and whiplash_ramp_param.",
+        "description": "List the named sound params (CC, range, alias).",
         "parameters": EMPTY,
     },
     "whiplash_play_pattern": {
@@ -55,6 +62,9 @@ SCHEMAS = {
                 "mute": {"type": "boolean"}}},
                        "description": ('Per-track setup sent with the start or at the switch bar, e.g. '
                                        '{"6": {"slot": 9, "transpose": 12}, "8": {"mute": true}}')},
+            "transition": {**TRANSITION, "description": "Queued switch: hand over over transition_bars, then switch"},
+            "transition_bars": TX_BARS,
+            "filter_from": FILTER_FROM,
         }},
     },
     "whiplash_set_param": {
@@ -172,7 +182,7 @@ SCHEMAS = {
     "whiplash_arrange": {
         "name": "whiplash_arrange",
         "description": ("Play the beat as a song from the next bar: sections (intro, build, drop) bring tracks in and out, "
-                        "ramp, fill, swap chords. Presets club, short_demo. Stops after the last section unless "
+                        "ramp, fill, swap chords, transition. Presets club, short_demo. Stops after the last section unless "
                         "loop." + SKILL),
         "parameters": {"type": "object", "properties": {
             "preset": {"type": "string", "enum": list(PRESETS)},
@@ -194,15 +204,31 @@ SCHEMAS = {
                     "from": {"type": "integer"}, "to": {"type": "integer"}, "bars": {"type": "integer"},
                     "curve": {"type": "string", "enum": sorted(CURVES)}}},
                           "description": "Start on the first bar; bars default to the section's"},
+                "transition": {**TRANSITION, "description": "Into the next section, over its last bars"},
+                "transition_bars": TX_BARS,
+                "filter_from": FILTER_FROM,
+                "mix": {"type": "string", "description": "Saved mix or mix preset, on the first bar"},
             }}},
             "loop": {"type": "boolean"},
             "clear": {"type": "boolean", "description": "End the arrangement"},
         }},
     },
+    "whiplash_mix": {
+        "name": "whiplash_mix",
+        "description": ("Set track LEVEL (CC 95) and PAN (CC 90) per track or group from the next bar, or a genre "
+                        "preset; bars ramps. save_as/recall a mix." + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "levels": {**MIX_MAP, "description": 'Track or group -> 0-127, e.g. {"6": 95, "hats": 90}'},
+            "pan": {**MIX_MAP, "description": "Track or group -> 0-127 (64 centre), or left, right, hard left..."},
+            "preset": {"type": "string", "enum": [*MIX_PRESETS, "auto"], "description": "Levels by role; auto = genre"},
+            "bars": {"type": "integer", "minimum": 0, "maximum": MIX_BARS_MAX, "description": "Ramp length; 0 = on the bar"},
+            "save_as": {"type": "string"},
+            "recall": {"type": "string"},
+        }},
+    },
     "whiplash_ramp_param": {
         "name": "whiplash_ramp_param",
-        "description": ("Sweep a param over beats or bars on the clock (e.g. open the filter over 8 bars). Cancel with "
-                        "cancel: '<ramp_id>' or 'all'."),
+        "description": "Sweep a param over beats or bars on the clock. Cancel with cancel: '<ramp_id>' or 'all'.",
         "parameters": {"type": "object", "properties": {
             "track": TRACK,
             "param": PARAM,
@@ -251,9 +277,8 @@ SCHEMAS = {
     "whiplash_stop": {
         "name": "whiplash_stop",
         "description": ("Stop and silence: note-offs, All Notes Off on 1-8 and any 9-16 that played, MIDI Stop (not "
-                        "when clock-only). Resets mutes, ramps, "
-                        "mutations, transposes, written parts, progression and arrangement; keeps the kit map. Safe "
-                        "as a panic button."),
+                        "when clock-only). Resets everything but the kit map and saved mixes. Safe as a panic "
+                        "button."),
         "parameters": EMPTY,
     },
     "whiplash_status": {

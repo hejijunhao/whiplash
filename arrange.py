@@ -1,5 +1,7 @@
 """Song arrangement (v0.6.1): sections on bar lines, built from Whiplash's existing primitives.
 
+v0.6.2: a section can end on a transition into the next (transition.py) and recall a mix on its first bar.
+
 Pure: parsing, validation and presets only, no MIDI and no engine state. The engine schedules each section
 at its first bar line with the primitives it already has (mutes, drops, fills, ramps, a progression swap), so
 there is no new clock path: the sequencer only looks up "does a section start at this bar?" in a dict.
@@ -11,7 +13,7 @@ playing then (the kit map label, else the pattern's role), so an arrangement sur
 """
 from dataclasses import dataclass
 
-from . import kitmap
+from . import kitmap, transition
 
 SECTIONS_MAX = 16
 SECTION_BARS_MAX = 64
@@ -29,7 +31,8 @@ GROUPS = {
     "music": frozenset({"pad", "stab", "chord", "lead", "fx", "other"}),
     **{role: frozenset({role}) for role in kitmap.ROLES if role not in ("perc",)},
 }
-SECTION_KEYS = ("name", "bars", "tracks", "mute", "drop", "fill", "chords", "bars_per_chord", "ramps")
+SECTION_KEYS = ("name", "bars", "tracks", "mute", "drop", "fill", "chords", "bars_per_chord", "ramps", "transition",
+                "transition_bars", "filter_from", "mix")
 RAMP_KEYS = ("track", "param", "to", "from", "bars", "curve")
 CLEAR_CHORDS = {"none", "off", "clear", "stop"}
 # The build's rising filter: low-pass cutoff from nearly closed to fully open. It leaves filter_freq at 127.
@@ -61,6 +64,10 @@ class Section:
     chords: object  # None (keep), "clear", or a tuple of chord symbols
     bars_per_chord: object
     ramps: tuple
+    transition: object = None  # v0.6.2: None or a transition.KINDS name, run over the section's last bars
+    transition_bars: int = 0
+    filter_from: object = None
+    mix: object = None  # v0.6.2: a mix snapshot or preset name recalled on the section's first bar
 
 
 def _whole(value, low, high, what):
@@ -122,8 +129,7 @@ def section(raw, i):
         raise ArrangeError(f"{where}: give an object like {{name: 'intro', bars: 8, tracks: ['kick', 'hats']}}")
     unknown = sorted(set(raw) - set(SECTION_KEYS))
     if unknown:
-        hint = " (transitions come in v0.6.2)" if "transition" in unknown else ""
-        raise ArrangeError(f"{where}: unknown key(s) {unknown}; use {', '.join(SECTION_KEYS)}{hint}")
+        raise ArrangeError(f"{where}: unknown key(s) {unknown}; use {', '.join(SECTION_KEYS)}")
     name = raw.get("name") or f"section {i + 1}"
     if not isinstance(name, str) or len(name.strip()) > NAME_MAX or any(ord(c) < 32 for c in name):
         raise ArrangeError(f"{where}: name must be text up to {NAME_MAX} characters")
@@ -159,8 +165,23 @@ def section(raw, i):
     ramps = raw.get("ramps") or []
     if not isinstance(ramps, list) or len(ramps) > RAMPS_MAX:
         raise ArrangeError(f"{where}: ramps must be a list of up to {RAMPS_MAX}")
+    try:
+        kind = transition.kind(raw.get("transition"))
+        tx_bars = transition.bars(kind, raw.get("transition_bars"))
+        tx_from = transition.filter_from(kind, raw.get("filter_from"))
+    except transition.TransitionError as exc:
+        raise ArrangeError(f"{where}: {exc}") from None
+    if tx_bars > bars:
+        raise ArrangeError(f"{where}: transition_bars ({tx_bars}) can't be longer than the section ({bars} bars)")
+    mix = raw.get("mix")
+    if mix in (None, ""):
+        mix = None
+    elif not isinstance(mix, str) or len(mix.strip()) > NAME_MAX:
+        raise ArrangeError(f"{where}: mix must be a saved mix name or a mix preset")
+    else:
+        mix = " ".join(mix.strip().lower().split())
     return Section(name, bars, tracks, mute, drop, fill, chords, per_chord,
-                   tuple(_ramp(r, where) for r in ramps))
+                   tuple(_ramp(r, where) for r in ramps), None if kind == "cut" else kind, tx_bars, tx_from, mix)
 
 
 def sections(raw):

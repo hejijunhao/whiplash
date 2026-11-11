@@ -1,6 +1,6 @@
 name: whiplash
-version: "0.6.1"
-description: "Jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats routed onto your kit map (tracks 1-16) in any key, chord progressions, song sections (arrange: intro, build, drop, outro), bar-quantized switches, written parts, named params, clock-synced ramps, fills/drops/density, sample-slot select, clock-only option, mutes, tempo. No SysEx, ever."
+version: "0.6.2"
+description: "Jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats routed onto your kit map (tracks 1-16) in any key, chord progressions, song sections (arrange: intro, build, drop, outro), DJ-style transitions (filter swap, drop swap, riser), mix levels and pan with saved mixes, bar-quantized switches, written parts, named params, clock-synced ramps, fills/drops/density, sample-slot select, clock-only option, mutes, tempo. No SysEx, ever."
 author: pgbouncer
 license: MIT
 requires_hermes: ">=0.19"
@@ -19,6 +19,7 @@ provides_tools:
   - whiplash_write_part
   - whiplash_set_progression
   - whiplash_arrange
+  - whiplash_mix
   - whiplash_ramp_param
   - whiplash_mutate
   - whiplash_mute_track

@@ -437,7 +437,7 @@ def test_bad_arrangements_change_nothing(fake):
         {}, {"sections": []}, {"sections": "intro"}, {"preset": "festival"}, {"preset": "club", "sections": [{}]},
         {"preset": "club", "seconds": 60}, {"sections": [{"bars": 4}], "seconds": 60},
         {"sections": [{"name": "a"}]}, {"sections": [{"bars": 0}]}, {"sections": [{"bars": 65}]},
-        {"sections": [{"bars": 4, "transition": "cut"}]}, {"sections": [{"bars": 4, "tracks": ["tuba"]}]},
+        {"sections": [{"bars": 4, "transition": "spin"}]}, {"sections": [{"bars": 4, "tracks": ["tuba"]}]},
         {"sections": [{"bars": 4, "tracks": [17]}]}, {"sections": [{"bars": 4, "tracks": [1], "mute": [2]}]},
         {"sections": [{"bars": 4}] * 17}, {"sections": [{"bars": 64}] * 9},
         {"sections": [{"bars": 4, "chords": "i Q"}]}, {"sections": [{"bars": 4, "bars_per_chord": 2}]},
@@ -575,15 +575,15 @@ def test_arrange_sends_only_ramp_ccs(fake):
     assert sent <= {("control_change", 74)}  # the build's filter start values; notes are sent by the thread only
 
 
-def test_version_is_0_6_1():
+def test_version_is_in_sync():  # v0.6.2 pins the number in test_v062.py
     import tomllib
     import yaml
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.6.1"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.6.1"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.6.1"
-    assert whiplash.__version__ == "0.6.1"
+    version = whiplash.__version__
+    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == version
+    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == version
+    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == version
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.6.1")
+    assert releases[0].startswith(version)
     for manifest in (yaml.safe_load(open(ROOT / "plugin.yaml"))["provides_tools"],
                      yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["capabilities"]["provides_tools"]):
         assert manifest.index("whiplash_arrange") == manifest.index("whiplash_set_progression") + 1
