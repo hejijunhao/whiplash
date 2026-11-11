@@ -417,6 +417,8 @@ class Engine:
         self.bar_log = collections.deque(maxlen=64)
         self.note_log = None
         self.last_listen = None  # listen.summary() of the last whiplash_listen; the loudness guard reads clipping
+        self.last_scan = None  # v0.7.1: the proposal of the last whiplash_scan_kit (read-only, never applied)
+        self.stops = 0  # v0.7.1: counts stop() calls (whiplash_stop, a fresh play); a running kit scan aborts on one
         self.rails = {"cc_deferred": 0, "ramps_refused": 0, "guard_refusals": 0, "guard_forced": 0}
 
     # ---- port handling -------------------------------------------------
@@ -710,6 +712,7 @@ class Engine:
         is sounding: the last run already silenced the port on its way out.
         """
         with self._transport:
+            self.stops += 1  # a kit scan in another thread sees this and stops sending
             thread, stop, done = self._thread, self._stop, self._done
             self._thread = self._stop = self._done = None
             with self._lock:  # snapshot before the thread's own exit clears them
@@ -1448,6 +1451,29 @@ class Engine:
         from .listen import summary
         with self._lock:
             self.last_listen = summary(result)
+
+    def scan_state(self):
+        """v0.7.1 whiplash_scan_kit: (playing, transport mode, muted tracks, stop count) in one locked copy."""
+        with self._lock:
+            return self.playing(), self.transport_on(), set(self.muted) | set(self.hw_muted), self.stops
+
+    def scan_note(self, track, on, stops, note=60, velocity=100):
+        """v0.7.1 whiplash_scan_kit: one note-on or note-off on a track's own channel, from the tool call's thread,
+        only while the sequencer is stopped. Raises if a beat started or a stop happened since the scan began
+        (`stops`), so whiplash_stop always wins. The note joins _sounding, so a panic ends it."""
+        mido = __import__("mido")
+        with self._lock:
+            if on and (self.playing() or self.stops != stops):
+                raise WhiplashError("the kit scan stopped: a beat started or whiplash_stop was called")
+            ch = track - 1
+            if on:
+                self._note(mido, ch, note, velocity)
+            elif (ch, note) in self._sounding:
+                self._note(mido, ch, note, 0)
+
+    def record_scan(self, proposal):
+        with self._lock:
+            self.last_scan = proposal
 
     def safety_status(self):
         """The v0.7.0 rails for whiplash_status (caller holds _lock)."""

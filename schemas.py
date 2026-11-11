@@ -25,6 +25,7 @@ TX_BARS = {"type": "integer", "minimum": 1, "maximum": TX_BARS_MAX, "description
 FILTER_FROM = {"type": "integer", "minimum": 0, "maximum": 127,
                "description": "filter_swap: cutoff where Whiplash hasn't sent one"}
 
+DEVICE = {"type": "string", "description": "Audio input name or index (default: the Digitakt's)"}
 FORCE = {"type": "boolean", "description": "Past the loudness guard after a listen heard clipping; only if the user insists"}
 
 SCHEMAS = {
@@ -295,13 +296,20 @@ SCHEMAS = {
     },
     "whiplash_listen": {
         "name": "whiplash_listen",
-        "description": ("Hear the unit: capture its USB audio for some bars from the next bar line. Returns loudness, "
-                        "peak/clipping, 4-band balance, onsets vs the grid, kick offsets and silent-track hints, "
-                        "never audio. Needs USB CONFIG = USB AUDIO/MIDI and the listen extra." + SKILL),
+        "description": ("Hear the unit's USB audio for some bars from the next bar line: loudness, clipping, 4-band "
+                        "balance, onsets vs the grid, kick offsets, silent tracks; never audio. Needs USB AUDIO/MIDI "
+                        "and the listen extra." + SKILL),
         "parameters": {"type": "object", "properties": {
             "bars": {"type": "integer", "minimum": 1, "maximum": LISTEN_BARS_MAX, "description": "Default 2"},
-            "device": {"type": "string", "description": "Audio input name or index (default: the Digitakt's)"},
+            "device": DEVICE,
         }},
+    },
+    "whiplash_scan_kit": {
+        "name": "whiplash_scan_kit",
+        "description": ("Beat stopped: play each track once, alone, and propose kit-map labels (kick, hat, pad...) from "
+                        "its USB audio. Never applies them: show the user, whiplash_label_tracks only on their yes."
+                        + SKILL),
+        "parameters": {"type": "object", "properties": {"tracks": TRACKS}},
     },
     "whiplash_open_view": {
         "name": "whiplash_open_view",

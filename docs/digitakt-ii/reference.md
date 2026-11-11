@@ -789,6 +789,7 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 
 | 34 | v0.7.0 `whiplash_listen` captures the unit's USB audio (`listen.py`) and sends nothing to the unit | ✅ / ⚠️ | No new message type, no CC: a listen only reads an audio input. It needs USB CONFIG = USB AUDIO/MIDI and hears the USB OUT pair (§14; [M] p. 80-81, p. 83). The optional extra (numpy, sounddevice) is imported only inside a listen. Whether the input is named "Digitakt", what the round-trip latency is, and whether INT TO MAIN = AUTO silences the main outs during a capture-only stream are HW (§15.3 Q7, Q18, Q20). |
 | 35 | v0.7.0 safety rails: at most 48 ramps at once, ramp CCs capped at 1,000/s and 16 per clock tick, and a loudness guard on TRACK LEVEL (CC 95), AMP VOLUME (CC 89) and OVERDRIVE (CC 57) after a listen hears clipping (`engine.py`) | ✅ | Pure restrictions: they only ever send fewer CCs, later, never different numbers. A held-back ramp CC goes out on a later tick with the ramp's current value, and every ramp still ends on its exact end value. CC 89 is the AMP page's VOL and CC 57 the FX page's OVER (§5.2, §5.3; [M] p. 110; [G]). The master overdrive and compressor are on the FX CONTROL channel, which Whiplash never addresses (§15.2), so the guard can't cover them. Whether 1,000 CCs/s is gentle enough for the unit is HW (§15.3 Q21). |
+| 36 | v0.7.1 `whiplash_scan_kit` plays one note 60 per track on the track's own channel, alone, with the sequencer stopped, and classifies what USB audio hears (`scan.py`, added 2026-11-11) | ✅ / ⚠️ | Only note-on/off, no CC, clock or Start, and never a sample or slot change. Note 60 is the sample's own pitch only at TUNE 64 with the preset OCTAVE unchanged (#2, §6.1). Track n = channel n (#1, #23); tracks 9-16 carry `channel_note`. It hears the USB OUT pair (§14), so a track routed away from MAIN, muted on the unit (§10) or set to a changed or OFF channel comes back `silent`. Whiplash never reads sample names (§15.2); the labels are acoustic guesses and only applied on the user's yes. Whether the labels match the real kit, and whether a muted track really reads silent, is HW (§15.3 Q22-24). |
 
 ### 15.2 Things Whiplash must keep never doing
 
@@ -829,6 +830,9 @@ Check these on the unit, and record the result in this file with a date (Q7 also
 19. Listen and the mixer (v0.7.0): with USB OUT = MAIN, does lowering TRACK LEVEL (CC 95) with `whiplash_mix` lower `lufs_ish` on the next listen? With USB OUT set to one track (L:T), does PRE/POST FADER change that?
 20. Round trip (v0.7.0): `whiplash_listen` on a four-on-the-floor kick. What `kick.median_offset_ms` and `spread_ms` come back? Is the offset steady across listens (latency), and is the spread a few ms?
 21. CC rate (v0.7.0, §15.1 #35): with 16 tracks ramping filter, level and pan at once (48 ramps) at 300 BPM, does the unit keep up (no stuck values, no lag in the notes)?
+22. Kit scan labels (v0.7.1, §15.1 #36): on Phil's kit, which `proposed` labels are right? Note each track's `features` for the wrong ones, to tune the thresholds. Does every track sound at its own pitch on note 60?
+23. Kit scan and the unit's mutes (v0.7.1): does a track muted on the unit (global or pattern mute, §10) come back `silent`? Does a track with TRACK n CHANNEL changed or OFF ([M] p. 79)?
+24. Kit scan and the unit's own pattern (v0.7.1): with Play pressed on the unit, does the 0.4 s quiet check catch it before any note? With a sparse pattern that is quiet in those 0.4 s, are the stray hits flagged (`other_hits`, `unexpected_audio`)?
 
 ---
 

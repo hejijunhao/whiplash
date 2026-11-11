@@ -7,6 +7,7 @@ from . import ccmap
 from . import engine as eng
 from . import listen as _listen
 from . import patterns
+from . import scan as _scan
 from . import view
 
 log = logging.getLogger("whiplash")
@@ -318,6 +319,12 @@ def listen(p):
 
 
 @_tool
+def scan_kit(p):
+    """v0.7.1: play each track once, alone, classify what comes back, and PROPOSE labels. Never applies them."""
+    return _scan.scan(ENGINE, tracks=p.get("tracks"), device=p.get("device"))
+
+
+@_tool
 def open_view(p):
     port = p.get("port")
     if port not in (None, ""):
@@ -339,4 +346,4 @@ def close_view(p):
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
                                              select_sample, label_tracks, transpose, write_part, set_progression, arrange,
                                              mix, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
-                                             status, listen, open_view, close_view)}
+                                             status, listen, scan_kit, open_view, close_view)}
