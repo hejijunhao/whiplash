@@ -37,6 +37,21 @@ Open decisions (plan recommendations taken, see the plan's §5)
 - The session key sticks across switches until stop.
 - `set_progression` needs a pattern playing. There is no `progression` argument on `play_pattern` yet.
 
+### Also in 0.6.0: the visualiser catches up with v0.5.x (PR #13)
+
+The visualiser catches up with v0.5.x. Mostly the page and `view.py`. The only engine change is one read-only line: `Engine.view_state()` also copies the slot labels (`kit_slots`). There are no tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
+
+Added
+- **Written parts on the rack.** A track playing a `whiplash_write_part` part gets a `WR` tag, and its 16-step strip becomes a small piano roll: each note at its pitch, as long as its `length` in steps. A `LEN` tag gives the length (or range). It is dashed when Whiplash has sent neither `amp_mode` 1 nor `amp_hold` 127 on that track, since the unit may then not end the sound on note-off (reference §5.2). The module flashes inverted when a part lands.
+- **Transpose and range.** A `TRN +12` tag on transposed tracks, and the note range (e.g. `C5-G5`) under the note readout, both including the live transpose. Bars other than the sequencer's current one now carry their notes and lengths, so the note readout and roll stay right across the loop.
+- **Amp envelope.** `HLD NOTE`, `ADSR` or `AHD` tags show what Whiplash last sent on CC 80 / CC 87 (not what the kit is set to).
+- **Kit map labels** (v0.5.3 `whiplash_label_tracks`). A labelled track shows the user's label as its role in white, with the vocabulary role in the tooltip. Assumed roles stay gray. The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until a part is written.
+- **Tracks 9-16** get their own row under 1-8 when they play, headed `TRK 9-16 · WRITTEN PARTS · CHECK AUTO / FX CONTROL CH`, so 1-8 never reflow.
+- Snapshot lane fields: `written`, `transpose`, `pitch` (`low`/`high` + names or `null`), `length` (`[min, max]` steps for written parts, else `null`) and `amp` (`{mode, hold_note}` or `null`), `kit` (`{role, label}` or `null`) and `slot_label`. `loop` hits are now `[step, velocity, note, length]` (was `[step, velocity]`).
+
+Fixed
+- The view named notes in scientific numbering (60 = C4), one octave off from Whiplash's Elektron numbering (60 = C5) used by `whiplash_write_part`, status and the reference. It now uses `patterns.note_name`.
+
 ## 0.5.3
 
 The v0.5 plan's P1 batch (items 7-10), answering Phil's live Hermes feedback from Nov 11 2026: wrong track roles for his kit, 5-40 s turns with many `tool_describe` round trips, and no tech house. 17 tools. Nothing here has been tested on a real Digitakt II yet.

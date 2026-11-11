@@ -38,7 +38,8 @@ CC_MAX = {p.cc: p.max for p in ccmap.PARAMS.values()}  # knob/fader travel on th
 CC_MAX[ccmap.PARAMS["amp_hold"].cc] = 127  # 127 (HOLD = NOTE) can still be sent explicitly
 SAMPLE_SLOT_CC = ccmap.PARAMS["sample_slot"].cc
 HIDDEN_CCS = ccmap.BLOCKED_CCS | {123, eng.MUTE_CC, SAMPLE_SLOT_CC}  # all-notes-off, NRPN plumbing; mute/slot are badges
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+AMP_MODE_CC = ccmap.PARAMS["amp_mode"].cc
+HOLD_CC = ccmap.PARAMS["amp_hold"].cc
 LOG_SIZE = 40
 
 ACTIONS = deque(maxlen=LOG_SIZE)  # recent Whiplash tool calls, appended by tools._tool
@@ -46,7 +47,21 @@ _action_ids = itertools.count(1)  # next() is atomic under the GIL: tools may ru
 
 
 def note_name(note):
-    return f"{NOTE_NAMES[note % 12]}{note // 12 - 1}"
+    """Elektron octave numbering (C5 = 60), the same names whiplash_write_part echoes back."""
+    return patterns.note_name(note)
+
+
+def _amp(ch, cc_values):
+    """What Whiplash last sent for the amp envelope mode on this channel, or None if it sent neither.
+
+    The unit only ends a sound on note-off with AMP MODE = ADSR or HOLD = NOTE (reference §5.2), so
+    the page uses this to say whether a written part's length is audible. It is what Whiplash sent,
+    not what the unit is set to: the kit may differ.
+    """
+    mode, hold = cc_values.get((ch, AMP_MODE_CC)), cc_values.get((ch, HOLD_CC))
+    if mode is None and hold is None:
+        return None
+    return {"mode": "ADSR" if mode == 1 else "AHD" if mode == 0 else None, "hold_note": hold == eng.HOLD_NOTE}
 
 
 # ---- tool action log -------------------------------------------------------
@@ -143,6 +158,8 @@ def snapshot(engine, now=None):
         ramps.setdefault(ramp["track"], []).append(ramp)
     in_use = {t for t, bars in work.items() if any(bars)}
     in_use |= {t for t, bars in (queued["pattern"].bars.items() if queued else ()) if any(bars)}
+    kit, kit_slots = st.get("kit_tracks") or {}, st.get("kit_slots") or {}
+    in_use |= set(kit)  # a labelled track gets a module even while it waits for a written part
     in_use |= st["muted"] | st["hw_muted"] | set(st["drops"]) | set(st["density"]) | set(ramps) | set(params) | set(slots)
     in_use |= {t for ts in st["fills"].values() for t in ts} | set(fills_now)
     future_fills = {t for b, ts in st["fills"].items() if b > bar for t in ts}
@@ -150,14 +167,31 @@ def snapshot(engine, now=None):
     for track in sorted(t for t in in_use if 1 <= t <= 16):
         bars = work.get(track, [])
         idx = frame["loop_bar"]
+        shift = st["transpose"].get(track, 0)
         steps = _hits(current, track) if current is not None else (
-            [[s, n, v, g] for s, n, v, g, _o in bars[idx]] if bars else [])
-        loop = [[[h[0], h[2]] for h in b] for b in bars]
+            [[s, eng.clamp_note(n + shift), v, g] for s, n, v, g, _o in bars[idx]] if bars else [])
         notes = {h[1] for b in bars for h in b}
+        melodic = bool(notes - {patterns.DRUM})
+        written = track in st["parts"]
+        # [step, velocity, note, length]: note with the live transpose, length in 16th steps
+        loop = [[[h[0], h[2], eng.clamp_note(h[1] + shift), h[3]] for h in b] for b in bars]
+        played = [h[2] for b in loop for h in b]
+        pitch = None
+        if played and (melodic or shift):
+            low, high = min(played), max(played)
+            pitch = {"low": low, "high": high, "low_name": note_name(low), "high_name": note_name(high)}
+        lengths = sorted({h[3] for b in loop for h in b}) if written else []
         drop = st["drops"].get(track)
         lane = {
-            "track": track, "role": roles.get(track) or next_roles.get(track) or ("cc only" if not bars else ""),
-            "steps": steps, "loop": loop, "melodic": bool(notes - {patterns.DRUM}),
+            "track": track, "role": (kit[track][1] if track in kit else
+                                       roles.get(track) or next_roles.get(track) or ("cc only" if not bars else "")),
+            "steps": steps, "loop": loop, "melodic": melodic,
+            "written": written, "transpose": shift, "pitch": pitch,
+            "length": [lengths[0], lengths[-1]] if lengths else None,
+            "amp": _amp(track - 1, st["cc_values"]),
+            # whiplash_label_tracks: the user's label (role is then that label, not an assumption)
+            "kit": {"role": kit[track][0], "label": kit[track][1]} if track in kit else None,
+            "slot_label": kit_slots.get(slots.get(track)),
             "muted": track in st["muted"], "hw": track in st["hw_muted"],
             "drop": {"from": drop[0], "back": drop[1]} if drop else None,
             "fill": "now" if track in fills_now else "next" if track in future_fills else None,
