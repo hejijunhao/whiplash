@@ -395,8 +395,10 @@ def test_description_size_budget():
     assert max(tool_text.values()) <= 400, tool_text
     # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params.
     # v0.6.1 adds whiplash_arrange (its section schema) and trims other tool descriptions to stay under 3000.
-    assert _descriptions(schemas.SCHEMAS) <= 7400
-    assert len(json.dumps(schemas.SCHEMAS)) <= 17500
+    # v0.6.2 adds whiplash_mix and transition params on play_pattern and arrange sections; tool descriptions were
+    # trimmed again to stay under 3000, and the params / JSON caps rise by about 400 characters and 1.5 KB.
+    assert _descriptions(schemas.SCHEMAS) <= 7800
+    assert len(json.dumps(schemas.SCHEMAS)) <= 19000
 
 
 def test_short_descriptions_keep_the_safety_caveats():

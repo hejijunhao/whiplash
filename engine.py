@@ -26,7 +26,8 @@ import threading
 import time
 from dataclasses import dataclass, replace
 
-from . import arrange, ccmap, harmony, kitmap, mutate, parts, patterns
+from . import arrange, ccmap, harmony, kitmap, mixer, mutate, parts, patterns
+from . import transition as _transition_mod  # play() has a `transition` argument
 
 log = logging.getLogger("whiplash")
 
@@ -46,6 +47,12 @@ TUNE_CC = ccmap.PARAMS["tune"].cc
 AMP_MODE_CC = ccmap.PARAMS["amp_mode"].cc
 SLOT_CC = ccmap.PARAMS["sample_slot"].cc
 HOLD_CC = ccmap.PARAMS["amp_hold"].cc
+FILTER_CC = ccmap.PARAMS["filter_freq"].cc
+LEVEL_CC = ccmap.PARAMS["track_level"].cc
+PAN_CC = ccmap.PARAMS["pan"].cc
+REOPEN = "reopen"  # owner of the ramps that put a transition's closed cutoff back
+MIX_OWNER = "mix"
+ARR_OWNER = "arr"
 HOLD_NOTE = 127  # amp_hold 127 = HOLD NOTE, a mode switch (manual 11.7 p. 56; midi.guide): never reached by clamp or ramp
 HOLD_NOTE_INFO = {"hold": "NOTE", "meaning": "HOLD = NOTE (AHD mode): the hold lasts from note-on to note-off, so "
                                             "note length is audible",
@@ -310,6 +317,7 @@ class Ramp:
     curve: str
     elapsed: int = 0
     last: int = None
+    owner: str = None  # v0.6.2: the transition or mix that started it (cancelled with it); None = the user's
 
     def progress(self):
         return min(1.0, self.elapsed / self.total)
@@ -374,6 +382,15 @@ class Engine:
         self._moves = {}  # pattern track -> track it plays on now (kit map routing of the playing pattern)
         self._arr = None  # whiplash_arrange state (a dict, see arrange()); cleared by stop
         self._arr_muted = set()  # tracks the arrangement muted, unmuted again by arrange(clear)
+        # v0.6.2 transitions and mix. _timed: bar -> [action] run at that bar line (ramp starts, mix CCs), each
+        # tagged with an owner. _restore: (track, cc) -> the cutoff a filter_swap closed, put back by a reopen ramp
+        # at the next switch or section, or by one CC on stop. _owned: owner -> drops and fills it added.
+        self._timed = {}
+        self._restore = {}
+        self._owned = {}
+        self._tx_seq = 0
+        self._mixes = {}  # name -> {track: {"level": v, "pan": v}}; survives stop, like the kit map
+        self.restored = {}  # {track: cutoff} put back by the last panic
         self.sent_count = 0
         self.send_transport = None  # transport mode of the current/last run; None = env default
         # Published by the sequencer thread for the live view, read without any lock: each is
@@ -485,7 +502,7 @@ class Engine:
         return default_send_transport() if self.send_transport is None else self.send_transport
 
     def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None, transpose=None,
-             tracks=None, key=None, scale=None):
+             tracks=None, key=None, scale=None, transition=None, transition_bars=None, filter_from=None):
         """Start a pattern, or queue a live switch to it at the next bar line.
 
         send_transport: True sends MIDI Start/Stop around the clock, False sends clock only,
@@ -496,6 +513,9 @@ class Engine:
         Both carry "send_transport".
         key/scale move the pattern's melodic tracks into that key (harmony.in_key) from the first bar, or from
         the switch bar; without one, a key set earlier in the run (or a progression's) still applies.
+        transition (v0.6.2, a queued switch only): cut, filter_swap, drop_swap or riser over transition_bars bars
+        from the next bar line; the switch then lands on the bar after them (transition.py). Replacing a queued
+        switch cancels its transition (a closed cutoff reopens at the new switch). A fresh start ignores it.
         transpose ({track: semitones}) applies from the first bar of a fresh start, or from the switch
         bar of a queued one, merged into the transposes already carried.
         tracks ({track: {slot, tune, transpose, mute}}) sets each track up in the same call: the slot and
@@ -516,6 +536,12 @@ class Engine:
         ccs = setup_ccs(setup)
         mutes = {t: e["mute"] for t, e in setup.items() if "mute" in e}
         keyspec = check_key(key, scale)
+        try:
+            tx_kind = _transition_mod.kind(transition)
+            tx_bars = _transition_mod.bars(tx_kind, transition_bars)
+            tx_from = _transition_mod.filter_from(tx_kind, filter_from)
+        except _transition_mod.TransitionError as exc:
+            raise WhiplashError(str(exc)) from None
         with self._transport:
             same_mode = send_transport is None or send_transport == self.send_transport
             if (self.playing() and self._port is not None and (port is None or port == self.port_name)
@@ -523,11 +549,34 @@ class Engine:
                 with self._lock:
                     self._check_transpose_targets(transpose, pattern, carried=set(self._parts))
                     replaced = self._queued["pattern"].name if self._queued else None
-                    at = self.bar + 1
+                    first = self.bar + 1
+                    at = first + tx_bars
+                    tx = None
+                    if tx_kind not in (None, "cut"):
+                        self._tx_seq += 1
+                        owner = f"t{self._tx_seq}"
+                        plan = self._transition_plan(tx_kind, tx_bars, tx_from, first, at, self._roles_playing(),
+                                                     owner)  # raises before anything changes
+                        tx = {"id": owner, "kind": tx_kind, "bars": tx_bars, "starts_at_bar": first,
+                              "tracks": plan["tracks"], "notes": plan["notes"]}
+                    old_tx = (self._queued or {}).get("transition")
+                    cancelled = self._cancel_owner(old_tx["id"]) if old_tx else None
+                    if tx is not None:
+                        self._commit_plan(plan, tx["id"])
                     self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at, "transpose": transpose,
-                                    "ccs": ccs, "mutes": mutes, "key": keyspec}
+                                    "ccs": ccs, "mutes": mutes, "key": keyspec, "transition": tx}
                 out = {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
                        "send_transport": self.send_transport}
+                if tx is not None:
+                    out["transition"] = {"kind": tx_kind, "bars": tx_bars, "starts_at_bar": first,
+                                         "does": _transition_mod.describe(tx_kind, tx_bars), **tx["tracks"]}
+                    if tx["notes"]:
+                        out["transition"]["notes"] = tx["notes"]
+                elif tx_kind == "cut":
+                    out["transition"] = {"kind": "cut", "does": _transition_mod.describe("cut", 0)}
+                if old_tx:
+                    out["replaced_transition"] = {"kind": old_tx["kind"], "ramps_cancelled": cancelled,
+                                                  "note": "anything it closed reopens at the new switch"}
                 return {**out, "setup": setup} if setup else out
             self._check_transpose_targets(transpose, pattern, carried=set())  # a fresh start clears written parts
             if send_transport is None:
@@ -550,6 +599,10 @@ class Engine:
                     name="whiplash-seq", daemon=True)
                 self._thread.start()
             out = {"mode": "started", "send_transport": send_transport, **stopped}
+            if tx_kind not in (None, "cut"):
+                out["transition_note"] = (f"{tx_kind} ignored: a transition hands over from a playing pattern, and "
+                                          "this call started fresh (nothing was playing, or the port or "
+                                          "send_transport changed), so it starts on the one")
             return {**out, "setup": setup} if setup else out
 
     def _apply_setup(self, ccs, mutes):
@@ -641,6 +694,7 @@ class Engine:
             self._thread = self._stop = self._done = None
             with self._lock:  # snapshot before the thread's own exit clears them
                 ramps = sorted((r.id for r in self._ramps.values()), key=lambda i: int(i[1:]))
+                self.restored = {}
             was_playing = thread is not None and thread.is_alive()
             if stop is not None:
                 stop.set()
@@ -650,6 +704,8 @@ class Engine:
                 # A run that was just stopped silences the port itself on the way out; only
                 # send the panic here when that did not happen (idle, or the thread is stuck).
                 idle_quiet = not was_playing and not silence_idle and not self._sounding
+                with self._lock:
+                    self._park_reopens()
                 if self._port is not None and not (was_playing and done.is_set()) and not idle_quiet:
                     self._panic()
             except Exception as exc:
@@ -658,6 +714,7 @@ class Engine:
             finally:
                 with self._lock:
                     self._ramps.clear()
+                    self._timed, self._owned = {}, {}
                     self._queued = None
                     self._drops, self._fills = {}, {}
                     self._transpose = {}
@@ -667,7 +724,10 @@ class Engine:
                     if self._raw_pattern is not None:
                         self._load(self._raw_pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
-            return {"was_playing": was_playing, "mutes_cleared": cleared, "ramps_cancelled": ramps}
+            out = {"was_playing": was_playing, "mutes_cleared": cleared, "ramps_cancelled": ramps}
+            if self.restored:
+                out["cutoff_restored"] = {str(t): v for t, v in sorted(self.restored.items())}
+            return out
 
     def shutdown(self):
         """Exit hook: stop, silence, release hardware mutes, close the port. Never raises."""
@@ -689,6 +749,14 @@ class Engine:
             for ch in sorted(LOW_CHANNELS | self._note_channels):
                 self._cc(mido, ch, ALL_NOTES_OFF, 0)
             self._note_channels.clear()
+            # a filter_swap cut short (stop, or the run ended mid-transition): put each closed cutoff back
+            restored = {}
+            for (track, control), value in sorted(self._restore.items()):
+                if self._cc_values.get((track - 1, control)) != value:
+                    self._cc(mido, track - 1, control, value)
+                    restored[track] = value
+            self._restore = {}
+            self.restored = restored
             if self.transport_on():  # clock-only runs never sent Start, so they never send Stop
                 self.send(mido.Message("stop"))
 
@@ -741,6 +809,8 @@ class Engine:
             self._load(queued["pattern"], queued["bpm"], queued["bars"], start_bar=bar_n)
             self._set_transposes(queued.get("transpose") or {})
             self._apply_setup(queued.get("ccs") or (), queued.get("mutes") or {})  # before this bar's notes
+            if self._restore:  # a filter_swap closed the outgoing cutoff: the incoming one reopens from the one
+                self._reopen()
             log.info("whiplash: switched to %s at bar %d", queued["pattern"].name, bar_n)
         if self._kit_dirty:
             self._reroute()
@@ -749,6 +819,8 @@ class Engine:
         if self._arr is not None and not self._arrange_step(bar_n):
             return None  # the arrangement's last section ended (loop: false): stop on this bar line
         self.bar = bar_n
+        if self._timed:
+            self._run_timed(bar_n)
         for track, (_, end) in list(self._drops.items()):
             if end <= bar_n:
                 del self._drops[track]  # auto-return
@@ -918,7 +990,9 @@ class Engine:
         finally:
             self.position = self.bar_hits = None
             with self._lock:
+                self._park_reopens()
                 self._ramps.clear()  # ramps are clocked by this thread; they can't outlive it
+                self._timed, self._owned = {}, {}
                 self._queued = None
             try:
                 self._panic()
@@ -946,6 +1020,308 @@ class Engine:
                     ramp.last = value
                 if ramp.elapsed >= ramp.total:
                     del self._ramps[key]
+
+    # ---- v0.6.2: timed actions, transitions, mix --------------------------
+    def _start_ramp(self, mido, track, cc, label, begin, to, ticks, curve, owner=None):
+        """Start a ramp now (caller holds _lock; a bar line or a tool call). Replaces one on the same track/CC."""
+        ch = track - 1
+        self._ramps.pop((track, cc), None)
+        self._ramp_seq += 1
+        ramp = Ramp(f"r{self._ramp_seq}", track, cc, label, begin, to, max(1, ticks), curve, owner=owner)
+        if self._cc_values.get((ch, cc)) != begin:
+            self._cc(mido, ch, cc, begin)
+        ramp.last = begin
+        self._ramps[(track, cc)] = ramp
+        return ramp
+
+    def _park_reopens(self):
+        """Before ramps are cleared (caller holds _lock): a reopen ramp still running becomes a restore again,
+        so the panic puts that cutoff back with one CC."""
+        for (track, cc), ramp in self._ramps.items():
+            if ramp.owner == REOPEN:
+                self._restore.setdefault((track, cc), ramp.end)
+
+    def _reopen(self):
+        """Ramp every cutoff a filter_swap closed back to where it was, over REOPEN_BARS (caller holds _lock; the
+        switch or section bar line, or arrange clear). Dict work over at most 16 tracks."""
+        mido = __import__("mido")
+        for (track, cc), value in sorted(self._restore.items()):
+            current = self._cc_values.get((track - 1, cc))
+            if current is None or current == value:
+                self._ramps.pop((track, cc), None)
+                if current != value:
+                    self._cc(mido, track - 1, cc, value)
+                continue
+            self._start_ramp(mido, track, cc, "filter_freq", current, value,
+                             _transition_mod.REOPEN_BARS * TICKS_PER_BAR, "log", owner=REOPEN)
+        self._restore = {}
+
+    def _run_timed(self, bar_n):
+        """Run the actions scheduled for bar_n (caller holds _lock, at the bar line)."""
+        for old in [b for b in self._timed if b < bar_n]:
+            del self._timed[old]  # never left behind by a bar that was skipped
+        acts = self._timed.pop(bar_n, None)
+        if not acts:
+            return
+        mido = __import__("mido")
+        for act in acts:
+            if act["kind"] == "mix":
+                self._apply_mix(act["entries"], act["ticks"])
+                continue
+            cc = act["cc"]
+            for track in act["tracks"]:
+                key = (track, cc)
+                begin = act["start"]
+                if begin is None:
+                    begin = self._cc_values.get((track - 1, cc), act.get("fallback"))
+                if begin is None:
+                    continue  # no known value and no fallback: checked when it was scheduled
+                if act.get("close"):
+                    if begin <= act["to"]:
+                        continue  # already as dark as the floor
+                    self._restore.setdefault(key, begin)  # keep the first value if a second close stacks
+                else:
+                    self._restore.pop(key, None)
+                self._start_ramp(mido, track, cc, act["label"], begin, act["to"], act["ticks"], act["curve"],
+                                 owner=act["owner"])
+
+    def _cancel_owner(self, owner):
+        """Cancel what a transition (or the arrangement's transitions) scheduled and started (caller holds _lock).
+
+        Closed cutoffs stay in _restore, so they reopen at the next switch or section (or on stop)."""
+        for bar, acts in list(self._timed.items()):
+            keep = [a for a in acts if a["owner"] != owner]
+            if keep:
+                self._timed[bar] = keep
+            else:
+                del self._timed[bar]
+        cancelled = []
+        for key, ramp in list(self._ramps.items()):
+            if ramp.owner == owner:
+                del self._ramps[key]
+                cancelled.append(ramp.id)
+        owned = self._owned.pop(owner, {})
+        for track, span in owned.get("drops", {}).items():
+            if self._drops.get(track) == span:
+                del self._drops[track]
+        for bar, tracks in owned.get("fills", {}).items():
+            left = self._fills.get(bar, set()) - tracks
+            if left:
+                self._fills[bar] = left
+            else:
+                self._fills.pop(bar, None)
+        return cancelled
+
+    def _transition_plan(self, kind, n, filter_from, first, end, roles, owner, strict=True):
+        """What a transition schedules over bars first..end-1, handing over at bar end (caller holds _lock).
+
+        Pure apart from reading state: returns {"actions", "drops", "fills", "tracks", "notes", "skipped"}, and
+        _commit_plan applies it. strict (a queued switch) raises on anything that would make it do nothing or
+        guess a cutoff; an arrangement section skips instead and lists it in status."""
+        plan = {"actions": [], "drops": {}, "fills": {}, "tracks": {}, "notes": [], "skipped": []}
+        ticks = n * TICKS_PER_BAR
+        if kind == "filter_swap":
+            tracks = sorted(t for t, r in roles.items() if r not in _transition_mod.LOW_ROLES)
+            unknown = [t for t in tracks if self._cc_values.get((t - 1, FILTER_CC)) is None
+                       and (t, FILTER_CC) not in self._restore]
+            if unknown and filter_from is None:
+                if strict:
+                    raise WhiplashError(
+                        f"Whiplash hasn't sent filter_freq on track(s) {unknown}, so it doesn't know where their "
+                        "cutoff is: pass filter_from (e.g. 127 if the filters are open on the unit), or ask the user")
+                plan["skipped"] = [f"filter_swap: track {t} (no 'filter_from')" for t in unknown]
+                tracks = [t for t in tracks if t not in unknown]
+            if not tracks and strict:
+                raise WhiplashError("filter_swap needs a track other than kick and bass playing; use drop_swap or cut")
+            if tracks:
+                plan["actions"].append({"kind": "ramp", "owner": owner, "bar": first, "tracks": tracks,
+                                        "cc": FILTER_CC, "label": "filter_freq", "start": None,
+                                        "fallback": filter_from, "to": _transition_mod.FILTER_FLOOR, "ticks": ticks,
+                                        "curve": "linear", "close": True})
+            plan["tracks"]["filter"] = tracks
+        elif kind == "drop_swap":
+            tracks = sorted(t for t, r in roles.items() if r in _transition_mod.LOW_ROLES)
+            if not tracks and strict:
+                raise WhiplashError("drop_swap drops kick and bass, and neither is playing; use filter_swap or cut")
+            plan["drops"] = {t: (first, end) for t in tracks}
+            plan["tracks"]["dropped"] = tracks
+        elif kind == "riser":
+            fx = sorted(t for t, (role, _) in self._kit_tracks.items() if role == "fx")
+            fill = self._default_fill(roles)
+            if not fx and not fill and strict:
+                raise WhiplashError("riser needs an fx-labelled track (whiplash_label_tracks, e.g. {\"9\": \"riser\"}) "
+                                    "or drums playing for its fill")
+            if fx:
+                plan["actions"].append({"kind": "ramp", "owner": owner, "bar": first, "tracks": fx, "cc": FILTER_CC,
+                                        "label": "filter_freq", "start": _transition_mod.RISER_FROM,
+                                        "to": _transition_mod.RISER_TO, "ticks": ticks, "curve": "exp"})
+                plan["notes"].append(f"the riser leaves filter_freq at {_transition_mod.RISER_TO} on track(s) {fx} "
+                                     "until the kit is reloaded on the unit; tell the user")
+            else:
+                plan["notes"].append("no track is labelled fx (riser, sweep, noise), so the riser is the drum fill "
+                                     "only: label one with whiplash_label_tracks to add a rising filter")
+            if fill:
+                plan["fills"] = {end - 1: set(fill)}
+            plan["tracks"].update(riser=fx, fill=fill)
+        return plan
+
+    def _commit_plan(self, plan, owner):
+        """Schedule a transition plan (caller holds _lock)."""
+        owned = self._owned.setdefault(owner, {"drops": {}, "fills": {}})
+        for act in plan["actions"]:
+            self._timed.setdefault(act["bar"], []).append(act)
+        for track, span in plan["drops"].items():
+            self._drops[track] = span
+            owned["drops"][track] = span
+        for bar, tracks in plan["fills"].items():
+            have = self._fills.setdefault(bar, set())
+            owned["fills"].setdefault(bar, set()).update(tracks - have)
+            have.update(tracks)
+
+    def _apply_mix(self, entries, ticks):
+        """Send [(track, cc, value)] now, or ramp each over ticks from the last value sent (caller holds _lock).
+
+        Only what differs from the last value sent goes out; a track with no known value jumps (one CC). A mix
+        change replaces a running ramp on the same track and CC, like whiplash_set_param."""
+        mido = __import__("mido") if entries else None
+        sent = ramped = 0
+        for track, cc, value in entries:
+            key, current = (track, cc), self._cc_values.get((track - 1, cc))
+            if ticks and current is not None and current != value:
+                self._start_ramp(mido, track, cc, ccmap.BY_CC[cc].name, current, value, ticks, "linear",
+                                 owner=MIX_OWNER)
+                ramped += 1
+                continue
+            self._ramps.pop(key, None)
+            if current != value:
+                self._cc(mido, track - 1, cc, value)
+                sent += 1
+        return sent, ramped
+
+    def _mix_entries(self, levels, pans, preset_levels, roles):
+        """Resolve a mix's group words over roles -> ([(track, cc, value)], {track: level}, {track: pan})."""
+        level_out, pan_out = {}, {}
+        if preset_levels:
+            for track, role in sorted(roles.items()):
+                if role in preset_levels:
+                    level_out[track] = preset_levels[role]
+        for store, items, what in ((level_out, levels, "levels"), (pan_out, pans, "pan")):
+            for spec, value in items:
+                tracks = arrange.resolve((spec,), roles)
+                if not tracks:
+                    raise WhiplashError(f"{what}: no track playing is {spec!r} right now; use a track number")
+                for track in tracks:
+                    store[track] = value
+        entries = [(t, LEVEL_CC, v) for t, v in sorted(level_out.items())]
+        entries += [(t, PAN_CC, v) for t, v in sorted(pan_out.items())]
+        return entries, level_out, pan_out
+
+    def _known_mix(self):
+        """{track: {"level", "pan"}} from the last values Whiplash sent (caller holds _lock)."""
+        out = {}
+        for (ch, cc), value in self._cc_values.items():
+            if cc in (LEVEL_CC, PAN_CC):
+                out.setdefault(ch + 1, {})["level" if cc == LEVEL_CC else "pan"] = value
+        return out
+
+    def _snapshot_entries(self, snap):
+        out = [(t, LEVEL_CC, e["level"]) for t, e in sorted(snap.items()) if "level" in e]
+        return out + [(t, PAN_CC, e["pan"]) for t, e in sorted(snap.items()) if "pan" in e]
+
+    def mix(self, levels=None, pan=None, preset=None, bars=None, save_as=None, recall=None):
+        """Set track LEVEL (CC 95) and PAN (CC 90) per track, from the next bar line (whiplash_mix).
+
+        levels/pan map tracks or group words to values; preset gives each role a level (auto = the genre
+        playing). bars ramps each change on the clock (0 = on the bar line). save_as stores the mix as it will be
+        after this call (the last values sent plus these); recall sends a saved mix, only what differs. When
+        nothing is playing the CCs go out now. Everything is validated before anything is sent.
+        """
+        try:
+            level_items = mixer.values(levels, "levels", mixer.level)
+            pan_items = mixer.values(pan, "pan", mixer.pan)
+            ticks = mixer.bars(bars) * TICKS_PER_BAR
+            save = None if save_as in (None, "") else mixer.name(save_as)
+            recall_name = None if recall in (None, "") else mixer.name(recall, "recall")
+        except (mixer.MixError, arrange.ArrangeError) as exc:
+            raise WhiplashError(str(exc)) from None
+        if recall_name and (level_items or pan_items or preset not in (None, "")):
+            raise WhiplashError("recall sends a saved mix as it is: give recall alone (bars to ramp to it)")
+        if not (level_items or pan_items or preset not in (None, "") or recall_name or save):
+            raise WhiplashError('give levels (e.g. {"6": 95}), pan (e.g. {"hats": "left"}), a preset, recall or '
+                                "save_as")
+        with self._lock:
+            playing = self.playing()
+            if ticks and not playing:
+                raise WhiplashError("a mix ramp runs on the sequencer clock: start a pattern first, or drop bars")
+            roles = self._roles_playing() if self.pattern is not None else {}
+            for t in self._kit_tracks:
+                roles.setdefault(t, self._kit_tracks[t][0])
+            preset_name = preset_levels = None
+            if preset not in (None, ""):
+                try:
+                    preset_name, preset_levels = mixer.preset(preset, self._raw_pattern.name if self._raw_pattern
+                                                              else None)
+                except mixer.MixError as exc:
+                    raise WhiplashError(str(exc)) from None
+            if recall_name:
+                snap = self._mixes.get(recall_name)
+                if snap is None:
+                    raise WhiplashError(f"no saved mix {recall_name!r}; saved: {sorted(self._mixes) or 'none'}")
+                entries = self._snapshot_entries(snap)
+                level_out = {t: e["level"] for t, e in snap.items() if "level" in e}
+                pan_out = {t: e["pan"] for t, e in snap.items() if "pan" in e}
+            else:
+                entries, level_out, pan_out = self._mix_entries(level_items, pan_items, preset_levels, roles)
+            if save:
+                if save not in self._mixes and len(self._mixes) >= mixer.SNAPSHOTS_MAX:
+                    raise WhiplashError(f"at most {mixer.SNAPSHOTS_MAX} saved mixes; reuse a name")
+                snap = self._known_mix()
+                for track, cc, value in entries:
+                    snap.setdefault(track, {})["level" if cc == LEVEL_CC else "pan"] = value
+                if not snap:
+                    raise WhiplashError("nothing to save: Whiplash hasn't sent a level or pan yet; give levels or "
+                                        "pan (or a preset) with save_as")
+            changes = [(t, cc, v) for t, cc, v in entries if self._cc_values.get((t - 1, cc)) != v]
+            out = {"levels": {str(t): v for t, v in sorted(level_out.items())},
+                   "pan": {str(t): v for t, v in sorted(pan_out.items())},
+                   "changes": len(changes), "cc": {"level": LEVEL_CC, "pan": PAN_CC}}
+            if preset_name:
+                out["preset"] = preset_name
+            if recall_name:
+                out["recalled"] = recall_name
+            unknown = sorted({t for t, cc, _ in changes if self._cc_values.get((t - 1, cc)) is None})
+            if playing and entries:
+                at = self.bar + 1
+                self._timed.setdefault(at, []).append({"kind": "mix", "owner": MIX_OWNER, "entries": entries,
+                                                       "ticks": ticks})
+                out.update(applies="next bar", at_bar=at)
+                if ticks:
+                    out["ramp_bars"] = ticks // TICKS_PER_BAR
+                    if unknown:
+                        out["jumps"] = unknown
+                        out["jump_note"] = ("Whiplash hadn't sent these tracks' level/pan yet, so they jump to the "
+                                            "new value on the bar line instead of ramping")
+            elif entries:
+                self.ensure_port()
+                sent, _ = self._apply_mix(entries, 0)
+                out.update(applies="now", sent=sent)
+            if save:
+                self._mixes[save] = snap
+                out["saved_as"] = save
+            out["saved_mixes"] = sorted(self._mixes)
+            out["note"] = ("TRACK LEVEL (CC 95) is the track's post-FX fader and PAN (CC 90) 64 = centre. Whiplash "
+                           "can't read the unit: values are the last ones it sent, and the kit's own levels come "
+                           "back when the user reloads it. A level change replaces a running ramp on it.")
+            return out
+
+    def mix_status(self):
+        """The mix for whiplash_status (caller holds _lock), or None when no level or pan was sent."""
+        known = self._known_mix()
+        if not known and not self._mixes:
+            return None
+        return {"levels": {str(t): e["level"] for t, e in sorted(known.items()) if "level" in e},
+                "pan": {str(t): e["pan"] for t, e in sorted(known.items()) if "pan" in e},
+                "saved": sorted(self._mixes)}
 
     # ---- parameters ----------------------------------------------------
     def _target(self, param, cc):
@@ -1017,6 +1393,7 @@ class Engine:
             value, clamped = self._value(value, spec)
         with self._lock:
             ramp = self._ramps.pop((track, number), None)
+            self._restore.pop((track, number), None)  # the user took over a cutoff a filter_swap would put back
             self._cc(mido, ch, number, value)
             if number == MUTE_CC:  # track unit mutes set this way too, so stop/exit releases them
                 (self.hw_muted.add if value else self.hw_muted.discard)(track)
@@ -1074,6 +1451,7 @@ class Engine:
                 if number == HOLD_CC and start >= HOLD_NOTE:
                     start, from_clamped = HOLD_NOTE - 1, True
             replaced = self._ramps.pop((track, number), None)
+            self._restore.pop((track, number), None)
             self._ramp_seq += 1
             ramp = Ramp(f"r{self._ramp_seq}", track, number, label, start, to, max(1, round(ticks)), curve)
             if self._cc_values.get((ch, number)) != start:
@@ -1483,8 +1861,18 @@ class Engine:
                 unmuted = sorted(self._arr_muted & self.muted)
                 self.muted -= self._arr_muted
                 self._arr, self._arr_muted = None, set()
-                return {"cleared": had is not None, "unmuted": unmuted, "applies": "next bar",
-                        "note": "ramps, drops and fills already started keep running; the beat keeps playing"}
+                cancelled = self._cancel_owner(ARR_OWNER)
+                reopened = sorted(t for t, _ in self._restore)
+                if self._restore:
+                    self._reopen()  # a section's filter_swap won't reach its next section: reopen now
+                out = {"cleared": had is not None, "unmuted": unmuted, "applies": "next bar",
+                       "note": ("ramps, drops and fills already started keep running; the beat keeps playing. A "
+                                "section transition in progress is cancelled")}
+                if cancelled:
+                    out["transition_ramps_cancelled"] = cancelled
+                if reopened:
+                    out["cutoff_reopening"] = reopened
+                return out
         loop = check_flag(loop, "loop")
         given = [k for k, v in (("sections", sections), ("preset", preset)) if v not in (None, "", [])]
         if len(given) != 1:
@@ -1513,6 +1901,8 @@ class Engine:
             self._require_playing()
             at = self.bar + 1
             replaced = self._arr is not None
+            if replaced:
+                self._cancel_owner(ARR_OWNER)  # closed cutoffs reopen on the new arrangement's first section
             self._arr = {"name": name, "sections": resolved, "start": at, "loop": loop, "offsets": offsets,
                          "total": total, "index": None, "section_start": None, "skipped": [], "ended_at_bar": None}
             roles = self._roles_playing()
@@ -1533,6 +1923,12 @@ class Engine:
                     item["chords"] = "cleared"
                 elif sec["prog"] is not None:
                     item["chords"] = [c.name for c in sec["prog"].chords]
+                if sec["transition"]:
+                    item["transition"] = {"kind": sec["transition"], "bars": sec["transition_bars"],
+                                          "starts_at_bar": bar + sec["bars"] - sec["transition_bars"],
+                                          "does": _transition_mod.describe(sec["transition"], sec["transition_bars"])}
+                if sec["mix"]:
+                    item["mix"] = sec["mix"]
                 plan.append(item)
                 bar += sec["bars"]
             out = {"arrangement": name, "starts_at_bar": at, "total_bars": total,
@@ -1548,6 +1944,10 @@ class Engine:
             if any(r[1] == ccmap.PARAMS["filter_freq"].cc for sec in resolved for r in sec["ramps"]):
                 out["filter_note"] = ("the build's ramp leaves filter_freq where it ends (127 in the presets) until "
                                       "the kit is reloaded on the unit; tell the user")
+            if any(sec["transition"] for sec in resolved):
+                out["transition_note"] = ("a section's transition runs over its last bars into the next section; "
+                                          "filter_swap needs the cutoff Whiplash last sent (or the section's "
+                                          "filter_from), else that track is skipped (status shows skipped_ramps)")
             if self.bars_total:
                 out["bars_note"] = (f"the run was started with bars: {self.bars_total}; it stops at bar "
                                     f"{self.pattern_start + self.bars_total} if that comes first")
@@ -1578,8 +1978,20 @@ class Engine:
             per_chord = harmony.check_bars_per_chord(sec.bars_per_chord)
             chords = tuple(harmony.parse_chord(sym, key) for sym in symbols)
             prog = harmony.Progression(chords, harmony.voice(chords, "close"), per_chord, "close", key, 0, {})
+        mix = None
+        if sec.mix is not None:
+            if sec.mix in self._mixes:
+                mix = ("saved", sec.mix)
+            else:
+                try:
+                    mix = ("preset", mixer.preset(sec.mix, self._raw_pattern.name if self._raw_pattern else None)[0])
+                except mixer.MixError:
+                    raise WhiplashError(f"section {sec.name}: mix {sec.mix!r} is not a saved mix "
+                                        f"({', '.join(sorted(self._mixes)) or 'none saved'}) or a preset "
+                                        f"({', '.join(mixer.PRESETS)})") from None
         return {"name": sec.name, "bars": sec.bars, "tracks": sec.tracks, "mute": sec.mute, "drop": sec.drop,
-                "fill": sec.fill, "ramps": tuple(ramps), "prog": prog}
+                "fill": sec.fill, "ramps": tuple(ramps), "prog": prog, "transition": sec.transition,
+                "transition_bars": sec.transition_bars, "filter_from": sec.filter_from, "mix": mix}
 
     def _arrange_step(self, bar_n):
         """At a bar line (caller holds _lock): start a section if one starts here. False = the song ended."""
@@ -1602,6 +2014,8 @@ class Engine:
         sec = arr["sections"][i]
         arr["index"], arr["section_start"] = i, bar_n
         last = bar_n + sec["bars"] - 1
+        if self._restore:  # the previous section's filter_swap: reopen on this section's one
+            self._reopen()
         if sec["prog"] == "clear":
             self._prog = None
             self._refresh_harmony()
@@ -1631,6 +2045,12 @@ class Engine:
         fill = [t for t in fill if t in active]
         if fill:
             self._fills.setdefault(last, set()).update(fill)
+        if sec["mix"] is not None:  # recalled on the one, before this section's own ramps
+            kind, name = sec["mix"]
+            if kind == "saved" and name in self._mixes:
+                self._apply_mix(self._snapshot_entries(self._mixes[name]), 0)
+            elif kind == "preset":
+                self._apply_mix(self._mix_entries((), (), mixer.PRESETS[name], roles)[0], 0)
         mido = __import__("mido") if sec["ramps"] else None
         for spec, cc, label, start, to, ticks, curve in sec["ramps"]:
             for track in sorted(arrange.resolve((spec,), roles)):
@@ -1639,13 +2059,16 @@ class Engine:
                 if begin is None:
                     arr["skipped"] = (arr["skipped"] + [f"{sec['name']}: {label} on track {track} (no 'from')"])[-8:]
                     continue
-                self._ramp_seq += 1
-                ramp = Ramp(f"r{self._ramp_seq}", track, cc, label, begin, to, max(1, ticks), curve)
-                self._ramps.pop((track, cc), None)
-                if self._cc_values.get((ch, cc)) != begin:
-                    self._cc(mido, ch, cc, begin)
-                ramp.last = begin
-                self._ramps[(track, cc)] = ramp
+                self._restore.pop((track, cc), None)  # the section's own ramp takes over that cutoff
+                self._start_ramp(mido, track, cc, label, begin, to, ticks, curve)
+        if sec["transition"]:  # over the section's last bars, into the next section
+            n = sec["transition_bars"]
+            plays = {t: r for t, r in roles.items() if t in active}
+            plan = self._transition_plan(sec["transition"], n, sec["filter_from"], last + 1 - n, last + 1, plays,
+                                         ARR_OWNER, strict=False)
+            if plan["skipped"]:
+                arr["skipped"] = (arr["skipped"] + [f"{sec['name']}: {x}" for x in plan["skipped"]])[-8:]
+            self._commit_plan(plan, ARR_OWNER)
         log.info("whiplash: section %s at bar %d", sec["name"], bar_n)
 
     def arrangement_status(self):
@@ -1655,7 +2078,10 @@ class Engine:
             return None
         sections, bar = [], arr["start"]
         for sec in arr["sections"]:
-            sections.append({"name": sec["name"], "bars": sec["bars"], "starts_at_bar": bar})
+            item = {"name": sec["name"], "bars": sec["bars"], "starts_at_bar": bar}
+            if sec["transition"]:
+                item["transition"] = sec["transition"]
+            sections.append(item)
             bar += sec["bars"]
         out = {"name": arr["name"], "loop": arr["loop"], "starts_at_bar": arr["start"], "total_bars": arr["total"],
                "sections": sections}
@@ -1873,13 +2299,16 @@ class Engine:
                 "bar": self.bar, "pattern_bar": self.bar - self.pattern_start, "bars": self.bars_total,
                 "queued": ({"pattern": queued["pattern"].name, "bpm": queued["bpm"], "switch_at_bar": queued["at"],
                             "key": (queued.get("key") or self._key or harmony.key_of(queued["pattern"].key)).name,
-                            "transpose": {str(t): v for t, v in sorted((queued.get("transpose") or {}).items())}}
+                            "transpose": {str(t): v for t, v in sorted((queued.get("transpose") or {}).items())},
+                            **({"transition": {k: queued["transition"][k] for k in ("kind", "bars", "starts_at_bar")}}
+                               if queued.get("transition") else {})}
                            if queued else None),
                 "transpose": {str(t): v for t, v in sorted(self._transpose.items())},
                 "key": self.key_name(), "key_source": ("set" if self._key is not None else
                                                        "pattern" if self._raw_pattern is not None else None),
                 "progression": self.progression_status(),
                 "arrangement": self.arrangement_status(),
+                "mix": self.mix_status(),
                 "routing": self.routing() if self._kit_tracks or self._parts else None,
                 "parts": {str(t): {"placed_by": p.source, "bars": p.bars_written} for t, p in sorted(self._parts.items())},
                 "tracks": self.tracks_summary(), "roles_assumed": not self._kit_tracks,

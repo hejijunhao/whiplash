@@ -1,6 +1,6 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
@@ -48,13 +48,35 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 - `whiplash_arrange(preset: "short_demo")` turns the playing beat into a song from the next bar line: intro, build, drop, outro, about 75 s at the current tempo (`seconds: 90` for "a 90-second track"; it rounds to 4-bar phrases). `preset: "club"` is intro 16 / build 8 / drop 16 / break 8 / drop 16 / outro 16 bars (80 bars, about 2.5 minutes at 128 BPM).
 - In both presets: the intro plays kick and hats; the build adds perc and the music tracks with a rising filter (`filter_freq` 20 → 127, exp curve) and the kick sits out its last bar; the drop plays everything; the break drops kick and bass; the outro thins to drums. Every section but the outro ends on a fill.
 - **It stops by itself:** with `loop: false` (the default) the run stops cleanly on the bar line after the last section (note-offs, MIDI Stop). `loop: true` starts over from the first section. `clear: true` ends the arrangement and unmutes what it muted; the beat keeps playing. `whiplash_stop` ends everything.
-- **Custom sections:** `sections: [{name, bars, tracks, mute, drop, fill, chords, bars_per_chord, ramps}]`, 1-16 sections of 1-64 bars.
+- **Custom sections:** `sections: [{name, bars, tracks, mute, drop, fill, chords, bars_per_chord, ramps, transition, transition_bars, filter_from, mix}]`, 1-16 sections of 1-64 bars.
   - `tracks`: what plays (everything else is muted by Whiplash, never with the unit's CC 94). Track numbers or groups: `all`, `drums`, `kick`, `hats` (closed, open, cymbal), `perc` (snare, rim, clap, perc), `bass`, `music` (pad, chord, stab, lead, fx, other), or any kit role. Or `mute`: what doesn't play. Groups resolve again at each section's first bar from the roles playing then, so the arrangement follows a switch or relabel.
   - `drop`: tracks that sit out the section's last bar. `fill: true`: a drum fill on its last bar.
   - `ramps: [{track, param, from, to, bars, curve}]` start on the section's first bar (default length: the section). Without `from` a ramp starts from the last value Whiplash sent; if there is none it is skipped (`skipped_ramps` in status). A ramp leaves the param where it ends, which changes the kit's sound until it is reloaded on the unit (the result's `filter_note`): tell the user.
   - `chords`: a progression in the key playing, from the section's first bar (`"i VI III VII"`, `bars_per_chord`); `"none"` ends it. Sections without `chords` keep the one playing.
+  - `transition` (`filter_swap`, `drop_swap`, `riser`) runs over the section's last `transition_bars` bars into the next section (see Transitions below). `filter_swap` closes the cutoff Whiplash last sent; a track it never sent one to is skipped (`skipped_ramps`) unless the section gives `filter_from`.
+  - `mix`: a saved mix name or a mix preset, recalled on the section's first bar (see Mix below).
+  - The presets carry no transition or mix, so they play exactly as in v0.6.1.
 - The result lists each section's `starts_at_bar`, `plays_now` (the groups resolved now), fills, drops, ramps and chords, plus `seconds` and when it `ends`. `whiplash_status.arrangement.current` gives the section playing, `bars_left`, `next` and `next_at_bar`. Read these back instead of guessing.
-- Typical request, "make it a 90-second track: intro, build, drop, outro": `whiplash_play_pattern(genre: ...)` if nothing plays, then `whiplash_arrange(preset: "short_demo", seconds: 90)`. Transitions between sections (filter swap, riser) come in v0.6.2.
+- Typical request, "make it a 90-second track: intro, build, drop, outro": `whiplash_play_pattern(genre: ...)` if nothing plays, then `whiplash_arrange(preset: "short_demo", seconds: 90)`.
+
+## Transitions: handing over like a DJ
+
+- On a queued switch: `whiplash_play_pattern(genre: "breaks", transition: "filter_swap", transition_bars: 4)`. The transition runs from the next bar line for `transition_bars` bars (1-8), and the switch lands on the bar after them (`switch_at_bar` in the result). Nothing stops: no MIDI Stop/Start.
+  - `cut`: today's switch on the next bar line.
+  - `filter_swap` (default 4 bars): every outgoing track except kick and bass closes its cutoff (`filter_freq`, CC 74) to 30, the new pattern lands on the one, and each cutoff reopens to where it was over one bar. Whiplash only knows the cutoff it last sent: if it never sent one on a track, the call is refused with a hint. Pass `filter_from` (e.g. 127 if the user says the filters are open) or ask the user.
+  - `drop_swap` (default 1 bar): kick and bass sit out the last bar(s), then come back with the switch on the one.
+  - `riser` (default 4 bars): every track labelled fx (riser, sweep, noise) gets a rising filter (20 → 127, exp), and the drums fill the last bar. With no fx label it is the fill only; the result says so. The riser leaves that filter at 127 until the kit is reloaded: tell the user.
+- Replacing a queued switch cancels its transition (`replaced_transition`); a cutoff it closed reopens at the new switch. `whiplash_stop` mid-transition cancels the ramps and puts each closed cutoff back with one CC (`cutoff_restored`). A fresh start (nothing playing) ignores `transition` (`transition_note`).
+- Depends on the filter on the unit: a low-pass closes the highs. On a high-pass or band-pass filter machine the sweep sounds different (not yet checked on hardware).
+
+## Mix: levels and pan (`whiplash_mix`)
+
+- `whiplash_mix(levels: {"6": 95, "kick": 118}, pan: {"hats": "left"})` sends TRACK LEVEL (CC 95, the track's post-FX fader) and PAN (CC 90, 64 = centre) on the next bar line. Keys are track numbers or the arrangement's group words, resolved from the roles playing now. Pan takes 0-127 or `hard left`, `left`, `slightly left`, `center`, `slightly right`, `right`, `hard right`.
+- `bars: 4` ramps each change on the clock instead (a track Whiplash never sent a level to jumps on the bar line: `jumps`). A mix change replaces a running ramp on the same track and param.
+- `preset`: `auto` (the genre playing), `techno`, `techhouse`, `deephouse`, `breaks`, `soul` or `flat` (every role at 100). It sets levels by role and never touches pan.
+- `save_as: "drop mix"` stores the mix as it will be after the call (the last values sent plus this call's). `recall: "drop mix"` sends it back exactly, only what differs. Saved mixes survive `whiplash_stop`; status shows `mix.saved`. A section's `mix` recalls one on its first bar.
+- Only one CC goes out per change, and only what differs from the last value Whiplash sent. Whiplash can't read the unit's levels: the kit's own come back when the user reloads it. When nothing plays the CCs go out at once.
+- Typical requests: "bring the bass down a bit and pan the hats left" → `whiplash_mix(levels: {"bass": 90}, pan: {"hats": "left"})` (ask or read `status.mix.levels` for where the bass is now). "Save this as the drop mix, then go back to it after the break" → `save_as: "drop mix"` now, then `recall: "drop mix"` (or a section's `mix: "drop mix"`).
 
 ## Writing notes, melodies and rhythms
 
@@ -129,6 +151,10 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`, or `key: "current"`) |
 | "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern`, then `whiplash_set_progression` |
 | "Make it a whole track", "intro, build, drop", "90 seconds" | `whiplash_arrange` (`preset: "short_demo"`, `seconds`) |
+| "Switch with a filter swap", "drop the bass then switch", "riser into the drop" | `transition` on `whiplash_play_pattern` (or a section) |
+| filter_swap refused: "hasn't sent filter_freq" | ask the user, then `filter_from` (127 if the filters are open) |
+| "Bass down", "hats left", "save this mix" | `whiplash_mix` (`levels`, `pan`, `save_as`, `recall`) |
+| Highs stayed dark after a stop | read `cutoff_restored` on the stop result; the riser and the build leave filters open until the kit is reloaded |
 | A track went quiet after labelling | `routing.vacated` (its part moved to a labelled track) or `replaced_by_written` |
 | No fill on a moved drum part | label the track (fills follow roles), or name it in `tracks` |
 | Chords sound like one note | expected on an audio track: use two or three chord tracks in `chords` mode |
