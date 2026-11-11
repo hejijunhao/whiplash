@@ -23,6 +23,8 @@ Every tool is prefixed `whiplash_` so it can't collide with another plugin's too
 | `whiplash_set_tempo` | Live tempo change (30-300 BPM); the clock follows so the Digitakt's delay/LFOs stay in sync. |
 | `whiplash_stop` | Note-offs, All Notes Off on channels 1-8, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations and any queued switch. Works as a panic button when nothing is playing. |
 | `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. |
+| `whiplash_open_view` | Opens the **live visualiser**, a local web page (`http://127.0.0.1:7341`, or a free port) in the default browser. It shows the beat and the conversation while you keep chatting in the terminal. Optional `port`, and `open_browser: false` to only get the URL. Read-only. |
+| `whiplash_close_view` | Stops the visualiser's local server. The beat keeps playing. |
 
 Track roles (same for all genres): 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords/chops/stabs. Load samples to match.
 
@@ -32,6 +34,47 @@ Track roles (same for all genres): 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 
 - **What carries across a switch:** mutes, running ramps, and scheduled drops/fills. **What resets:** density, swing and humanize (they were edits of the old pattern). `whiplash_stop` resets everything.
 - **Ramps** advance one step per MIDI clock tick (24 per beat) in the sequencer thread, and send a CC only when the integer value changes. So a ramp over 8 bars takes 8 bars at any tempo, and a 0→127 sweep is at most 128 messages. Ramps on different track/param pairs run together; a new ramp on the same pair replaces the old one, and `whiplash_set_param` on that pair cancels it. `from` defaults to the last value Whiplash sent; if it has sent nothing for that param yet, `from` is required. Ramps need a pattern playing, because they are clocked by the sequencer. `exp` starts slow and finishes fast (cubic ease-in); `log` is the reverse.
 - **Mutations** apply from the next bar (swing from the next step). `density` takes −1 (thinnest) … 0 (original) … +1 (busiest), or `thin` (−0.5) / `thicken` (+0.5). The amount is absolute, so repeating `thin` doesn't keep thinning. Thinning drops the weakest offbeat hits first, and thickening adds quiet ghost notes on empty 16ths in the bar's own notes. `fill` plays a one-bar fill on the next bar: the kick sits out the last beat, the snare rolls up, claps push, and hats ratchet in 32nds. `drop` silences tracks for N bars from the next bar, then brings them back by itself; `fill: true` adds a drum fill on the last dropped bar. `humanize` loosens velocity (±16 at 1.0) and timing (±¼ clock tick) per hit, never cumulatively, so the groove never drifts. All randomness is seeded, so the same calls give the same result.
+
+## Live visualiser
+
+Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page opens in your default browser while the chat carries on in the terminal. The page only watches: it never sends MIDI and never changes the beat. It works before anything plays too, showing an idle state and the port status.
+
+- **Tracks:** one lane per track Whiplash is actually driving. That means the pattern's tracks, plus any channel it muted, dropped, filled, ramped or sent a CC to, so a channel touched only by CC still gets a lane.
+  - **Grid:** the current bar's 16 steps, with notes, velocities and gates, on a perspective "runway" with a moving playhead. A 4-bar minimap underneath marks scheduled drops and fills.
+  - **States:** mutes (hatched, `HW` for the unit's own mute), drops (dark with a "back in N bars" countdown), fills (amber) and density.
+  - **Params:** the last value sent for each param. Running ramps are drawn in magenta, moving toward a marker at the target value.
+- **Transport:** a large BPM readout that rolls to a new tempo, the bar with beat dots, the pattern and swing, a queued switch with a beat countdown, and the MIDI port. A real Digitakt shows in cyan, the virtual fallback as a red `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
+- **Analyser:** spectrum, oscilloscope and stereo L/R meters.
+  - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The panel is then labelled `AUDIO · <device>`.
+  - **Without audio:** the panel draws note energy from the MIDI Whiplash scheduled, labelled `MIDI FALLBACK · NOT REAL AUDIO` with hollow amber bars. The per-track meters are always MIDI-derived, because the Digitakt's USB audio is only the stereo main mix.
+- **Conversation:** your messages and Hermes's replies, streaming word by word.
+  - **Tool calls:** hidden by default. Each reply has a `⚙ N tool calls` chip that expands, and `T` shows all of them.
+  - **Layout:** in a window narrower than 1100 px (terminal beside it) the panel becomes lower-third captions.
+  - **Linking:** a Whiplash tool call flashes the lane it touched.
+- **Action log:** a one-line ticker of recent Whiplash tool calls along the bottom. Click it for the last 40.
+- **Keys:**
+
+  | Key | Action |
+  | --- | --- |
+  | `C` | collapse the conversation |
+  | `T` | show tool calls |
+  | `A` | connect audio |
+  | `B` | blur the conversation (for screen recordings) |
+  | `R` | runway tilt on/off |
+  | `F` | fullscreen |
+  | `?` | help |
+
+How it stays out of the way:
+- **Off the clock thread.** The sequencer thread only stores its current step and the bar's notes in two attributes, with no lock and no I/O. A single `whiplash-view` thread builds a snapshot at most 10 times a second, and only while a browser is connected. That snapshot is a short copy under the same lock `whiplash_status` uses, and JSON encoding happens outside it. The browser interpolates the playhead between frames, so the plugin never pushes at frame rate.
+- **Localhost only.** The server binds to `127.0.0.1` and answers only requests addressed to `127.0.0.1` or `localhost`, which blocks DNS rebinding. The page is one self-contained HTML file: no CDN, no fonts to fetch, no build step.
+- **Conversation source.** Whiplash subscribes to Hermes's plugin hooks: `pre_llm_call`, `on_stream_start`/`on_stream_delta`/`on_stream_end`, `pre_tool_call`/`post_tool_call` and `post_llm_call`.
+  - The callbacks copy text into a bounded in-memory buffer (60 turns) and return `None`. They never block, never raise and never write anything to disk.
+  - Subagent sessions are ignored, so a delegated task doesn't take over the panel.
+  - On a Hermes without `register_hook`, the view instead reads the newest session from `~/.hermes/state.db` (or `$HERMES_HOME/state.db`) once a second, through a read-only SQLite connection.
+  - The page shows which source is in use (`· hooks` or `· state.db`).
+- **Opening the browser** uses Python's `webbrowser` module on a short-lived daemon thread. On macOS that runs the system opener.
+
+Without `whiplash_open_view`, nothing starts. The text/CLI session behaves exactly as before, apart from the in-memory hook buffer.
 
 ### Values
 
@@ -90,7 +133,7 @@ ln -s ~/whiplash ~/.hermes/plugins/whiplash
 
 Restart Hermes (`hermes`), then ask: *"Play some deep house on my Digitakt."*
 
-Whiplash's `register()` only registers schemas. The MIDI port and sequencer thread open on the first tool call, so loading stays well under Hermes' 10 s plugin-load limit.
+Whiplash's `register()` only registers schemas and the visualiser's in-memory conversation hooks. The MIDI port, the sequencer thread and the view server open on first use, so loading stays well under Hermes' 10 s plugin-load limit.
 
 ## Digitakt II setup
 
@@ -118,7 +161,9 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 - **Can switch a track between samples already in the project, nothing more.** Sample Slot Select (CC 19) is sent only through `sample_slot` / `whiplash_select_sample`. It changes which already-loaded pool sample a track plays, until the pattern/kit is reloaded. Sample bank select (CC 24), the sample NRPNs (1:3, 1:8, 1:9), and the bank-select/NRPN-data CCs stay blocked. No SysEx, no file transfer onto the unit, no project, pattern or slot writes, no +Drive access, no program change.
 - **Runs a background thread.** The sequencer runs as a daemon thread inside the Hermes process while a pattern plays, and is stopped by `whiplash_stop`. Port enumeration for the Digitakt check happens on tool calls only, at most every 2 s, never in the clock thread.
 - **Cleans up on exit.** `whiplash_stop`, every sequencer exit, and a normal Hermes exit (via `atexit`) send note-offs, All Notes Off, and transport Stop, then close the port. A hard kill (`SIGKILL`, power loss) can't be intercepted; press Stop on the unit if that happens.
-- No subprocess, shell, network, files, or secrets. The only environment variable read is the optional `WHIPLASH_SEND_TRANSPORT`.
+- **Visualiser (only when you open it).** `whiplash_open_view` starts a local HTTP server on `127.0.0.1` in two daemon threads (`whiplash-view-http`, `whiplash-view`) and opens the default browser through `webbrowser` on a daemon thread. On macOS that launches the system opener; it's the only process Whiplash ever starts. `whiplash_close_view` and Hermes exit (`atexit`) stop the server.
+- **Reads the conversation.** In-memory observer hooks pass the conversation to the view; nothing is stored. Without hooks, the view reads `~/.hermes/state.db` read-only, and only while the page is open. The page puts the conversation on screen, so mind what's visible when recording. `B` blurs it.
+- No shell, credentials, or secrets, and no network beyond the localhost page. The only environment variable read is the optional `WHIPLASH_SEND_TRANSPORT` (plus `HERMES_HOME` to find `state.db` in fallback mode).
 
 ## Tests
 
@@ -126,7 +171,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-124 tests, covering:
+151 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - clock-synced ramps: no duplicate sends, replace, cancel, concurrency
@@ -136,6 +181,13 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 - sample-slot select (lookup, send, reject, list) with bank select, sample NRPNs, SysEx and program change still blocked
 - transport modes: Start/Stop by default, clock only (no Start, no Stop), env default, mode change restarts, overlap warning
 - input validation, single panic per stop, exit hook, SysEx refusal
+- the visualiser:
+  - the state snapshot and which lanes appear
+  - the sequencer keeping exact time under a flood of snapshots
+  - hooks that return `None` and never raise
+  - streamed replies that arrive out of order
+  - the read-only `state.db` fallback
+  - server start/stop, the localhost Host check, SSE frames, and the open/close tools
 
 One test does a real virtual-port loopback through rtmidi; it skips where the machine has no MIDI system. CI runs the suite on Linux and macOS (`.github/workflows/tests.yml`).
 
@@ -147,7 +199,7 @@ Digitakt II on screen, USB to the laptop, Hermes in a terminal beside it. Each l
 
 | Time | Prompt | What happens |
 | --- | --- | --- |
-| 0:00 | *"Is my Digitakt connected?"* | `whiplash_list_midi_ports` finds *Elektron Digitakt II*. |
+| 0:00 | *"Is my Digitakt connected? And launch the visualiser."* | `whiplash_list_midi_ports` finds *Elektron Digitakt II*, `whiplash_open_view` opens the page beside the terminal (click CONNECT AUDIO once for the real spectrum). |
 | 0:04 | *(On the unit: select an empty pattern so its own trigs don't layer in.)* | |
 | 0:08 | *"Play some groovy deep house."* | `whiplash_play_pattern deephouse`: kick, rim, hats, bass and chords at 122 BPM, 55 % swing. |
 | 0:18 | *"Close the filter on the bass, then open it slowly over 8 bars."* | `whiplash_set_param` track 6 `filter_freq` 20, then `whiplash_ramp_param` 20→110 over 8 bars, `curve: exp`. |

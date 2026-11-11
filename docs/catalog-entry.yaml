@@ -12,8 +12,10 @@ description: >-
   and tempo. Disclosure: controls MIDI hardware (MIDI Start also starts the unit's own sequencer; a
   clock-only mode is available), can change which already-loaded sample a track plays, runs a background
   sequencer thread while a pattern plays, and opens a virtual MIDI port named "Whiplash" when no Digitakt
-  is connected. Never sends SysEx or program changes; no file transfer, project writes, network, shell,
-  or credentials.
+  is connected. Optional visualiser (whiplash_open_view): a read-only local web page served on 127.0.0.1 from
+  a background thread, opened in the default browser, showing the beat and the live Hermes conversation
+  (taken from in-memory observer hooks; nothing is stored). Never sends SysEx or program changes; no file
+  transfer, project writes, shell or credentials, and no network beyond that localhost page.
 maintainer: pgbouncer
 tier: community
 category: tools
@@ -42,6 +44,15 @@ capabilities:
     - whiplash_set_tempo
     - whiplash_stop
     - whiplash_status
-  provides_hooks: []
+    - whiplash_open_view
+    - whiplash_close_view
+  provides_hooks:
+    - pre_llm_call
+    - on_stream_start
+    - on_stream_delta
+    - on_stream_end
+    - pre_tool_call
+    - post_tool_call
+    - post_llm_call
   provides_middleware: []
   requires_env: []

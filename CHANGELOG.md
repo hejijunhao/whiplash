@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased: visualiser (`feat/visualiser`, on top of 0.4.0)
+
+Added
+- `whiplash_open_view` / `whiplash_close_view`: a live, read-only web page served on `127.0.0.1` and opened in the default browser. It shows:
+  - **Tracks:** one lane per track in use, with the current bar's notes on a tilted runway grid, a playhead, a 4-bar minimap, mutes, drops, fills, density, param values and animated ramps.
+  - **Transport:** a large BPM readout, the bar, pattern, queued switch and port status.
+  - **Analyser:** spectrum, scope and L/R meters from the Digitakt's USB audio via `getUserMedia`, or an honestly labelled MIDI fallback.
+  - **Conversation:** the live Hermes conversation, streamed word by word, with tool calls behind a toggle.
+  - **Log:** recent Whiplash actions.
+- Hermes conversation hooks: `pre_llm_call`, `on_stream_start`/`delta`/`end`, `pre_tool_call`, `post_tool_call` and `post_llm_call`. They keep in-memory observers only, return `None` and ignore subagent sessions. Without hook support, the view falls back to a read-only poll of `~/.hermes/state.db`.
+- The engine publishes the playhead (`position`) and the current bar's hits (`bar_hits`) from the clock thread by plain assignment, and `view_state()` gives a lock-short copy of the state for the view.
+- `docs/visualiser-design.md`: the approved design.
+- The page shows the v0.4 transport mode (`START/STOP` or `CLOCK ONLY`) and each track's last selected sample slot.
+- CI also runs on `feat/visualiser`.
+
 ## 0.4.0
 
 Two fixes from the first live session on a Digitakt II: tracks can now switch to another sample already in the project, and the beat can run on clock alone so the unit's own pattern doesn't layer in. 12 tools.

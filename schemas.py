@@ -35,7 +35,8 @@ SCHEMAS = {
                         "carries a 'warning' and the hardware is silent. MIDI Start also starts the Digitakt's own "
                         "sequencer, so trigs in the pattern selected on the unit play on top: every result carries "
                         "an overlap_warning to pass on (select an empty pattern on the unit, or use "
-                        "send_transport=false)."),
+                        "send_transport=false). If the user wants to watch the beat, "
+                        "whiplash_open_view shows it live in a local browser page."),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
             "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
@@ -154,6 +155,26 @@ SCHEMAS = {
         "description": ("Show what Whiplash is doing: port (and whether it is the silent virtual fallback, or a "
                         "Digitakt that has become available), transport_mode (start_stop or clock_only), pattern, bpm, bar, queued switch, muted tracks, active "
                         "ramps with progress, mutations, and last_error if the sequencer stopped on a fault."),
+        "parameters": EMPTY,
+    },
+    "whiplash_open_view": {
+        "name": "whiplash_open_view",
+        "description": ("Open the Whiplash visualiser: a local web page (http://127.0.0.1 only) in the default browser "
+                        "that shows the beat live while the chat continues here: every track in use with its notes "
+                        "and playhead, BPM, bar, queued switches, mutes, drops, fills, ramps, the MIDI port, an "
+                        "audio spectrum/scope (from the Digitakt's USB audio if the user allows it, else clearly "
+                        "labelled MIDI fallback) and this conversation. Read-only: it never sends MIDI or changes "
+                        "the beat. Works with or without a pattern playing. Use when the user asks to launch, open "
+                        "or show the visualiser/view. Calling it again just reopens the browser on the same page."),
+        "parameters": {"type": "object", "properties": {
+            "port": {"type": "integer", "minimum": 1024, "maximum": 65535,
+                     "description": "Local TCP port (default 7341, or a free one if that is taken)"},
+            "open_browser": {"type": "boolean", "description": "Open the default browser (default true); false only returns the URL"},
+        }},
+    },
+    "whiplash_close_view": {
+        "name": "whiplash_close_view",
+        "description": "Close the Whiplash visualiser's local web server. The beat keeps playing.",
         "parameters": EMPTY,
     },
 }

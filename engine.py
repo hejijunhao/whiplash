@@ -219,6 +219,11 @@ class Engine:
         self._fills = {}  # bar -> set(tracks)
         self.sent_count = 0
         self.send_transport = None  # transport mode of the current/last run; None = env default
+        # Published by the sequencer thread for the live view, read without any lock: each is
+        # replaced by a single attribute assignment (atomic in CPython) and never mutated after.
+        self.position = None  # (bar, step, perf_counter time the step's tick is due)
+        self.bar_fills = (None, frozenset())
+        self.bar_hits = None  # (bar, {step: [(track, note, vel, gate, offset)]}, fill tracks) for the bar now playing
 
     # ---- port handling -------------------------------------------------
     def ensure_port(self, port=None, allow_virtual=True):
@@ -476,6 +481,7 @@ class Engine:
         for old in [b for b in self._fills if b < bar_n]:
             del self._fills[old]
         fills = self._fills.pop(bar_n, set())
+        self.bar_fills = (bar_n, frozenset(fills))
         idx = (bar_n - self.pattern_start) % patterns.BARS
         r = mutate.rng(self.seed, "humanize", bar_n) if self.humanize else None
         events = collections.defaultdict(list)
@@ -508,9 +514,11 @@ class Engine:
                         events = self._bar_boundary(bar_n)
                         if events is None:
                             break
+                        self.bar_hits = (bar_n, events, self.bar_fills[1])
                     tick_len = 60.0 / self.bpm / PPQN
                     swing, muted = self.swing, set(self.muted)
                 if sub == 0:
+                    self.position = (bar_n, step, next_tick)  # for the view; one assignment, no lock
                     sixteenth = tick_len * TICKS_PER_STEP
                     t0 = next_tick + ((swing - 0.5) * 2 * sixteenth if step % 2 else 0)
                     for track, note, vel, gate, offset in events.get(step, ()):
@@ -542,6 +550,7 @@ class Engine:
             log.exception("sequencer thread crashed")
             self._record("sequencer stopped", exc)
         finally:
+            self.position = self.bar_hits = None
             with self._lock:
                 self._ramps.clear()  # ramps are clocked by this thread; they can't outlive it
                 self._queued = None
@@ -818,4 +827,26 @@ class Engine:
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "mutations": self.mutations(),
                 "last_error": self.last_error, "messages_sent": self.sent_count,
+            }
+
+    def view_state(self):
+        """Raw copies of everything the live view shows. Holds _lock only to copy references.
+
+        Read-only: never sends, never waits on the sequencer. The pattern, working bars and ramp
+        summaries are immutable or rebuilt on change, so shallow copies are safe outside the lock.
+        """
+        with self._lock:
+            return {
+                "playing": self.playing(), "port": self.port_name, "virtual": self.virtual,
+                "fallback": self.fallback, "port_lost": self.port_lost, "last_error": self.last_error,
+                "pattern": self.pattern, "bpm": self.bpm, "swing": self.swing, "bar": self.bar,
+                "pattern_start": self.pattern_start, "bars": self.bars_total,
+                "queued": dict(self._queued) if self._queued else None,
+                "muted": set(self.muted), "hw_muted": set(self.hw_muted),
+                "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
+                "density": dict(self._density), "humanize": self.humanize, "work": dict(self._work),
+                "drops": dict(self._drops), "fills": {b: set(t) for b, t in self._fills.items()},
+                "cc_values": dict(self._cc_values), "messages_sent": self.sent_count,
+                "position": self.position, "bar_hits": self.bar_hits,
+                "transport_mode": transport_mode(self.transport_on()),
             }

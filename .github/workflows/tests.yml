@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [feat/v1, feat/v2, feat/v04, main]
+    branches: [feat/v1, feat/v2, feat/v04, feat/visualiser, main]
   pull_request:
 
 permissions:

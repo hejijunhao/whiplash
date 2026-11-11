@@ -6,6 +6,7 @@ import logging
 from . import ccmap
 from . import engine as eng
 from . import patterns
+from . import view
 
 log = logging.getLogger("whiplash")
 PREFIX = "whiplash_"
@@ -63,6 +64,7 @@ def _tool(fn):
                     out["notice"] = device_notice(device)
         if ENGINE.port_lost and not out.get("port"):
             out["port_lost"] = ENGINE.port_lost
+        view.record_action(PREFIX + fn.__name__, params or {}, out)
         return json.dumps(out)
     return wrapper
 
@@ -205,5 +207,25 @@ def status(p):
     return out
 
 
+@_tool
+def open_view(p):
+    port = p.get("port")
+    if port not in (None, ""):
+        port = eng.check_whole(port, 1024, 65535, "port")
+    else:
+        port = None
+    out = view.open_view(ENGINE, port=port, browser=p.get("open_browser", True) is not False)
+    out["note"] = ("A local page now shows the beat live: tracks, BPM, ramps, mutes, an audio analyser and this "
+                   "conversation. It only watches; keep jamming here. Tell the user the URL in case the browser "
+                   "did not open.")
+    return out
+
+
+@_tool
+def close_view(p):
+    return view.close_view()
+
+
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
-                                             select_sample, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop, status)}
+                                             select_sample, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
+                                             status, open_view, close_view)}

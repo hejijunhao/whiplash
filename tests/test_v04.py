@@ -217,4 +217,5 @@ def test_play_schema_has_send_transport():
 
 def test_twelve_tools_in_manifest_order():
     assert list(tools.HANDLERS)[4] == "whiplash_select_sample" == list(schemas.SCHEMAS)[4]
-    assert len(tools.HANDLERS) == 12
+    # v0.4's 12 tools, then the visualiser's two
+    assert len(tools.HANDLERS) == 14 and list(tools.HANDLERS)[12:] == ["whiplash_open_view", "whiplash_close_view"]
