@@ -316,7 +316,8 @@ def test_live_switch_lands_on_the_bar_without_stop_or_start(fake):
     eng.ramp(6, 127, param="cutoff", start=0, bars=2)
     out = eng.play(P["soul"], bpm=280)
     assert out == {"mode": "queued", "switch_at_bar": 1, "replaced_queued": None, "send_transport": True}
-    assert eng.status()["queued"] == {"pattern": "soul", "bpm": 280, "switch_at_bar": 1, "transpose": {}}
+    assert eng.status()["queued"] == {"pattern": "soul", "bpm": 280, "switch_at_bar": 1, "key": "A minor",
+                                      "transpose": {}}  # v0.6.0: the key the queued pattern plays in
     wait_bar(eng, 3)
     st = eng.status()
     assert st["pattern"] == "soul" and st["bpm"] == 280 and st["queued"] is None and st["muted"] == [3]

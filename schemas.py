@@ -2,6 +2,7 @@
 from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
+from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .kitmap import ROLES
 from .patterns import MOODS, PATTERNS
@@ -12,6 +13,8 @@ NOTE = {"type": ["string", "integer"]}
 PARAM = {"type": "string", "description": f"Named Digitakt II param (see whiplash_list_params), e.g. {', '.join(list(PARAMS)[:8])}, ..."}
 EMPTY = {"type": "object", "properties": {}}
 SKILL = " Details: skill whiplash:digitakt."
+KEY = {"type": "string", "description": "Key root, e.g. 'A', 'F#', 'Bb', 'Am' (minor)"}
+SCALE = {"type": "string", "enum": sorted(SCALES), "description": "Default major, or minor for keys like 'Am'"}
 
 SCHEMAS = {
     "whiplash_list_midi_ports": {
@@ -27,7 +30,8 @@ SCHEMAS = {
     "whiplash_play_pattern": {
         "name": "whiplash_play_pattern",
         "description": ("Start a generated beat (genre or mood), or queue a switch to it on the next bar if one is playing. "
-                        "tracks sets each track's sample slot, tune, transpose and mute in the same call. Pass the "
+                        "key/scale set its key. tracks sets each track's sample slot, tune, transpose and mute in the "
+                        "same call. Pass the "
                         "result's overlap_warning (and any 'warning': virtual port, hardware silent) on to the user. "
                         "Roles follow whiplash_label_tracks, else they are assumed." + SKILL),
         "parameters": {"type": "object", "properties": {
@@ -42,6 +46,8 @@ SCHEMAS = {
             "transpose": {"type": "object",
                           "additionalProperties": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX},
                           "description": 'Semitones per track, e.g. {"6": -12}'},
+            "key": KEY,
+            "scale": SCALE,
             "tracks": {"type": "object", "additionalProperties": {"type": "object", "properties": {
                 "slot": {"type": "integer", "minimum": 0, "maximum": 127},
                 "tune": {"type": "integer", "minimum": 0, "maximum": 127, "description": "64 = none"},
@@ -131,8 +137,8 @@ SCHEMAS = {
                                       "Elektron names (C5 = 60), MIDI 16-84, '.' = rest, or degrees with key. "
                                       "Omit for note 60 (drums, one-shots).")},
             "key": {"type": "string",
-                    "description": ("Root for scale degrees, e.g. 'A', 'F#', 'Am' (minor), 'A3' (explicit octave). "
-                                    "Without an octave the root sits nearest note 60.")},
+                    "description": ("Root for scale degrees, e.g. 'A', 'F#', 'Am' (minor), 'A3' (explicit octave), or "
+                                    "'current' (the key playing). Without an octave the root sits nearest note 60.")},
             "scale": {"type": "string", "enum": sorted(SCALES),
                       "description": "Scale for degrees (default major, or minor for keys like 'Am'). b/# move a degree by a semitone."},
             "length": {"type": ["number", "array"], "items": {"type": "number"},
@@ -146,6 +152,22 @@ SCHEMAS = {
             "envelope": {"type": "string", "enum": ["note"],
                          "description": ("'note': also send amp_hold 127 (HOLD = NOTE, CC 80) so length is audible "
                                          "in AHD mode. Changes the kit's sound until reloaded; only when the user agrees.")},
+        }},
+    },
+    "whiplash_set_progression": {
+        "name": "whiplash_set_progression",
+        "description": ("Loop a chord progression from the next bar: chord/pad/stab tracks voice it, bass plays the roots, "
+                        "leads snap to the key. Never on drum, cymbal or fx tracks. clear or whiplash_stop ends it." + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "chords": {"type": ["array", "string"], "items": {"type": "string"}, "maxItems": MAX_CHORDS,
+                       "description": "Roman numerals in the key ('i VI III VII', 'ii7 V7 Imaj7') or names ('Am F C G')"},
+            "bars_per_chord": {"type": "integer", "minimum": 1, "maximum": BARS_PER_CHORD_MAX, "description": "Default 1"},
+            "voicing": {"type": "string", "enum": list(VOICINGS), "description": "Default close (voice-led)"},
+            "key": {**KEY, "description": "Default: the key playing; a new one moves the pattern too"},
+            "scale": SCALE,
+            "tracks": {"type": "object", "additionalProperties": {"type": "string", "enum": list(MODES)},
+                       "description": 'Override a track\'s mode, e.g. {"9": "chords", "6": "off"}'},
+            "clear": {"type": "boolean", "description": "End the progression"},
         }},
     },
     "whiplash_ramp_param": {
@@ -206,8 +228,8 @@ SCHEMAS = {
     },
     "whiplash_status": {
         "name": "whiplash_status",
-        "description": ("What Whiplash is doing now: port, pattern, bpm, bar, queued switch, per-track role, slot, pitch, "
-                        "part and mutes, ramps, mutations, kit map, last_error." + SKILL),
+        "description": ("What Whiplash is doing now: port, pattern, key, progression, bpm, bar, queued switch, per-track "
+                        "role, slot, pitch, part and mutes, ramps, mutations, kit map, last_error." + SKILL),
         "parameters": EMPTY,
     },
     "whiplash_open_view": {

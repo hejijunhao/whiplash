@@ -2,12 +2,53 @@
 
 ## Unreleased
 
-Visualiser catches up with v0.5.x. Mostly the page and `view.py`. The only engine change is one read-only line: `Engine.view_state()` also copies the slot labels (`kit_slots`). There are no tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
+Added
+- **Offline demo rehearsal** (`scripts/rehearse_demo.py`). Runs the hackathon demo's tool calls (checklist Part A, A1-A9) through the real handlers and engine against a recording port, at real or accelerated clock, with no Digitakt or rtmidi. Writes a Standard MIDI File of everything sent (one track per channel, markers for steps, Start/Stop and bars), a per-step report (tracks sounded, CCs, bar landing, warnings) and every tool result. It fails (exit 1) on SysEx, program change, a blocked CC, a hanging note, clock jitter past the test suite's bound, or any Part A expectation the MIDI can show. `tests/test_rehearsal.py` runs it at 4x in CI. Linked from README and the demo script. Not a hardware test.
+
+## 0.6.0
+
+The first v0.6 PR: keys, scales and chord progressions (item 1 of [docs/executing/v06-build-plan.md](docs/executing/v06-build-plan.md)), plus the v0.6 plan itself. 18 tools. Nothing here has been tested on a real Digitakt II yet.
+
+Added
+- **`key` and `scale` on `whiplash_play_pattern`.** The pattern's bass, chords and stabs move into that key from the first bar, or at the switch bar when queued. Drum tracks never move.
+  - Each genre has a home key (`patterns.HOME_KEYS`): deep house, soul and tech house in A minor, techno in F minor, breaks in G minor.
+  - `harmony.in_key` takes the smallest tonic move (−6..+5 semitones) and maps each note degree by degree, so A minor to C major turns C into E. Notes outside the home scale (deep house's G#) keep their offset. The v0.5 native register is re-applied afterwards.
+  - Once set, the key stays for later switches until `whiplash_stop`. Results show `key`. Status shows `key`, `key_source` (`set` or `pattern`) and `queued.key`.
+- **`whiplash_set_progression(chords, bars_per_chord, voicing, key, scale, tracks, clear)`.** It loops a chord progression from the next bar line.
+  - **Chords** are Roman numerals in the key (`"i VI III VII"`, `"ii7 V7 Imaj7"`, `bVII`, `ii°`, `sus4`, `add9`; upper case = major) or names (`"Am F C G7"`). Lists or strings work, split on spaces, commas, dashes and en dashes.
+  - **Timing.** Each chord lasts `bars_per_chord` bars (1-16), counted from the progression's own start, so an 8-bar progression plays correctly over the 4-bar loop.
+  - **Voicings:** `close` (voice-led), `root`, `open`, `power`. Every voicing's median sits at or above note 53, the v0.5 register floor.
+  - **Modes by role,** from the kit map label or else the pattern's role:
+    - chord/pad/stab tracks → `chords`: one chord tone per hit, each chord track on a different tone.
+    - bass → `root`: the chord root in the line's own register.
+    - lead → `snap`: nearest scale note.
+    - Drum, hat, perc, cymbal and fx tracks never change. A `tracks` override on them is refused. `stack` (whole chords on one track) and `off` are opt-in.
+  - A chord track with no line (a labelled pad with no generated part) holds one chord tone per bar.
+  - Written parts play as written unless named in `tracks`.
+  - Transpose, mutes, drops, fills, density and humanize apply on top. The progression carries across switches and `mutate reset`; `clear: true` or `whiplash_stop` ends it.
+  - Validated before anything changes. Nothing is sent by the call itself, and no CC is ever involved.
+- **`key: "current"` on `whiplash_write_part`** writes scale degrees in the key the beat plays in.
+- **Status:** `progression` with the chords, names, key, voicing, loop length, start bar, `now` (the chord playing and `next_change_at_bar`), every voiced chord with note names, and the per-track modes. `tracks[n].progression` gives each track's mode. A queued play result carries `progression_carried`.
+- **The v0.6 build plan,** `docs/executing/v06-build-plan.md`. v0.6 is split into v0.6.0 (this PR), v0.6.1 (arrangement, plus fills that follow the kit map, the open v0.5.3 follow-up) and v0.6.2 (DJ-style transitions and mix levels). Each item has its problem, change, tests and HW check, and the plan lists the decisions taken on Phil's behalf.
+
+Changed
+- **Chords spread over tracks and hits, not stacked on one channel.** The OS 1.17 manual gives the unit 16 audio voices for 16 tracks (p. 15) and documents chords only on MIDI tracks (p. 17, p. 42-43). An audio track therefore probably plays one note at a time. Recorded as reference §6.4 with HW questions §15.3 Q12-13, and §15.1 #28-29.
+- The skill gains a "Keys and chord progressions" section and diagnostics rows. The status description mentions key and progression.
+- The description budget test allows the new tool: params ≤ 7,200 characters and JSON ≤ 16,000 bytes. The per-tool (400) and total tool-description (3,000) caps are unchanged.
+- Version 0.6.0 in `pyproject.toml`, `plugin.yaml` and `docs/catalog-entry.yaml`. `whiplash_set_progression` is added to `provides_tools` in both manifests, after `whiplash_write_part`.
+
+Open decisions (plan recommendations taken, see the plan's §5)
+- `chords` (one tone per hit) is the default over `stack` until reference Q12 is checked on hardware.
+- The session key sticks across switches until stop.
+- `set_progression` needs a pattern playing. There is no `progression` argument on `play_pattern` yet.
+
+### Also in 0.6.0: visualiser catch-up (PR #13), v0.5.3 hardware checklist and demo script (PR #15)
+
+The visualiser catches up with v0.5.x. Mostly the page and `view.py`. The only engine change is one read-only line: `Engine.view_state()` also copies the slot labels (`kit_slots`). There are no tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
 
 Also here: the v0.5.3 hardware checklist and the hackathon demo script, plus two small fixes from the v0.5.3 review (`mutate.fill`, `kitmap` role spelling). Neither touches the engine, tools or schemas.
 
 Added
-- **Offline demo rehearsal** (`scripts/rehearse_demo.py`). Runs the hackathon demo's tool calls (checklist Part A, A1-A9) through the real handlers and engine against a recording port, at real or accelerated clock, with no Digitakt or rtmidi. Writes a Standard MIDI File of everything sent (one track per channel, markers for steps, Start/Stop and bars), a per-step report (tracks sounded, CCs, bar landing, warnings) and every tool result. It fails (exit 1) on SysEx, program change, a blocked CC, a hanging note, clock jitter past the test suite's bound, or any Part A expectation the MIDI can show. `tests/test_rehearsal.py` runs it at 4x in CI. Linked from README and the demo script. Not a hardware test.
 - **Written parts on the rack.** A track playing a `whiplash_write_part` part gets a `WR` tag, and its 16-step strip becomes a small piano roll: each note at its pitch, as long as its `length` in steps. A `LEN` tag gives the length (or range). It is dashed when Whiplash has sent neither `amp_mode` 1 nor `amp_hold` 127 on that track, since the unit may then not end the sound on note-off (reference §5.2). The module flashes inverted when a part lands.
 - **Transpose and range.** A `TRN +12` tag on transposed tracks, and the note range (e.g. `C5-G5`) under the note readout, both including the live transpose. Bars other than the sequencer's current one now carry their notes and lengths, so the note readout and roll stay right across the loop.
 - **Amp envelope.** `HLD NOTE`, `ADSR` or `AHD` tags show what Whiplash last sent on CC 80 / CC 87 (not what the kit is set to).

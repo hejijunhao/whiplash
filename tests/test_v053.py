@@ -393,8 +393,9 @@ def test_description_size_budget():
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
     assert sum(tool_text.values()) <= 3000, tool_text
     assert max(tool_text.values()) <= 400, tool_text
-    assert _descriptions(schemas.SCHEMAS) <= 6500
-    assert len(json.dumps(schemas.SCHEMAS)) <= 14500
+    # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params
+    assert _descriptions(schemas.SCHEMAS) <= 7200
+    assert len(json.dumps(schemas.SCHEMAS)) <= 16000
 
 
 def test_short_descriptions_keep_the_safety_caveats():
@@ -431,14 +432,8 @@ def test_skill_covers_v053():
     assert "Track roles are assumptions" not in skill
 
 
-def test_version_is_0_5_3():
-    import tomllib
-    import yaml
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.5.3"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.5.3"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.5.3"
-    sections = [s for s in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not s.startswith("Unreleased")]
-    assert sections[0].startswith("0.5.3")
+def test_changelog_keeps_0_5_3():  # the version itself is pinned by the newest release's test
+    assert "\n## 0.5.3\n" in (ROOT / "CHANGELOG.md").read_text()
 
 
 def test_no_new_message_types():
