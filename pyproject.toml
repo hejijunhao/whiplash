@@ -34,6 +34,10 @@ dev = [
 
 [tool.uv]
 package = false
+# CI only (uv reads this; pip and Hermes ignore it): python-rtmidi has no dependencies, but its meson build has no
+# metadata hook, so uv would compile it (needing ALSA headers on Linux) just to resolve it where PyPI has no wheel
+# (py3.13 on Linux). With this, CI there can `uv sync --no-install-package python-rtmidi`; the tests use fake ports.
+dependency-metadata = [{ name = "python-rtmidi", requires-dist = [] }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
