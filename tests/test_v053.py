@@ -437,7 +437,8 @@ def test_version_is_0_5_3():
     assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.5.3"
     assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.5.3"
     assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.5.3"
-    assert (ROOT / "CHANGELOG.md").read_text().split("\n## ", 1)[1].startswith("0.5.3")
+    sections = [s for s in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not s.startswith("Unreleased")]
+    assert sections[0].startswith("0.5.3")
 
 
 def test_no_new_message_types():

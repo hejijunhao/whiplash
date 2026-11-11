@@ -44,6 +44,8 @@ body.nocables #cables { display: none; }
 .mod { position: relative; background: var(--panel); border: 2px solid var(--mid2); padding: 8px 10px 10px; min-width: 0; }
 .mhead { display: flex; align-items: center; gap: 8px; height: 22px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid var(--dark); }
 .mhead .sp { flex: 1; }
+.role.kit { color: var(--hi); }   /* the user's own label (whiplash_label_tracks), not an assumed role */
+.tag.slot { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .role { color: var(--mid2); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .lbl-txt { color: var(--mid2); text-transform: uppercase; font-size: 11px; }
 .led { display: inline-block; width: 4px; height: 4px; background: var(--off); flex: none; }
@@ -95,7 +97,7 @@ body.nocables #cables { display: none; }
 #audioDev { max-width: 200px; background: var(--dark); border: 2px solid var(--mid); color: var(--hi); text-transform: uppercase; font-size: 11px; }
 
 /* track modules */
-#tracks { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 40px 24px; align-content: start; }
+#tracks, #tracksHi { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 40px 24px; align-content: start; }
 .trk .tb { display: grid; grid-template-columns: 26px minmax(0, 1fr) 52px; gap: 8px; align-items: start; }
 .fader { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .fader .slot { position: relative; width: 4px; height: 74px; background: var(--dark); }
@@ -116,6 +118,10 @@ body.nocables #cables { display: none; }
 .bat .br { fill: var(--dark); stroke: var(--hi); stroke-width: 2; }
 .bat .bl { fill: var(--hi); }
 .strip { width: 100%; height: 12px; margin-top: 8px; }
+.strip.roll { height: 26px; }   /* a written part: a tiny piano roll, pitch up, length across */
+.rng { margin-top: 2px; }
+/* tracks 9-16 only play written parts: their own row under 1-8, so 1-8 never reflow */
+#hiHead { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding-top: 8px; border-top: 2px dashed var(--mid); }
 .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; min-height: 16px; }
 .tag { font-size: 10px; padding: 0 4px; border: 2px solid var(--mid); color: var(--mid2); text-transform: uppercase; white-space: nowrap; line-height: 12px; }
 .tag.on { background: var(--hi); border-color: var(--hi); color: var(--bg); }
@@ -263,6 +269,8 @@ body.nocables #cables { display: none; }
       </section>
 
       <div id="tracks"></div>
+      <div id="hiHead" class="hidden"><canvas class="px" data-px="TRK 9-16" data-s="2"></canvas><span class="lbl-txt">WRITTEN PARTS · CHECK AUTO / FX CONTROL CH</span></div>
+      <div id="tracksHi" class="hidden"></div>
     </div>
     <footer id="log"><canvas class="px" data-px="LOG" data-s="2"></canvas><span id="logEntries">NO WHIPLASH ACTIONS YET</span></footer>
   </div>
@@ -463,7 +471,7 @@ function makeTrack(lane) {
     <div class="tb">
       <div class="fader"><div class="slot"><div class="thumb unknown"></div></div><canvas class="px" data-px="LVL" data-s="1" data-c="mid2"></canvas><span class="kv">--</span></div>
       <div class="knobs">${[0, 1, 2, 3].map(() => `<div class="knob unknown">${KNOB_SVG}<canvas class="px"></canvas><span class="kv">--</span></div>`).join("")}</div>
-      <div class="nb"><div class="notebox"><canvas class="px note"></canvas></div>
+      <div class="nb"><div class="notebox"><canvas class="px note"></canvas></div><canvas class="px rng" title="note range with transpose (C5 = 60)"></canvas>
         <div class="bat" title="mute"><svg viewBox="0 0 16 32"><circle class="br" cx="8" cy="16" r="6"/><rect class="bl" x="6" y="2" width="4" height="14"/></svg></div>
         <canvas class="px mutelbl"></canvas></div>
     </div>
@@ -475,7 +483,7 @@ function makeTrack(lane) {
   const knobs = [...el.querySelectorAll(".knob")].map((k) => ({ el: k, ind: k.querySelector(".ki"), tick: k.querySelector(".kt"), lbl: k.querySelector("canvas"),
     kv: k.querySelector(".kv"), shown: null }));
   return { el, data: lane, role: el.querySelector(".role"), tags: el.querySelector(".tags"), led: el.querySelector(".trig"), jack: el.querySelector(".jack"),
-    strip: el.querySelector(".strip"), note: el.querySelector(".note"), lever: el.querySelector(".bat .bl"), muteLbl: el.querySelector(".mutelbl"),
+    strip: el.querySelector(".strip"), note: el.querySelector(".note"), rng: el.querySelector(".rng"), lever: el.querySelector(".bat .bl"), muteLbl: el.querySelector(".mutelbl"),
     thumb: el.querySelector(".thumb"), lvlKv: el.querySelector(".fader .kv"), knobs, controls: [], ledUntil: 0, ledOn: false,
     wasDropped: false, wasFilling: false, noteText: "--" };
 }
@@ -484,7 +492,6 @@ function flash(el) {
   el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
 }
 function renderTracks() {
-  const box = $("tracks");
   const wanted = new Set(S.lanes.map((l) => l.track));
   for (const [t, L] of tracks) {
     if (!wanted.has(t)) { L.el.remove(); tracks.delete(t); layoutDirty = true; }
@@ -494,13 +501,18 @@ function renderTracks() {
     if (!L) {
       L = makeTrack(lane);
       tracks.set(lane.track, L);
-      const after = [...tracks.keys()].filter((t) => t > lane.track).sort((a, b) => a - b)[0];
+      const hi = lane.track > 8, box = $(hi ? "tracksHi" : "tracks");
+      const after = [...tracks.keys()].filter((t) => t > lane.track && (t > 8) === hi).sort((a, b) => a - b)[0];
       box.insertBefore(L.el, after !== undefined ? tracks.get(after).el : null);
       requestAnimationFrame(() => L.el.classList.remove("enter"));
       layoutDirty = true;
     }
     updateTrack(L, lane);
   }
+  const anyHi = S.lanes.some((l) => l.track > 8);
+  $("hiHead").classList.toggle("hidden", !anyHi);
+  $("tracksHi").classList.toggle("hidden", !anyHi);
+  const box = $("tracks");
   let empty = $("emptyMod");
   if (!S.lanes.length && !empty) {
     empty = document.createElement("section");
@@ -514,9 +526,23 @@ function renderTracks() {
 function updateTrack(L, lane) {
   L.data = lane;
   L.role.textContent = lane.role || "";
+  const kit = lane.kit;
+  L.role.classList.toggle("kit", !!kit);
+  L.role.title = kit ? `kit map: ${kit.label} (${kit.role})` : lane.role ? "assumed role: ask Hermes to label the track" : "";
   const bar = S.bar;
   const dropActive = !!(lane.drop && lane.drop.from <= bar && bar < lane.drop.back);
   const tags = [];
+  // written part (whiplash_write_part) vs the generated pattern line
+  if (lane.written) tags.push(`<span class="tag on" title="written part: whiplash_write_part">WR</span>`);
+  if (lane.transpose) tags.push(`<span class="tag on" title="whiplash_transpose, semitones">TRN ${lane.transpose > 0 ? "+" : ""}${lane.transpose}</span>`);
+  const amp = lane.amp, cuts = !!(amp && (amp.mode === "ADSR" || amp.hold_note));
+  if (lane.written && lane.length) {
+    const [a, b] = (lane.length || []).map(fmtLen);
+    tags.push(`<span class="tag${cuts ? "" : " more"}" title="${cuts ? "note length in 16th steps (exact note-off)"
+      : "note length in 16th steps: only audible with AMP MODE = ADSR or HOLD = NOTE (Whiplash has sent neither on this track)"}">LEN ${a === b ? a : a + "-" + b}</span>`);
+  }
+  if (amp && amp.hold_note) tags.push(`<span class="tag" title="amp_hold 127: HOLD = NOTE, the hold lasts until note-off">HLD NOTE</span>`);
+  else if (amp && amp.mode) tags.push(`<span class="tag" title="amp_mode Whiplash last sent">${amp.mode}</span>`);
   if (lane.muted) tags.push(`<span class="tag on">MUTE</span>`);
   if (lane.hw) tags.push(`<span class="tag on" title="the unit's own track mute">HW</span>`);
   if (lane.drop) {
@@ -528,7 +554,11 @@ function updateTrack(L, lane) {
     tags.push(`<span class="tag">${at === bar + 1 ? "FILL NEXT" : `FILL @${at + 1}`}</span>`);
   }
   if (lane.fill === "now") tags.push(`<span class="tag on">FILL</span>`);
-  if (lane.sample_slot !== null && lane.sample_slot !== undefined) tags.push(`<span class="tag">SMP ${String(lane.sample_slot).padStart(3, "0")}</span>`);
+  if (lane.sample_slot !== null && lane.sample_slot !== undefined) {
+    const sl = lane.slot_label ? ` ${esc(lane.slot_label)}` : "";
+    tags.push(`<span class="tag slot" title="sample slot${lane.slot_label ? " · kit map: " + esc(lane.slot_label) : ""}">SMP ${String(lane.sample_slot).padStart(3, "0")}${sl}</span>`);
+  }
+  if (kit && !lane.written && !lane.loop.some((b) => b.length)) tags.push(`<span class="tag more" title="labelled, but no generated part fits: silent until whiplash_write_part">NO PART</span>`);
   if (lane.density) tags.push(`<span class="tag">DNS ${lane.density > 0 ? "+" : "-"}${Math.round(Math.abs(lane.density) * 100)}</span>`);
   // controls: LVL fader, FLT/RES/DEC knobs, and a fourth knob for whatever else Whiplash sent (ramps first)
   const rampByCc = {};
@@ -548,6 +578,13 @@ function updateTrack(L, lane) {
   if (others.length > 1) tags.push(`<span class="tag more" title="${esc(others.slice(1).map((o) => o.name).join(", "))}">+${others.length - 1} PRM</span>`);
   const html = tags.join("");
   if (L.tags.innerHTML !== html) L.tags.innerHTML = html;
+  pxText(L.rng, lane.pitch ? (lane.pitch.low === lane.pitch.high ? lane.pitch.low_name : `${lane.pitch.low_name}-${lane.pitch.high_name}`) : " ",
+    1, lane.transpose ? C.hi : C.mid2);
+  if (L.strip.classList.contains("roll") !== !!lane.written) {
+    L.strip.classList.toggle("roll", !!lane.written);
+    layoutDirty = true;
+    if (lane.written) flash(L.el);   // a part was just written onto this track
+  }
   L.controls.forEach((c, i) => pxText(L.knobs[i].lbl, c.label, 1, c.cc === null ? C.dim : C.mid2));
   drawControls(L, performance.now(), true);
   // mute: LED off, module dimmed, bat toggle down
@@ -593,12 +630,16 @@ function drawControls(L, now, force) {
   });
 }
 
-// hits for whichever bar the (extrapolated) playhead is in
+// Elektron octave numbering, as the plugin and whiplash_write_part use: 60 = C5
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const noteName = (n) => NOTE_NAMES[n % 12] + Math.floor(n / 12);
+const fmtLen = (x) => (Number.isInteger(x) ? String(x) : String(x).replace(/^0\./, "."));
+// hits for whichever bar the (extrapolated) playhead is in: [step, note, velocity, length, name]
 function hitsFor(lane, bar) {
   if (!S) return [];
   if (bar === S.bar || !lane.loop.length) return lane.steps;
   const idx = ((S.loop_bar + (bar - S.bar)) % 4 + 4) % 4;
-  return (lane.loop[idx] || []).map(([s, v]) => [s, 0, v, 1, ""]);
+  return (lane.loop[idx] || []).map(([s, v, n, g]) => [s, n ?? 0, v, g ?? 1, lane.melodic && n !== undefined ? noteName(n) : ""]);
 }
 function audible(lane, bar) {
   if (lane.muted || lane.hw) return false;
@@ -610,10 +651,12 @@ function drawStrip(L, ph) {
   const lane = L.data;
   const bar = ph === null ? S.bar : Math.floor(ph / STEPS);
   const cur = ph === null ? -1 : Math.floor(ph - bar * STEPS);
+  const shown = audible(lane, bar) || lane.muted ? hitsFor(lane, bar) : [];
   const hits = new Map();
-  if (audible(lane, bar) || lane.muted) for (const hit of hitsFor(lane, bar)) hits.set(hit[0], hit[2]);
+  for (const hit of shown) hits.set(hit[0], hit[2]);
   const fillNow = lane.fill === "now" && bar === S.bar;
   const gap = 2, cw = Math.max(2, Math.floor((w - gap * (STEPS - 1)) / STEPS));
+  if (lane.written) return drawRoll(ctx, w, h, lane, shown, cur, cw, gap);
   for (let s = 0; s < STEPS; s++) {
     const x = s * (cw + gap);
     const vel = hits.get(s);
@@ -623,6 +666,23 @@ function drawStrip(L, ph) {
       ctx.fillStyle = vel === undefined ? C.hi : C.dark;
       ctx.fillRect(x + 2, 2, cw - 4, h - 4);
     }
+  }
+}
+
+// A written part's strip: the 16 steps as a dim grid, each note a 4px bar at its pitch (the lane's
+// range, low at the bottom) running for its length in steps, so a melody reads as a shape.
+function drawRoll(ctx, w, h, lane, shown, cur, cw, gap) {
+  const unit = cw + gap, nh = 4;
+  for (let s = 0; s < STEPS; s++) {
+    ctx.fillStyle = s === cur ? C.mid : s % 4 === 0 ? C.dim : C.off;
+    ctx.fillRect(s * unit, 0, cw, h);
+  }
+  const lo = lane.pitch ? lane.pitch.low : 60, span = lane.pitch ? Math.max(1, lane.pitch.high - lo) : 1;
+  for (const [s, n, v, g] of shown) {
+    const y = lane.pitch && lane.pitch.high !== lo ? Math.round((h - nh) * (1 - (n - lo) / span) / 2) * 2 : Math.round((h - nh) / 4) * 2;
+    const len = Math.max(cw, Math.min(STEPS - s, g || 1) * unit - gap);
+    ctx.fillStyle = s === cur ? C.dark : v >= 100 ? C.hi : C.mid2;
+    ctx.fillRect(s * unit, y, len, nh);   // ends a gap short of the next step, so retriggers stay visible
   }
 }
 
@@ -1089,7 +1149,7 @@ if (store.get("nocables", false)) document.body.classList.add("nocables");
 if (store.get("collapsed", false)) setCollapsed(true);
 setTools(toolsOn);
 setSource();
-if (window.ResizeObserver) { const ro = new window.ResizeObserver(() => { layoutDirty = true; }); ro.observe($("rack")); ro.observe($("tracks")); ro.observe($("tape")); }
+if (window.ResizeObserver) { const ro = new window.ResizeObserver(() => { layoutDirty = true; }); ro.observe($("rack")); ro.observe($("tracks")); ro.observe($("tracksHi")); ro.observe($("tape")); }
 window.addEventListener("resize", () => { layoutDirty = true; });
 let es;
 function connect() {

@@ -76,6 +76,10 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
   - **Module:** a 16-step pixel strip with the playhead, a trig LED and note readout that fire on each hit, an LVL fader and FLT/RES/DEC knobs set to the last values Whiplash sent (`--` until it sends one), plus a fourth knob for any other param.
   - **States:** mutes (LED off, module dimmed, bat toggle down; `HW` for the unit's own mute), drops (dimmed with a `DROP <N` countdown), fills and density as tags. A drop or fill starting flashes the module inverted.
   - **Ramps:** a ramping knob turns in time toward a tick at the target value.
+  - **Pitch:** the note range under the note readout (Elektron names, C5 = 60) includes the live transpose, and a `TRN +12` tag shows a transpose. Note names match what `whiplash_write_part` echoes.
+  - **Written parts:** a `WR` tag, and the strip becomes a small piano roll: each note at its pitch, running for its length in steps. A `LEN` tag gives the length range. It is dashed when Whiplash has sent neither `amp_mode` 1 (ADSR) nor `amp_hold` 127 on that track, because the unit may then ignore note-off (reference §5.2). `HLD NOTE` or `ADSR`/`AHD` shows what Whiplash last sent for the envelope, not what the kit is set to.
+  - **Kit map:** a track you labelled with `whiplash_label_tracks` shows your label as its role in white (assumed roles stay gray). The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until you write one.
+  - **Tracks 9-16:** they play only written parts, so they get their own row under 1-8 with a reminder to keep AUTO / FX CONTROL CH off those channels.
 - **Tape transport:** a bitmap BPM readout that rolls to a new tempo, REC LED, bar and 4-bar loop position, pattern and swing, a queued switch with a beat countdown, and the MIDI port. The virtual fallback shows as an inverted `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
 - **Master VU:** the needle follows an envelope derived from the scheduled hits and track levels, labelled `MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO`. The tape reels turn with the BPM and stop with the transport; the hub pulses on each kick and bar downbeat.
   - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The needle then follows the input's RMS, labelled `AUDIO · <device>`.
@@ -222,7 +226,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-356 tests, covering:
+360 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -239,6 +243,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 - input validation, single panic per stop, exit hook, SysEx refusal
 - the visualiser:
   - the state snapshot and which lanes appear
+  - written parts, transpose, the amp envelope, kit and slot labels and tracks 9-16 in the snapshot, and the page handling frames without them
   - the sequencer keeping exact time under a flood of snapshots
   - hooks that return `None` and never raise
   - streamed replies that arrive out of order

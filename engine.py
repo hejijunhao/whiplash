@@ -1369,7 +1369,7 @@ class Engine:
                 "queued": ({**self._queued, "pattern": kitmap.route(self._queued["pattern"], self._kit_tracks)}
                            if self._queued else None),
                 "muted": set(self.muted), "hw_muted": set(self.hw_muted),
-                "kit_tracks": dict(self._kit_tracks),
+                "kit_tracks": dict(self._kit_tracks), "kit_slots": dict(self._kit_slots),
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "density": dict(self._density), "humanize": self.humanize, "work": dict(self._work),
                 "drops": dict(self._drops), "fills": {b: set(t) for b, t in self._fills.items()},
