@@ -72,7 +72,13 @@ def density(bars, amount, seed, track):
 
 
 def fill(track, hits):
-    """A one-bar fill for a drum track (1 kick, 2 snare/rim, 3 clap, 4 closed hat, 5 open hat)."""
+    """A one-bar fill for a drum track (1 kick, 2 snare/rim, 3 clap, 4 closed hat, 5 open hat).
+
+    Fills are keyed by track number. A melodic line on tracks 1-5 (a bass the kit map routed onto
+    track 2, or a written melody there) is left alone, so it never turns into a roll of bass notes.
+    """
+    if any(h[1] != patterns.DRUM for h in hits):
+        return list(hits)
     note = hits[0][1] if hits else patterns.DRUM
     early = [h for h in hits if h[0] < 12]
     if track == 1:  # kick sits out the last beat: tension before the one

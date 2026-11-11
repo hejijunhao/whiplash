@@ -439,3 +439,36 @@ def test_changelog_keeps_0_5_3():  # the version itself is pinned by the newest 
 def test_no_new_message_types():
     assert engine.ALLOWED_TYPES == {"note_on", "note_off", "control_change", "clock", "start", "stop", "continue"}
     assert tools.HANDLERS["whiplash_label_tracks"]
+
+
+# --- follow-ups from the v0.5.3 review (hardware-checklist PR) ---
+
+def test_fill_leaves_a_melodic_line_on_a_drum_track_alone():
+    from whiplash import mutate
+    bass = [(s, 53, 100, 2, 0.0) for s in (0, 3, 6, 10, 14)]
+    for track in range(1, 6):  # a bass routed onto 1-5 by the kit map never becomes a roll or loses its last beat
+        assert mutate.fill(track, bass) == bass
+    drums = [(s, patterns.DRUM, 100, 1, 0.0) for s in (0, 4, 8, 12)]
+    assert mutate.fill(1, drums) == drums[:3]  # drum fills unchanged
+    assert len(mutate.fill(2, drums)) == 2 + 8
+
+
+def test_fill_skips_a_bass_routed_onto_the_snare_track():
+    def track2(fill):
+        eng, _port = make_engine()
+        try:
+            eng.label_tracks(tracks={"2": "bass"})
+            pretend_playing(eng, P["techno"])
+            bar_events(eng, 0)
+            if fill:
+                eng.schedule_fill([2])
+            return [e for e in bar_events(eng, 1) if e[1] == 2]
+        finally:
+            eng.shutdown()
+    plain, filled = track2(False), track2(True)
+    assert plain and {e[2] for e in plain} != {patterns.DRUM}  # the bass really is on track 2
+    assert filled == plain
+
+
+def test_explicit_role_accepts_underscores_and_case():
+    assert kitmap.check_tracks({"4": {"role": "Closed_Hat"}}) == {4: ("closed hat", "Closed_Hat")}

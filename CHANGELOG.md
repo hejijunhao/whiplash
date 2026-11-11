@@ -41,15 +41,22 @@ Open decisions (plan recommendations taken, see the plan's §5)
 
 The visualiser catches up with v0.5.x. Mostly the page and `view.py`. The only engine change is one read-only line: `Engine.view_state()` also copies the slot labels (`kit_slots`). There are no tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
 
+Also here: the v0.5.3 hardware checklist and the hackathon demo script, plus two small fixes from the v0.5.3 review (`mutate.fill`, `kitmap` role spelling). Neither touches the engine, tools or schemas.
+
 Added
 - **Written parts on the rack.** A track playing a `whiplash_write_part` part gets a `WR` tag, and its 16-step strip becomes a small piano roll: each note at its pitch, as long as its `length` in steps. A `LEN` tag gives the length (or range). It is dashed when Whiplash has sent neither `amp_mode` 1 nor `amp_hold` 127 on that track, since the unit may then not end the sound on note-off (reference §5.2). The module flashes inverted when a part lands.
 - **Transpose and range.** A `TRN +12` tag on transposed tracks, and the note range (e.g. `C5-G5`) under the note readout, both including the live transpose. Bars other than the sequencer's current one now carry their notes and lengths, so the note readout and roll stay right across the loop.
 - **Amp envelope.** `HLD NOTE`, `ADSR` or `AHD` tags show what Whiplash last sent on CC 80 / CC 87 (not what the kit is set to).
 - **Kit map labels** (v0.5.3 `whiplash_label_tracks`). A labelled track shows the user's label as its role in white, with the vocabulary role in the tooltip. Assumed roles stay gray. The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until a part is written.
-- **Tracks 9-16** get their own row under 1-8 when they play, headed `TRK 9-16 · WRITTEN PARTS · CHECK AUTO / FX CONTROL CH`, so 1-8 never reflow.
+- **Tracks 9-16** get their own row under 1-8 when they play, headed `TRK 9-16 · CHECK AUTO / FX CONTROL CH`, so 1-8 never reflow. (They can carry written parts or, through the kit map, generated ones.)
+- **Hardware checklist for v0.5.3** (`docs/testing/hardware-checklist.md`). The 10-minute smoke test is now the demo path: label the kit, one-call start with a slot, filter sweep, a written melody on the silent cymbal track, drop with fill, switch to tech house, status, stop. New checks cover the kit map (classification, merge, bad labels, re-routing on the bar, lifetime, reset), `tracks` setup on fresh and queued starts (§15.3 Q10-11), tech house and its aliases, turn latency, and the v0.5 visualiser (labels, `SMP` labels, `NO PART`, piano roll, `TRN`/`LEN`/`HLD NOTE`, the 9-16 row). Sections are re-lettered; the open-question table maps every check. Still not verified on a unit.
+- **Hackathon demo script** (`docs/demo/hackathon-demo.md`): a 3-minute stage run with setup, the prompts in order, what the audience hears and sees, fallback prompts and recovery. Linked from README.
 - Snapshot lane fields: `written`, `transpose`, `pitch` (`low`/`high` + names or `null`), `length` (`[min, max]` steps for written parts, else `null`) and `amp` (`{mode, hold_note}` or `null`), `kit` (`{role, label}` or `null`) and `slot_label`. `loop` hits are now `[step, velocity, note, length]` (was `[step, velocity]`).
 
 Fixed
+- **Fills on routed melodic parts** (`mutate.fill`). Fills are keyed by track number, so a bass the kit map routed onto track 2 got the snare roll in bass notes (and one on track 1 lost its last beat, on 4 got ratchets). A fill now leaves any line with notes other than 60 unchanged. Drum fills are as before. Reference §15.1 #26 says so.
+- **Explicit kit roles** accept underscores and any case (`{"role": "Closed_Hat"}`), like free text already did.
+- The visualiser's 9-16 row is headed `TRK 9-16 · CHECK AUTO / FX CONTROL CH`: the kit map can route generated parts there too, so "written parts" was wrong. README fixed the same way, and its default-roles and close-role lists now match `patterns.py` and `kitmap.CLOSE`.
 - The view named notes in scientific numbering (60 = C4), one octave off from Whiplash's Elektron numbering (60 = C5) used by `whiplash_write_part`, status and the reference. It now uses `patterns.note_name`.
 
 ## 0.5.3
