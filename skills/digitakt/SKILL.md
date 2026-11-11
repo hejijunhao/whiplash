@@ -25,6 +25,7 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 - Results and `whiplash_status` show the label as `tracks[n].role` (without "(assumed)") plus `kit_role`; `roles_assumed` is false once anything is labelled. A selected slot with a label shows `slot_label`, in `whiplash_select_sample`, `whiplash_set_param` sample_slot and the play `setup` echo too.
 - The map lives in memory for the session: it survives `whiplash_stop` and pattern switches. `reset: true` clears it, and so does a gateway restart.
 - Labels are only what the user told you. Whiplash can't read sample names (that would need SysEx, which it never sends).
+- **Kit scan (`whiplash_scan_kit`):** "scan my kit" or "what's on my tracks?" with the listen setup in place. Stop the beat first; it refuses while one plays. It plays one note per track alone (about 17-35 s for 16 tracks; `tracks: [9, 10]` for a few) and returns `proposed` labels with `confidence`, plus `apply_with`. **It never applies them.** Show the user a short list (track: label, confidence; say which are `unknown` or `silent`), take their corrections, and only on their yes call `whiplash_label_tracks(tracks: apply_with.tracks)` with those corrections merged in. If `unexpected_audio` or the error says the unit is already making sound, its own pattern is running: ask them to press Stop on the unit, then scan again. `silent` means muted on the unit, level 0, an empty slot, a changed MIDI channel, or USB OUT not on MAIN.
 
 ## Keys and chord progressions
 
@@ -187,6 +188,7 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | Many calls just to set the kit up | one `whiplash_play_pattern` with `tracks` |
 | Silence everywhere | `warning` in a result: virtual port, no Digitakt connected |
 | "Does it clip?", "too loud", "is it muddy?", "is it in time?" | `whiplash_listen`, act on the numbers, listen again |
+| "Scan my kit", "what's on my tracks?" | stop the beat, `whiplash_scan_kit`, show the proposal; `whiplash_label_tracks` only on the user's yes |
 | Level or drive refused: "loudness guard" | lower something and listen again; `force: true` only if the user insists |
 | listen: "no Digitakt II audio input" or "numpy is not installed" | pass the hint on: USB CONFIG = USB AUDIO/MIDI, macOS microphone permission, the `[listen]` extra, or `device` |
 

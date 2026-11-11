@@ -12,7 +12,7 @@ from . import chat
 from .schemas import SCHEMAS
 from .tools import HANDLERS
 
-__version__ = "0.7.0"  # keep in sync with pyproject.toml, plugin.yaml and docs/catalog-entry.yaml (tests check)
+__version__ = "0.7.1"  # keep in sync with pyproject.toml, plugin.yaml and docs/catalog-entry.yaml (tests check)
 log = logging.getLogger("whiplash")
 TOOLSET = "whiplash"
 SKILL_NAME = "digitakt"  # resolves as "whiplash:digitakt"

@@ -12,6 +12,27 @@ Added
 - **Hardware checklist:** E8 (the KEY module and chord lines) and a new Part P (P1-P5: plan HW 6.0-1 to 6.0-5, §15.3 Q12-13), plus the v0.6.1 / 19-tool gateway check. **Demo:** an optional 30-second progression encore after the run, gated on P1. None of this is hardware-verified.
 - **Offline demo rehearsal** (`scripts/rehearse_demo.py`). Runs the hackathon demo's tool calls (checklist Part A, A1-A9) through the real handlers and engine against a recording port, at real or accelerated clock, with no Digitakt or rtmidi. Writes a Standard MIDI File of everything sent (one track per channel, markers for steps, Start/Stop and bars), a per-step report (tracks sounded, CCs, bar landing, warnings) and every tool result. It fails (exit 1) on SysEx, program change, a blocked CC, a hanging note, clock jitter past the test suite's bound, or any Part A expectation the MIDI can show. `tests/test_rehearsal.py` runs it at 4x in CI. Linked from README and the demo script. Not a hardware test.
 
+## 0.7.1
+
+The second v0.7 PR: the kit scan ([docs/executing/v07-build-plan.md](docs/executing/v07-build-plan.md) item 3, roadmap v0.7 feature 3). 22 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, and the plugin imports and runs with no optional dependency installed.
+
+Added
+- **`whiplash_scan_kit(tracks)`** (`scan.py`). With the beat stopped, plays one note per track (all 16, or `tracks`) alone and hears each one through the v0.7.0 capture path:
+  - Each note is MIDI 60 on the track's own channel, velocity 100, held 0.25 s. The next note comes at least 1 s later, and waits up to 1 s more for the last tail to fade below -50 dBFS. Tracks muted in Whiplash are skipped (`skipped_muted`).
+  - Before the first note it listens for 0.4 s. Sound there means the unit's own pattern is probably playing (the v0.4 overlap), so it refuses and sends nothing.
+  - **Classification** of each hit, in the tool call's thread, yielding between tracks. The features are spectral centroid and low-end share (under 150 Hz) over the first 250 ms, decay to -20 dB, hold to -6 dB, attack, whether it still sounds at the window's end, pitchedness (peak of the normalised autocorrelation, 40 Hz-1 kHz) and f0, and a second onset inside the window. Labels: kick, snare/clap, hat (closed or open by decay), perc, bass, pad/chord, lead/stab (lead or stab by decay), fx, silent, and unknown (with a `guess`) under 0.3 confidence.
+  - Returns `proposed`, `features` (with `features_keys`), `flags` (`sound_before`, `other_hits`, `tail_overlap`, each halving that track's confidence), `unexpected_audio` with a note pointing at the unit's own pattern, `current_labels`, `apply_with` (the exact `whiplash_label_tracks` call, without silent or unknown tracks), `applied: false`, `confirm`, and `channel_note` for tracks 9-16.
+  - **Never applies the labels.** The agent shows the proposal and calls `whiplash_label_tracks` only on the user's yes. `Engine.last_scan` keeps the last proposal (read-only).
+- **Refusals before anything is sent:** while a beat plays (MIDI Start: the unit's pattern would play along; clock only: Whiplash's beat would), with no Digitakt on MIDI (virtual port), no Digitakt audio input, a listen or scan already running, bad `tracks`, or without numpy/sounddevice (the install hint).
+- **Clean errors mid-scan.** If the audio input stops (unplugged), the MIDI port fails, or `whiplash_stop` or a fresh play arrives, the scan ends with a clear error and the note playing gets its note-off.
+
+Changed
+- `Engine`: `scan_state()`, `scan_note()` (one note-on/off from the tool thread, refused once a beat started or a stop happened), `record_scan()`, `last_scan`, and a `stops` counter that `stop()` bumps. The sequencer thread is untouched.
+- `whiplash_listen`'s description is shorter. The tool-description budget rises from 3,300 to 3,500 characters (per-tool cap 400 unchanged), params from 8,400 to 8,550 characters and the JSON from 20,100 to 20,400 bytes, for the new tool. `whiplash_scan_kit` has no `device` param, to save space; `WHIPLASH_AUDIO_INPUT` picks the input as for a listen.
+- Version 0.7.1 in `pyproject.toml`, `plugin.yaml`, `docs/catalog-entry.yaml` and `__init__.py`. `whiplash_scan_kit` is in `provides_tools` after `whiplash_listen`, and the manifest and catalog descriptions disclose it. The skill and README gain kit-scan sections, and the reference gains §15.1 #36 and §15.3 Q22-24.
+
+Not touched: `docs/testing/hardware-checklist.md`, `docs/demo/`, `scripts/`, `view.py`, `view.html` (owned by the visualiser agent). The PR lists the new hardware checks.
+
 ## 0.7.0
 
 The first v0.7 PR: the listening loop, part 1 (capture, `whiplash_listen` and the safety rails; [docs/executing/v07-build-plan.md](docs/executing/v07-build-plan.md) items 1, 2 and 4). 21 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, and the plugin imports and runs with no new dependency installed.

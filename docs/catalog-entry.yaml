@@ -12,7 +12,9 @@ description: >-
   and rhythms, bar-quantized pattern switches with DJ-style transitions (filter swap, drop swap, riser),
   track levels and pan with saved mixes (whiplash_mix), listening to the unit's real output over USB audio
   (whiplash_listen: loudness, clipping, band balance, timing and kick offsets as numbers, never audio) with a
-  loudness guard that refuses level increases after clipping, named sound parameters, clock-synced parameter ramps, live
+  loudness guard that refuses level increases after clipping, a kit scan (whiplash_scan_kit: with the beat
+  stopped, one note per track, heard and classified into proposed kit-map labels that are never applied
+  without the user's yes), named sound parameters, clock-synced parameter ramps, live
   fills/drops/density/swing/humanize, switching a track among samples already in the project pool, mutes
   and tempo. Disclosure: controls MIDI hardware (MIDI Start also starts the unit's own sequencer; a
   clock-only mode is available), can change which already-loaded sample a track plays, runs a background
@@ -22,13 +24,13 @@ description: >-
   (taken from in-memory observer hooks; nothing is stored). whiplash_listen opens an audio input (the Digitakt's
   USB audio, or WHIPLASH_AUDIO_INPUT) only for the length of one call (at most 24 s), through the optional
   numpy/sounddevice extra, which needs microphone permission on macOS; the audio is analysed in memory and
-  dropped. Never sends SysEx or program changes; no file
+  dropped. whiplash_scan_kit does the same for at most about 35 s and sends only note-on/off. Never sends SysEx or program changes; no file
   transfer, project writes, shell or credentials, and no network beyond that localhost page.
 maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.7.0"
+version: "0.7.1"
 readme: true
 platforms: [linux, macos]
 known_issues:
@@ -60,6 +62,7 @@ capabilities:
     - whiplash_stop
     - whiplash_status
     - whiplash_listen
+    - whiplash_scan_kit
     - whiplash_open_view
     - whiplash_close_view
   provides_hooks:

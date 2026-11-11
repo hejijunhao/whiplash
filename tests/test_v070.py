@@ -44,13 +44,10 @@ def ccs(port, control=None):
 
 # ---- version, manifests, packaging --------------------------------------------------------------
 
-def test_version_is_0_7_0():
-    assert whiplash.__version__ == "0.7.0"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.7.0"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.7.0"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.7.0"
+def test_version_is_0_7_x():  # v0.7.1 pins the exact version number in test_v071.py
+    assert whiplash.__version__.startswith("0.7.")
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.7.0")
+    assert any(r.startswith("0.7.0") for r in releases)
 
 
 def test_listen_is_listed_after_status_everywhere():

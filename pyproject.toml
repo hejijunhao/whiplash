@@ -3,7 +3,7 @@
 # not built or published as a wheel, hence no [build-system].
 [project]
 name = "whiplash"
-version = "0.7.0"
+version = "0.7.1"
 description = "Hermes Agent plugin: jam on an Elektron Digitakt II over USB MIDI."
 readme = "README.md"
 license = "MIT"
