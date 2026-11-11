@@ -12,6 +12,11 @@ a bar line. Each generated part goes, in order of preference:
   3. to its default track, if the user hasn't labelled that track as something else,
 and is dropped otherwise. Labelled tracks that get no part stay silent until whiplash_write_part.
 A track labelled cymbal or fx is never matched to a chord, bass or other melodic part.
+
+A track playing a written part (whiplash_write_part) is never a target (v0.6.1): a part whose labelled
+match is taken by a written part goes to the next matching track, or is reported under "replaced"
+(the written part plays instead), never lost silently. An unlabelled default track whose own part
+moved to a labelled track is reported as "vacated": it now plays nothing.
 """
 import re
 from dataclasses import replace
@@ -140,18 +145,21 @@ def generated_role(role_text):
     return classify(role_text) if role_text else "other"
 
 
-def plan(pattern, tracks):
-    """Routing for pattern over the labelled tracks {track: (role, label)}.
+def plan(pattern, tracks, written=()):
+    """Routing for pattern over the labelled tracks {track: (role, label)} and the written-part tracks.
 
-    Returns {"moves": {source track: target track}, "dropped": {source: generated role}, "silent": [labelled
-    tracks that get no part]}. With no labels every part stays on its own track.
+    Returns {"moves": {source track: target track}, "dropped": {source: generated role}, "replaced": {source:
+    written track that plays instead}, "silent": [labelled tracks that get no part], "vacated": {unlabelled
+    default track: where its part went}}. With no labels and no written parts every part stays on its track.
     """
+    written = frozenset(written)
     sources = sorted(t for t, bars in pattern.bars.items() if any(bars))
     if not tracks:
-        return {"moves": {t: t for t in sources}, "dropped": {}, "silent": []}
+        return {"moves": {t: t for t in sources if t not in written}, "dropped": {},
+                "replaced": {t: t for t in sources if t in written}, "silent": [], "vacated": {}}
     roles = {t: generated_role(pattern.roles.get(t)) for t in sources}
-    free = dict(sorted(tracks.items()))  # labelled tracks not yet given a part
-    moves, dropped = {}, {}
+    free = {t: v for t, v in sorted(tracks.items()) if t not in written}  # labelled tracks not yet given a part
+    moves, dropped, replaced = {}, {}, {}
 
     def take(source, wanted):
         for target, (role, _) in free.items():
@@ -164,35 +172,66 @@ def plan(pattern, tracks):
     pending = [s for s in sources if not take(s, {roles[s]})]
     pending = [s for s in pending if not take(s, set(CLOSE.get(roles[s], ())))]
     for source in pending:
-        if source not in tracks and source not in moves.values():
-            moves[source] = source  # unlabelled default track: assume the pattern's layout there
+        wanted = {roles[source], *CLOSE.get(roles[source], ())}
+        covered = [t for t in sorted(written) if t in tracks and tracks[t][0] in wanted]
+        if covered:  # its labelled track plays a written part: the user replaced it
+            replaced[source] = covered[0]
+        elif source not in tracks and source not in moves.values():
+            if source in written:
+                replaced[source] = source
+            else:
+                moves[source] = source  # unlabelled default track: assume the pattern's layout there
         else:
             dropped[source] = pattern.roles.get(source) or roles[source]
-    return {"moves": moves, "dropped": dropped, "silent": sorted(free)}
+    targets = set(moves.values())
+    vacated = {s: moves[s] for s in sources
+               if s not in tracks and s not in written and moves.get(s, s) != s and s not in targets}
+    return {"moves": moves, "dropped": dropped, "replaced": replaced, "silent": sorted(free), "vacated": vacated}
 
 
-def route(pattern, tracks):
+def route(pattern, tracks, written=()):
     """pattern with its parts moved onto the labelled tracks (same name, bpm, swing)."""
-    if not tracks:
+    if not tracks and not written:
         return pattern
-    moves = plan(pattern, tracks)["moves"]
+    info = plan(pattern, tracks, written)
+    moves = info["moves"]
     bars = {target: pattern.bars[source] for source, target in moves.items()}
     shifts = {moves[s]: v for s, v in pattern.shifts.items() if s in moves}
     roles = {target: pattern.roles.get(source) for source, target in moves.items()}
+    for source, target in info["replaced"].items():  # a written part on the default track keeps its assumed role
+        roles.setdefault(target, pattern.roles.get(source))
     for track, (_, label) in tracks.items():
         roles[track] = label
     return replace(pattern, bars=bars, shifts=shifts, roles=roles)
 
 
-def describe(pattern, tracks):
-    """What the routing does, for tool results: {"6": "bass part (from track 6)", ...}."""
+def vacated_note(vacated, pattern):
+    """One sentence per unlabelled default track that a label emptied (an open design question for Phil)."""
+    return " ".join(f"Track {s} isn't labelled, but its {pattern.roles.get(s) or 'part'} moved to labelled track {t}, "
+                    f"so track {s} plays nothing now." for s, t in sorted(vacated.items())) + (
+        " Tell the user; if it should keep playing, label it or write a part there.")
+
+
+def describe(pattern, tracks, written=()):
+    """What the routing does, for tool results: {"parts": {"6": "bass (pattern track 6)"}, ...}."""
     if pattern is None:
         return None
-    info = plan(pattern, tracks)
+    info = plan(pattern, tracks, written)
     out = {"parts": {str(target): f"{pattern.roles.get(source) or 'part'} (pattern track {source})"
                      for source, target in sorted(info["moves"].items(), key=lambda m: m[1])}}
+    if written:
+        out["written"] = sorted(written)
     if info["dropped"]:
         out["dropped"] = {str(s): r for s, r in sorted(info["dropped"].items())}
+    if info["replaced"]:
+        out["replaced_by_written"] = {str(t): f"{pattern.roles.get(s) or 'part'} (pattern track {s})"
+                                      for s, t in sorted(info["replaced"].items())}
     if info["silent"]:
         out["silent_until_written"] = info["silent"]
+    if info["vacated"]:
+        out["vacated"] = {str(s): t for s, t in sorted(info["vacated"].items())}
+        out["vacated_note"] = vacated_note(info["vacated"], pattern)
+    high = sorted(t for t in info["moves"].values() if t > 8)
+    if high:
+        out["tracks_9_16"] = high
     return out

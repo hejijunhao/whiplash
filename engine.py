@@ -24,9 +24,9 @@ import heapq
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from . import ccmap, harmony, kitmap, mutate, parts, patterns
+from . import arrange, ccmap, harmony, kitmap, mutate, parts, patterns
 
 log = logging.getLogger("whiplash")
 
@@ -371,6 +371,9 @@ class Engine:
         self._key = None  # harmony.Key set by play_pattern(key) or a progression; None = each pattern's home key
         self._prog = None  # harmony.Progression; carries across switches, cleared by stop
         self._prog_modes, self._prog_ranks, self._prog_pads = {}, {}, frozenset()
+        self._moves = {}  # pattern track -> track it plays on now (kit map routing of the playing pattern)
+        self._arr = None  # whiplash_arrange state (a dict, see arrange()); cleared by stop
+        self._arr_muted = set()  # tracks the arrangement muted, unmuted again by arrange(clear)
         self.sent_count = 0
         self.send_transport = None  # transport mode of the current/last run; None = env default
         # Published by the sequencer thread for the live view, read without any lock: each is
@@ -573,6 +576,7 @@ class Engine:
         """
         self._raw_pattern = pattern
         self.pattern = self._routed(pattern)
+        self._moves = self._plan(pattern)["moves"]
         self._kit_dirty = False
         self.bpm = bpm
         self.swing = pattern.swing
@@ -585,8 +589,26 @@ class Engine:
         self._refresh_harmony()
 
     def _routed(self, pattern, key=None):
-        """pattern in the session key (or key), routed onto the kit map. Cheap: safe at a bar line."""
-        return kitmap.route(harmony.in_key(pattern, key or self._key), self._kit_tracks)
+        """pattern in the session key (or key), routed onto the kit map. Cheap: safe at a bar line.
+
+        Tracks playing a written part are never routing targets (kitmap.plan), so a generated part is
+        never hidden under one without being reported.
+        """
+        return kitmap.route(harmony.in_key(pattern, key or self._key), self._kit_tracks, self._parts)
+
+    def _plan(self, pattern, kit=None):
+        """kitmap.plan for pattern over the kit map (or kit) and the written parts (caller holds _lock)."""
+        return kitmap.plan(pattern, self._kit_tracks if kit is None else kit, self._parts)
+
+    def routing(self, pattern=None):
+        """What the kit map does with pattern (default: the one playing), for tool results; None if nothing."""
+        with self._lock:
+            pattern = self._raw_pattern if pattern is None else pattern
+            if pattern is None:
+                return None
+            out = kitmap.describe(pattern, self._kit_tracks, self._parts)
+            out["pattern"] = pattern.name
+            return out
 
     def _refresh_harmony(self):
         """Recompute which tracks follow the progression and how (caller holds _lock)."""
@@ -634,6 +656,7 @@ class Engine:
                     self._transpose = {}
                     self._parts = {}
                     self._key, self._prog = None, None
+                    self._arr, self._arr_muted = None, set()
                     if self._raw_pattern is not None:
                         self._load(self._raw_pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
@@ -716,6 +739,8 @@ class Engine:
             self._reroute()
         if self.bars_total and bar_n - self.pattern_start >= self.bars_total:
             return None
+        if self._arr is not None and not self._arrange_step(bar_n):
+            return None  # the arrangement's last section ended (loop: false): stop on this bar line
         self.bar = bar_n
         for track, (_, end) in list(self._drops.items()):
             if end <= bar_n:
@@ -742,7 +767,8 @@ class Engine:
             if bars is None:
                 hits = harmony.pad_line()
             else:
-                hits = mutate.fill(track, bars[idx]) if track in fills else bars[idx]
+                hits = (mutate.fill(harmony.role_of(track, self.pattern, self._kit_tracks), bars[idx])
+                        if track in fills else bars[idx])
             if prog is not None and track in self._prog_modes:
                 hits = harmony.apply(self._prog_modes[track], hits, chord_notes, chord_root, prog.key,
                                      self._prog_ranks.get(track, 0))
@@ -762,10 +788,34 @@ class Engine:
         """
         old = set(self._work)
         self.pattern = self._routed(self._raw_pattern)
+        moves = self._plan(self._raw_pattern)["moves"]
+        self._carry_track_state(self._remap(self._moves, moves))
+        self._moves = moves
         self._kit_dirty = False
         for track in old | set(self.pattern.bars) | set(self._parts):
             self._rebuild(track)
         self._refresh_harmony()
+
+    def _remap(self, old, new):
+        """{track a generated part played on: track it plays on now (None = nowhere)} (caller holds _lock).
+
+        Only parts that moved; tracks playing a written part keep their own settings.
+        """
+        return {was: new.get(src) for src, was in old.items()
+                if was not in self._parts and new.get(src) != was}
+
+    def _carry_track_state(self, remap):
+        """Move per-track transpose and density with their part when the kit map re-routes it (caller holds
+        _lock). A part routed nowhere drops its settings, so they never land on whatever plays there next."""
+        moved = {}
+        for name, store in (("transpose", self._transpose), ("density", self._density)):
+            values = {was: store.pop(was) for was in remap if was in store}
+            for was, value in values.items():
+                now = remap[was]
+                if now is not None and now not in self._parts:
+                    store[now] = value
+                moved.setdefault(name, {})[str(was)] = now
+        return moved
 
     @staticmethod
     def _silent_tracks(tracks, pattern, carried):
@@ -1095,12 +1145,34 @@ class Engine:
                     "max_velocity_change": round(value * mutate.HUMANIZE_VEL),
                     "max_timing_ticks": round(value * mutate.HUMANIZE_TICKS, 3)}
 
+    def _roles_playing(self):
+        """{track: role} for every track with a line now, plus chord pads (caller holds _lock). Cheap."""
+        tracks = {t for t, bars in self._work.items() if any(bars)} | set(self._prog_pads)
+        return {t: harmony.role_of(t, self.pattern, self._kit_tracks) for t in tracks}
+
+    def _default_fill(self, roles=None):
+        """The tracks a fill plays on when none are named: every drum-role track playing (caller holds _lock)."""
+        roles = self._roles_playing() if roles is None else roles
+        return sorted(t for t, r in roles.items() if r in mutate.DEFAULT_FILL_ROLES)
+
     def schedule_fill(self, tracks=None):
-        tracks = check_tracks(tracks if tracks is not None else list(mutate.DRUM_TRACKS), high=8)
-        if any(t not in mutate.DRUM_TRACKS for t in tracks):
-            raise WhiplashError("fills work on drum tracks 1-5 (kick, snare/rim, clap, closed hat, open hat)")
+        """A one-bar fill on the next bar. Fill shapes follow each track's role (the kit map label, else the
+        pattern's), so a kick labelled on track 9 gets the kick fill. Default: the drum tracks playing."""
+        named = None if tracks is None else check_tracks(tracks, high=16)
         with self._lock:
             self._require_playing()
+            if named is None:
+                tracks = self._default_fill()
+                if not tracks:
+                    raise WhiplashError("no drum track is playing, so there is nothing to fill")
+            else:
+                tracks = named
+                bad = {t: harmony.role_of(t, self.pattern, self._kit_tracks) for t in tracks}
+                bad = {t: r for t, r in bad.items() if r not in mutate.FILL_SHAPES}
+                if bad:
+                    names = ", ".join(f"{t} ({r})" for t, r in sorted(bad.items()))
+                    raise WhiplashError(f"track(s) {names} aren't drum tracks: fills work on kick, snare/rim, clap, "
+                                        "hat, cymbal and perc tracks (label the kit with whiplash_label_tracks)")
             at = self.bar + 1
             self._fills.setdefault(at, set()).update(tracks)
             return {"fill_at_bar": at, "tracks": tracks}
@@ -1116,7 +1188,7 @@ class Engine:
                 self._drops[track] = (first, end)
             out = {"dropped": tracks, "from_bar": first, "returns_at_bar": end}
             if fill:
-                fill_tracks = [t for t in mutate.DRUM_TRACKS if t not in tracks]
+                fill_tracks = [t for t in self._default_fill() if t not in tracks]
                 if fill_tracks:
                     self._fills.setdefault(end - 1, set()).update(fill_tracks)
                     out.update(fill_at_bar=end - 1, fill_tracks=fill_tracks)
@@ -1189,6 +1261,15 @@ class Engine:
         else:
             self._work[track] = base
 
+    def _hidden_by(self, track):
+        """The generated part a written part on track plays instead of, as text, or None (caller holds _lock)."""
+        if self._raw_pattern is None:
+            return None
+        info = self._plan(self._raw_pattern)
+        names = [f"{self._raw_pattern.roles.get(s) or 'part'} (pattern track {s})"
+                 for s, t in sorted(info["replaced"].items()) if t == track]
+        return ", ".join(names) or None
+
     def _length_note(self, track):
         ch = track - 1
         hold, mode = self._cc_values.get((ch, ccmap.PARAMS["amp_hold"].cc)), self._cc_values.get((ch, AMP_MODE_CC))
@@ -1222,8 +1303,7 @@ class Engine:
             with self._lock:
                 self._require_playing()
                 had = self._parts.pop(track, None)
-                self._rebuild(track)
-                self._refresh_harmony()
+                self._reroute()  # a generated part the written one replaced comes back on its track
                 return {"track": track, "reset": True, "was_written": had is not None,
                         "part": "generated" if any(self._work.get(track) or []) else None,
                         "applies": "next bar", "at_bar": self.bar + 1}
@@ -1256,8 +1336,7 @@ class Engine:
             self._require_playing()
             replaced = track in self._parts
             self._parts[track] = part
-            self._rebuild(track)
-            self._refresh_harmony()
+            self._reroute()  # routing never targets a written track: a generated part there moves or is reported
             transpose = self._transpose.get(track, 0)
             out = {"track": track, "part": "written", "placed_by": part.source, "bars": part.bars_written,
                    "repeats": f"every {part.bars_written} bar(s) across the 4-bar loop",
@@ -1267,6 +1346,9 @@ class Engine:
                    "length_audible": self._length_note(track)}
             if part.key:
                 out["key"] = part.key
+            hidden = self._hidden_by(track)
+            if hidden:
+                out["replaces_generated"] = hidden
             if source:
                 out["locked_to"] = {"track": source, "follows_live": False,
                                     "note": "copied the source's hits now; later density, fills or edits on it "
@@ -1372,6 +1454,220 @@ class Engine:
                 out["carries_into"] = f"the queued switch to {self._queued['pattern'].name} at bar {self._queued['at']}"
             return out
 
+    # ---- arrangement ---------------------------------------------------
+    def arrange(self, sections=None, preset=None, seconds=None, loop=False, clear=False):
+        """Play the beat as a song: sections on bar lines, from the next bar (whiplash_arrange).
+
+        Each section names the tracks that play (others are muted by Whiplash), and can start ramps on its
+        first bar, play a fill or drop tracks on its last bar, and swap the chord progression. It only
+        schedules primitives that already exist; the sequencer just looks up whether a section starts at a
+        bar. Presets: club, short_demo (about `seconds` long at the current tempo). loop: false (default)
+        stops the run on the bar line after the last section. Everything is validated before anything changes.
+        """
+        clear = check_flag(clear, "clear")
+        if clear:
+            extra = [k for k, v in (("sections", sections), ("preset", preset), ("seconds", seconds),
+                                    ("loop", loop)) if v not in (None, "", [], False)]
+            if extra:
+                raise WhiplashError(f"clear: true takes nothing else (got {', '.join(extra)})")
+            with self._lock:
+                self._require_playing()
+                had = self._arr
+                unmuted = sorted(self._arr_muted & self.muted)
+                self.muted -= self._arr_muted
+                self._arr, self._arr_muted = None, set()
+                return {"cleared": had is not None, "unmuted": unmuted, "applies": "next bar",
+                        "note": "ramps, drops and fills already started keep running; the beat keeps playing"}
+        loop = check_flag(loop, "loop")
+        given = [k for k, v in (("sections", sections), ("preset", preset)) if v not in (None, "", [])]
+        if len(given) != 1:
+            raise WhiplashError(f"give exactly one of sections or preset ({', '.join(arrange.PRESETS)}), or clear: "
+                                f"true (got {', '.join(given) or 'none'})")
+        with self._lock:
+            self._require_playing()
+            bpm, key = self.bpm, self.effective_key() or harmony.Key(0, "major")
+        try:
+            if preset not in (None, ""):
+                name, raw = arrange.preset(preset, bpm, seconds)
+            else:
+                if seconds is not None:
+                    raise arrange.ArrangeError("seconds only applies to the short_demo preset")
+                name, raw = "custom", sections
+            secs = arrange.sections(raw)
+            resolved = [self._arrange_section(sec, key) for sec in secs]
+        except (arrange.ArrangeError, harmony.HarmonyError) as exc:
+            raise WhiplashError(str(exc)) from None
+        total = sum(sec.bars for sec in secs)
+        offsets, offset = {}, 0
+        for i, sec in enumerate(secs):
+            offsets[offset] = i
+            offset += sec.bars
+        with self._lock:
+            self._require_playing()
+            at = self.bar + 1
+            replaced = self._arr is not None
+            self._arr = {"name": name, "sections": resolved, "start": at, "loop": loop, "offsets": offsets,
+                         "total": total, "index": None, "section_start": None, "skipped": [], "ended_at_bar": None}
+            roles = self._roles_playing()
+            plan, bar = [], at
+            for sec in resolved:
+                plays = (set(roles) - arrange.resolve(sec["mute"], roles)) if sec["mute"] else \
+                    arrange.resolve(sec["tracks"], roles)
+                item = {"name": sec["name"], "bars": sec["bars"], "starts_at_bar": bar,
+                        "plays_now": sorted(t for t in plays if t in roles)}
+                if sec["fill"]:
+                    item["fill_at_bar"] = bar + sec["bars"] - 1
+                if sec["drop"]:
+                    item["drop_last_bar"] = sorted(arrange.resolve(sec["drop"], roles))
+                if sec["ramps"]:
+                    item["ramps"] = [f"{r[2]} {r[3] if r[3] is not None else 'last sent'}->{r[4]} on {r[0]}"
+                                     for r in sec["ramps"]]
+                if sec["prog"] == "clear":
+                    item["chords"] = "cleared"
+                elif sec["prog"] is not None:
+                    item["chords"] = [c.name for c in sec["prog"].chords]
+                plan.append(item)
+                bar += sec["bars"]
+            out = {"arrangement": name, "starts_at_bar": at, "total_bars": total,
+                   "seconds": round(total * 4 * 60 / self.bpm, 1), "loop": loop,
+                   "ends": "loops back to the first section" if loop else f"stops on the bar line at bar {at + total}",
+                   "sections": plan, "replaced": replaced, "applies": "next bar",
+                   "note": ("plays_now resolves group words (kick, hats, perc, music, all) from the roles playing now; "
+                            "each section resolves them again at its first bar, so a switch is followed. Tracks "
+                            "outside a section are muted by Whiplash (no CC). whiplash_stop or clear: true ends it.")}
+            if any(r[3] is None for sec in resolved for r in sec["ramps"]):
+                out["ramp_note"] = ("a ramp without 'from' starts from the last value Whiplash sent; with none it "
+                                    "is skipped (status shows skipped_ramps)")
+            if any(r[1] == ccmap.PARAMS["filter_freq"].cc for sec in resolved for r in sec["ramps"]):
+                out["filter_note"] = ("the build's ramp leaves filter_freq where it ends (127 in the presets) until "
+                                      "the kit is reloaded on the unit; tell the user")
+            if self.bars_total:
+                out["bars_note"] = (f"the run was started with bars: {self.bars_total}; it stops at bar "
+                                    f"{self.pattern_start + self.bars_total} if that comes first")
+            return out
+
+    def _arrange_section(self, sec, key):
+        """Resolve one validated arrange.Section: ramp params and values, chords voiced (no lock needed)."""
+        ramps = []
+        for r in sec.ramps:
+            number, spec = self._target(r.param, None)
+            if spec is not None and spec.discrete:
+                raise WhiplashError(f"section {sec.name}: {spec.name} is a switch and can't ramp")
+            to, _ = self._value(r.to, spec, "to")
+            start = None if r.start in (None, "") else self._value(r.start, spec, "from")[0]
+            if number == HOLD_CC:  # a ramp never reaches HOLD = NOTE
+                to = min(to, HOLD_NOTE - 1)
+                start = None if start is None else min(start, HOLD_NOTE - 1)
+            if r.curve not in CURVES:
+                raise WhiplashError(f"section {sec.name}: curve must be one of {', '.join(CURVES)}, got {r.curve!r}")
+            bars = r.bars or sec.bars
+            ramps.append((r.track, number, spec.name if spec else f"cc {number}", start, to,
+                          bars * TICKS_PER_BAR, r.curve))
+        prog = None
+        if sec.chords == "clear":
+            prog = "clear"
+        elif sec.chords is not None:
+            symbols = harmony.split_chords(sec.chords)
+            per_chord = harmony.check_bars_per_chord(sec.bars_per_chord)
+            chords = tuple(harmony.parse_chord(sym, key) for sym in symbols)
+            prog = harmony.Progression(chords, harmony.voice(chords, "close"), per_chord, "close", key, 0, {})
+        return {"name": sec.name, "bars": sec.bars, "tracks": sec.tracks, "mute": sec.mute, "drop": sec.drop,
+                "fill": sec.fill, "ramps": tuple(ramps), "prog": prog}
+
+    def _arrange_step(self, bar_n):
+        """At a bar line (caller holds _lock): start a section if one starts here. False = the song ended."""
+        arr = self._arr
+        offset = bar_n - arr["start"]
+        if offset < 0:
+            return True
+        if offset >= arr["total"]:
+            if not arr["loop"]:
+                arr["ended_at_bar"] = bar_n
+                return False
+            offset %= arr["total"]
+        i = arr["offsets"].get(offset)
+        if i is not None:
+            self._enter_section(arr, i, bar_n)
+        return True
+
+    def _enter_section(self, arr, i, bar_n):
+        """Schedule one section on its first bar (caller holds _lock): dict and set work over at most 16 tracks."""
+        sec = arr["sections"][i]
+        arr["index"], arr["section_start"] = i, bar_n
+        last = bar_n + sec["bars"] - 1
+        if sec["prog"] == "clear":
+            self._prog = None
+            self._refresh_harmony()
+        elif sec["prog"] is not None:
+            self._prog = replace(sec["prog"], start=bar_n)
+            self._refresh_harmony()
+        roles = self._roles_playing()
+        if sec["mute"]:
+            active = set(roles) - arrange.resolve(sec["mute"], roles)
+        else:
+            active = arrange.resolve(sec["tracks"], roles)
+        for track in roles:
+            if track in active:
+                self.muted.discard(track)
+                self._arr_muted.discard(track)
+            else:
+                self.muted.add(track)
+                self._arr_muted.add(track)
+        for track in arrange.resolve(sec["drop"], roles) if sec["drop"] else ():
+            self._drops[track] = (last, last + 1)
+        if sec["fill"] == "default":
+            fill = self._default_fill(roles)
+        elif sec["fill"]:
+            fill = [t for t in arrange.resolve(sec["fill"], roles) if roles.get(t) in mutate.FILL_SHAPES]
+        else:
+            fill = []
+        fill = [t for t in fill if t in active]
+        if fill:
+            self._fills.setdefault(last, set()).update(fill)
+        mido = __import__("mido") if sec["ramps"] else None
+        for spec, cc, label, start, to, ticks, curve in sec["ramps"]:
+            for track in sorted(arrange.resolve((spec,), roles)):
+                ch = track - 1
+                begin = start if start is not None else self._cc_values.get((ch, cc))
+                if begin is None:
+                    arr["skipped"] = (arr["skipped"] + [f"{sec['name']}: {label} on track {track} (no 'from')"])[-8:]
+                    continue
+                self._ramp_seq += 1
+                ramp = Ramp(f"r{self._ramp_seq}", track, cc, label, begin, to, max(1, ticks), curve)
+                self._ramps.pop((track, cc), None)
+                if self._cc_values.get((ch, cc)) != begin:
+                    self._cc(mido, ch, cc, begin)
+                ramp.last = begin
+                self._ramps[(track, cc)] = ramp
+        log.info("whiplash: section %s at bar %d", sec["name"], bar_n)
+
+    def arrangement_status(self):
+        """The arrangement for whiplash_status (caller holds _lock), or None."""
+        arr = self._arr
+        if arr is None:
+            return None
+        sections, bar = [], arr["start"]
+        for sec in arr["sections"]:
+            sections.append({"name": sec["name"], "bars": sec["bars"], "starts_at_bar": bar})
+            bar += sec["bars"]
+        out = {"name": arr["name"], "loop": arr["loop"], "starts_at_bar": arr["start"], "total_bars": arr["total"],
+               "sections": sections}
+        if arr["ended_at_bar"] is not None:
+            out["ended_at_bar"] = arr["ended_at_bar"]
+        elif arr["index"] is not None:
+            i, secs = arr["index"], arr["sections"]
+            end = arr["section_start"] + secs[i]["bars"]
+            nxt = secs[i + 1]["name"] if i + 1 < len(secs) else (secs[0]["name"] if arr["loop"] else None)
+            out["current"] = {"section": secs[i]["name"], "index": i, "bars_left": end - self.bar,
+                              "next": nxt, "next_at_bar": end}
+            if nxt is None:
+                out["current"]["stops_at_bar"] = end
+        if arr["skipped"]:
+            out["skipped_ramps"] = list(arr["skipped"])
+        if self._arr_muted:
+            out["muted_by_arrangement"] = sorted(self._arr_muted)
+        return out
+
     def _prog_summary(self):
         """{track: mode} for the tracks following the progression (caller holds _lock)."""
         return {str(t): m for t, m in sorted(self._prog_modes.items())}
@@ -1392,9 +1688,11 @@ class Engine:
                           "next_change_at_bar": self.bar + prog.bars_per_chord - into}
         return out
 
-    def _pitch(self, track, bars, transpose, pattern):
-        """Pitch summary for one track (caller holds _lock), or None for an unpitched drum part."""
-        tune = self._cc_values.get((track - 1, TUNE_CC))
+    def _pitch(self, track, bars, transpose, pattern, tune=None):
+        """Pitch summary for one track (caller holds _lock), or None for an unpitched drum part.
+
+        tune: the tune to count (a queued switch's own); default the one Whiplash last sent."""
+        tune = self._cc_values.get((track - 1, TUNE_CC)) if tune is None else tune
         if not bars or not any(bars):
             return None
         if not (patterns.is_melodic(bars) or transpose or tune is not None):
@@ -1412,9 +1710,31 @@ class Engine:
             out["clamped"] = True
         return out
 
-    def tracks_summary(self, pattern=None, transpose=None):
-        """Per-track summary for status and play results. pattern/transpose default to what is playing."""
+    def queued_transpose(self):
+        """The transposes the queued pattern will play with: the carried ones plus the switch's own."""
         with self._lock:
+            out = dict(self._transpose)
+            for track, value in ((self._queued or {}).get("transpose") or {}).items():
+                if value:
+                    out[track] = value
+                else:
+                    out.pop(track, None)
+            return out
+
+    def tracks_summary(self, pattern=None, transpose=None, queued=False):
+        """Per-track summary for status and play results. pattern/transpose default to what is playing.
+
+        queued=True describes the queued switch as it will land: its pattern and key, its transposes, and its
+        own setup (slot and tune CCs, mutes) applied on top of what carries over. Falls back to what is playing
+        once the switch has landed.
+        """
+        with self._lock:
+            pending = self._queued if queued else None
+            if queued and pending is None:
+                pattern = None  # the switch already landed: describe what plays
+            elif pending is not None:
+                pattern = pending["pattern"]
+                transpose = self.queued_transpose() if transpose is None else transpose
             current = pattern is None
             pattern = self.pattern if current else pattern
             if current:
@@ -1429,9 +1749,20 @@ class Engine:
                 if control not in _NOT_PARAMS:
                     spec = ccmap.BY_CC.get(control)
                     last[ch + 1][spec.name if spec else f"cc {control}"] = value
+            muted, hw_muted = set(self.muted), set(self.hw_muted)
+            at_switch = collections.defaultdict(dict)
+            if pending is not None:  # the switch's own setup lands with it
+                for track, control, value in pending.get("ccs") or ():
+                    name = "sample_slot" if control == SLOT_CC else "tune"
+                    last[track][name] = at_switch[track]["slot" if control == SLOT_CC else "tune"] = value
+                for track, mute in (pending.get("mutes") or {}).items():
+                    (muted.add if mute else muted.discard)(track)
+                    if not mute:
+                        hw_muted.discard(track)
+                    at_switch[track]["mute"] = mute
             roles = pattern.roles if pattern is not None else {}
             in_use = {t for t, bars in work.items() if any(bars)} | set(last) | set(transpose)
-            in_use |= self.muted | self.hw_muted | set(self._kit_tracks)
+            in_use |= muted | hw_muted | set(self._kit_tracks)
             if current:
                 in_use |= set(self._prog_modes)
             out = {}
@@ -1445,8 +1776,8 @@ class Engine:
                     "slot": slot, "tune": cc.get("tune"),
                     "transpose": transpose.get(track, 0),
                     "pitch": self._pitch(track, work.get(track), transpose.get(track, 0),
-                                         None if track in self._parts else pattern),
-                    "muted": track in self.muted or track in self.hw_muted,
+                                         None if track in self._parts else pattern, cc.get("tune")),
+                    "muted": track in muted or track in hw_muted,
                     "part": ("written" if track in self._parts else
                              "generated" if work.get(track) and any(work[track]) else None),
                     "last_cc": {k: v for k, v in cc.items() if k not in ("sample_slot", "tune")},
@@ -1457,6 +1788,8 @@ class Engine:
                     out[str(track)]["progression"] = self._prog_modes[track]
                 if slot is not None and slot in self._kit_slots:
                     out[str(track)]["slot_label"] = self._kit_slots[slot]
+                if track in at_switch:
+                    out[str(track)]["setup_at_switch"] = at_switch[track]
             return out
 
     # ---- kit map -------------------------------------------------------
@@ -1492,17 +1825,27 @@ class Engine:
             self._kit_tracks = kitmap.merged(base_tracks, track_changes)
             self._kit_slots = kitmap.merged(base_slots, slot_changes)
             playing = self.playing() and self._raw_pattern is not None
+            follow = {}
             if playing:
                 self._kit_dirty = True  # the sequencer re-routes at the next bar line
+                remap = self._remap(self._moves, self._plan(self._raw_pattern)["moves"])
+                follow = {name: {str(t): store[t] for t in remap if t in store}
+                          for name, store in (("transpose", self._transpose), ("density", self._density))}
+                follow = {name: {f"{t}->{remap[int(t)] or 'dropped'}": v for t, v in values.items()}
+                          for name, values in follow.items() if values}
             elif self._raw_pattern is not None:
                 self._reroute()  # nothing is clocking: route now so status shows it
             out = {"kit": self.kit(), "reset": reset,
                    "applies": "next bar" if playing else "next whiplash_play_pattern"}
             if playing:
                 out["at_bar"] = self.bar + 1
-            if self._raw_pattern is not None:
-                out["routing"] = kitmap.describe(self._raw_pattern, self._kit_tracks)
-                out["routing"]["pattern"] = self._raw_pattern.name
+            if follow:  # transpose and density move with their part (a dropped part's settings are cleared)
+                out["follows_part"] = follow
+            routing = self.routing()
+            if routing is not None:
+                out["routing"] = routing
+                if routing.get("tracks_9_16"):
+                    out["channel_note"] = HIGH_TRACK_NOTE
             return out
 
     def mutations(self):
@@ -1529,6 +1872,8 @@ class Engine:
                 "key": self.key_name(), "key_source": ("set" if self._key is not None else
                                                        "pattern" if self._raw_pattern is not None else None),
                 "progression": self.progression_status(),
+                "arrangement": self.arrangement_status(),
+                "routing": self.routing() if self._kit_tracks or self._parts else None,
                 "parts": {str(t): {"placed_by": p.source, "bars": p.bars_written} for t, p in sorted(self._parts.items())},
                 "tracks": self.tracks_summary(), "roles_assumed": not self._kit_tracks,
                 "kit_note": KIT_LABELLED_NOTE if self._kit_tracks else KIT_NOTE, "kit": self.kit(),
