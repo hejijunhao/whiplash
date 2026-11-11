@@ -3,72 +3,58 @@ from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
+from .kitmap import ROLES
 from .patterns import MOODS, PATTERNS
 
-TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Digitakt track number (= MIDI channel), 1-8 used by patterns"}
-TRACKS = {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 16},
-          "description": ("Track numbers 1-16 (patterns assume 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, "
-                          "6 bass, 7-8 chords; 9-16 only play written parts)")}
+TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Track 1-16 (= MIDI channel)"}
+TRACKS = {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 16}, "description": "Tracks 1-16"}
 NOTE = {"type": ["string", "integer"]}
 PARAM = {"type": "string", "description": f"Named Digitakt II param (see whiplash_list_params), e.g. {', '.join(list(PARAMS)[:8])}, ..."}
 EMPTY = {"type": "object", "properties": {}}
-SKILL = " See skill whiplash:digitakt for pitch, sample, envelope and transport guidance."
+SKILL = " Details: skill whiplash:digitakt."
 
 SCHEMAS = {
     "whiplash_list_midi_ports": {
         "name": "whiplash_list_midi_ports",
-        "description": ("List MIDI input/output ports and whether an Elektron Digitakt II is connected over USB. "
-                        "A 'warning' in the result means no Digitakt was found."),
+        "description": "List MIDI ports and whether a Digitakt II is connected.",
         "parameters": EMPTY,
     },
     "whiplash_list_params": {
         "name": "whiplash_list_params",
-        "description": ("List the named Digitakt II sound parameters, grouped (track, src, filter, amp, fx, lfo), with "
-                        "CC number, range, whether 64 is centre, and aliases. Use the names with whiplash_set_param "
-                        "and whiplash_ramp_param."),
+        "description": "List the named sound params (CC, range, aliases) for whiplash_set_param and whiplash_ramp_param.",
         "parameters": EMPTY,
     },
     "whiplash_play_pattern": {
         "name": "whiplash_play_pattern",
-        "description": ("Start a generated beat on the Digitakt II tracks 1-8 (MIDI channels 1-8) with MIDI clock "
-                        "and start/stop, in the background. Pick by genre or mood. If a pattern is already playing, "
-                        "the new one is queued and swaps in on the next bar line without stopping the clock "
-                        "(mode 'queued', with switch_at_bar); mutes, ramps and drops carry over, mutations "
-                        "(density/swing/humanize) reset. Passing a different port restarts on that port. Falls back "
-                        "to a virtual MIDI port named 'Whiplash' when no Digitakt is connected: the result then "
-                        "carries a 'warning' and the hardware is silent. MIDI Start also starts the Digitakt's own "
-                        "sequencer, so trigs in the pattern selected on the unit play on top: every result carries "
-                        "an overlap_warning to pass on (select an empty pattern on the unit, or use "
-                        "send_transport=false). Melodic parts play near note 60, the sample's own pitch; the result's "
-                        "tracks[n].pitch shows each line's register, and track roles are assumed, not read from the "
-                        "unit. If the user wants to watch the beat, whiplash_open_view shows it live in a local "
-                        "browser page." + SKILL),
+        "description": ("Start a generated beat (genre or mood), or queue a switch to it on the next bar if one is playing. "
+                        "tracks sets each track's sample slot, tune, transpose and mute in the same call. Pass the "
+                        "result's overlap_warning (and any 'warning': virtual port, hardware silent) on to the user. "
+                        "Roles follow whiplash_label_tracks, else they are assumed." + SKILL),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
             "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
             "bpm": {"type": "number", "minimum": BPM_MIN, "maximum": BPM_MAX,
-                    "description": "Tempo; default is the genre's. On a live switch it applies at the switch."},
+                    "description": "Default: the genre's"},
             "bars": {"type": "integer", "minimum": 1, "maximum": BARS_MAX, "description": "Stop after N bars; omit to loop until stop"},
-            "port": {"type": "string", "description": "Exact output port name (optional; auto-detects Digitakt)"},
+            "port": {"type": "string", "description": "Output port (default: auto-detect)"},
             "send_transport": {"type": "boolean",
-                               "description": ("true (default, or WHIPLASH_SEND_TRANSPORT): send MIDI Start/Stop "
-                                               "with the clock. false: clock only, no Start and no Stop, so the "
-                                               "Digitakt's own sequencer stays stopped. Changing it while playing "
-                                               "restarts instead of queueing.")},
+                               "description": "false: clock only, so the unit's own sequencer stays stopped"},
             "transpose": {"type": "object",
                           "additionalProperties": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX},
-                          "description": ('Per-track transpose in semitones, e.g. {"6": -12, "7": 5}. Applies from '
-                                          "the first bar (or the switch bar when queued) and carries across switches "
-                                          "until whiplash_stop.")},
+                          "description": 'Semitones per track, e.g. {"6": -12}'},
+            "tracks": {"type": "object", "additionalProperties": {"type": "object", "properties": {
+                "slot": {"type": "integer", "minimum": 0, "maximum": 127},
+                "tune": {"type": "integer", "minimum": 0, "maximum": 127, "description": "64 = none"},
+                "transpose": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX},
+                "mute": {"type": "boolean"}}},
+                       "description": ('Per-track setup sent with the start or at the switch bar, e.g. '
+                                       '{"6": {"slot": 9, "transpose": 12}, "8": {"mute": true}}')},
         }},
     },
     "whiplash_set_param": {
         "name": "whiplash_set_param",
-        "description": ("Change a sound parameter on one Digitakt II track instantly. Use a named param "
-                        "(whiplash_list_params; sent as CC, clamped into its range) or a raw cc / nrpn [msb, lsb]. "
-                        "Give exactly one of param, cc or nrpn. Cancels a running ramp on the same param. amp_hold "
-                        "clamps to 0-126; 127 is HOLD = NOTE (a mode switch), sent only for value 'note' or exactly "
-                        "127, and only when the user agrees."),
+        "description": ("Set one sound param on a track now: named param, or raw cc / nrpn. amp_hold 127 ('note') switches "
+                        "HOLD to NOTE; send it only when the user agrees."),
         "parameters": {"type": "object", "required": ["track", "value"], "properties": {
             "track": TRACK,
             "param": PARAM,
@@ -76,56 +62,51 @@ SCHEMAS = {
             "nrpn": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 127},
                      "minItems": 2, "maxItems": 2, "description": "Raw NRPN address [msb, lsb]"},
             "value": {"type": ["integer", "string"], "minimum": 0, "maximum": 16383,
-                      "description": ("0-127 for param and cc. For nrpn, the full 14-bit value 0-16383 "
-                                      "(data MSB = value >> 7, LSB = value & 127); a 7-bit amount v is v * 128. "
-                                      "The string 'note' is accepted only for amp_hold (= 127, HOLD = NOTE)")},
+                      "description": "0-127; nrpn 0-16383 (14-bit); 'note' only for amp_hold"},
         }},
     },
     "whiplash_select_sample": {
         "name": "whiplash_select_sample",
-        "description": ("Switch which sample a track plays, among samples already loaded in the Digitakt II "
-                        "project's sample pool (e.g. put a pad on track 7). Sends Sample Slot Select (CC 19) with "
-                        "the slot number 0-127 within the sample bank currently selected on the unit. Whiplash "
-                        "can't list, preview or hear samples, and can't load new ones: ask the user which slot "
-                        "holds what, or try slots and listen. The unit's SMP list starts with OFF (no sound). "
-                        "Same as whiplash_set_param with param 'sample_slot'."),
+        "description": ("Switch a track to another sample already loaded in the project (CC 19 slot in the unit's current "
+                        "bank). Whiplash can't list or hear samples: ask the user what a slot holds."),
         "parameters": {"type": "object", "required": ["track", "slot"], "properties": {
             "track": TRACK,
             "slot": {"type": "integer", "minimum": 0, "maximum": 127,
-                     "description": "Sample slot 0-127 in the unit's current sample bank"},
+                     "description": "0-127 in the current bank"},
+        }},
+    },
+    "whiplash_label_tracks": {
+        "name": "whiplash_label_tracks",
+        "description": ("Record what the user says each track and sample slot holds (e.g. track 7 cymbal, track 5 pad). "
+                        "Generated parts then follow these roles from the next bar. Use it as soon as the user "
+                        "describes their kit. Kept until reset or a gateway restart." + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "tracks": {"type": "object", "additionalProperties": {"type": ["string", "object", "null"]},
+                       "description": (f'Track -> what it holds, e.g. {{"7": "tuned cymbal", "5": "pad"}}. Free text is '
+                                       f"matched to a role ({', '.join(ROLES)}); or give {{role, label}}. null removes.")},
+            "slots": {"type": "object", "additionalProperties": {"type": ["string", "null"]},
+                      "description": 'Sample slot -> label, e.g. {"11": "warm synth"}. null removes.'},
+            "reset": {"type": "boolean", "description": "Clear the whole map first"},
         }},
     },
     "whiplash_transpose": {
         "name": "whiplash_transpose",
-        "description": ("Move one track's notes up or down from the next bar line, keeping the line's intervals. "
-                        "Use it when a bass or synth sounds stretched, grainy or too low: note 60 is the sample's own "
-                        "pitch, and the result's pitch block shows how far the line sits from it. Absolute (0 = back "
-                        "to the pattern). Works on any track that plays, including written parts on 9-16; refused on a track that plays "
-                        "nothing. Carries across pattern switches; whiplash_stop resets it. Notes clamp to "
-                        "16-84, the manual's documented chromatic range. Needs a pattern playing." + SKILL),
+        "description": ("Shift one playing track's notes from the next bar (absolute; 0 = back). First fix for a line that "
+                        "sounds stretched or grainy. Notes stay in 16-84, the documented chromatic range." + SKILL),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": TRACK,
             "semitones": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX,
-                          "description": "Transpose in semitones (give this or octaves)"},
+                          "description": "Give this or octaves"},
             "octaves": {"type": "integer", "minimum": -(TRANSPOSE_MAX // 12), "maximum": TRANSPOSE_MAX // 12,
-                        "description": "Transpose in whole octaves (give this or semitones)"},
+                        "description": "Give this or semitones"},
         }},
     },
     "whiplash_write_part": {
         "name": "whiplash_write_part",
-        "description": ("Write a track's own notes, melody or rhythm, replacing its generated line from the next bar "
-                        "line. Use it for 'play a melody', 'make the bass four on the floor', 'lock the bass to the "
-                        "kick' or 'shorter notes'. Give ONE of rhythm (preset), grid ('x..x..x.x...x...', one "
-                        "16-step bar or a list of up to 4), steps ([0, 3, 6, 10]), hits ([{step, note, length, "
-                        "velocity, bar}]) or lock_to (copy another track's hits now; rhythm 'on_kick' = lock_to 1). "
-                        "notes cycle over the hits: names in Elektron octaves (C5 = MIDI 60 = the sample's own "
-                        "pitch), MIDI numbers, '.' for a rest, or scale degrees ('1 3 5 b7') when key is given. "
-                        "length is the exact note-off in 16th steps, but it is only audible if the track's AMP MODE "
-                        "is ADSR or HOLD is NOTE: read length_audible in the result; envelope 'note' sets HOLD = "
-                        "NOTE (one CC 80 = 127) when the user agrees. Mutes, drops, fills, density, humanize and "
-                        "transpose still apply. The part carries across pattern switches and whiplash_mutate reset; "
-                        "reset: true or whiplash_stop returns the generated line. Tracks 1-16; needs a pattern "
-                        "playing. Bad input changes nothing." + SKILL),
+        "description": ("Write a track's own notes or rhythm (melody, four on the floor, lock_to the kick, shorter notes), "
+                        "replacing its generated line from the next bar. Notes: C5 = MIDI 60 = the sample's own pitch. "
+                        "length only sounds if AMP MODE is ADSR or HOLD is NOTE (read length_audible); envelope "
+                        "'note' only when the user agrees. Cleared by reset or whiplash_stop." + SKILL),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": {**TRACK, "description": "Digitakt track 1-16 (= MIDI channel)"},
             "rhythm": {"type": "string", "enum": rhythm_names(),
@@ -169,11 +150,8 @@ SCHEMAS = {
     },
     "whiplash_ramp_param": {
         "name": "whiplash_ramp_param",
-        "description": ("Sweep a sound parameter smoothly from one value to another over beats or bars, locked to "
-                        "the running MIDI clock (e.g. 'slowly open the filter over 8 bars'). Needs a pattern "
-                        "playing. Ramps on different track/param pairs run together; a new ramp on the same pair "
-                        "replaces the old one. Returns a ramp_id. Cancel with cancel: '<ramp_id>' or 'all' "
-                        "(the param stays where it got to); whiplash_stop cancels all."),
+        "description": ("Sweep a param over beats or bars on the clock (e.g. open the filter over 8 bars). Needs a pattern "
+                        "playing. Cancel with cancel: '<ramp_id>' or 'all'."),
         "parameters": {"type": "object", "properties": {
             "track": TRACK,
             "param": PARAM,
@@ -191,14 +169,8 @@ SCHEMAS = {
     },
     "whiplash_mutate": {
         "name": "whiplash_mutate",
-        "description": ("Edit the running pattern live without stopping, timed to the bar. Actions: "
-                        "density (tracks + amount -1 thinnest..0 original..1 busiest, or 'thin'/'thicken'); "
-                        "fill (one-bar drum fill on the next bar: snare roll, hat ratchets, kick sits out; tracks "
-                        "default to 1-5); swing (amount 50-80 percent); humanize (amount 0-1 velocity and "
-                        "micro-timing looseness, never drifts); drop (silence tracks for 'bars' bars from the next "
-                        "bar, then they come back by themselves; fill: true adds a fill on the last dropped bar); "
-                        "reset (back to the original pattern; parts written with whiplash_write_part stay). Mutations "
-                        "last until reset or a new pattern; mutes are separate. density and drop take tracks 1-16."),
+        "description": ("Change the running pattern on the bar: density, fill, swing, humanize, drop (silence tracks for "
+                        "some bars), or reset."),
         "parameters": {"type": "object", "required": ["action"], "properties": {
             "action": {"type": "string", "enum": ["density", "fill", "swing", "humanize", "drop", "reset"]},
             "tracks": TRACKS,
@@ -209,52 +181,39 @@ SCHEMAS = {
     },
     "whiplash_mute_track": {
         "name": "whiplash_mute_track",
-        "description": ("Mute a track live (Whiplash stops sending its notes; optionally also sends Digitakt CC94 "
-                        "mute). Mutes carry over live pattern switches and reset on whiplash_stop or a fresh start, "
-                        "so mute after whiplash_play_pattern, not before."),
+        "description": ("Mute a track live (hardware: also the unit's CC 94 mute). Mutes reset on stop or a fresh start."),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": TRACK, "hardware": {"type": "boolean", "description": "Also toggle the unit's own track mute (CC94)"}}},
     },
     "whiplash_unmute_track": {
         "name": "whiplash_unmute_track",
-        "description": ("Unmute a track muted with whiplash_mute_track. Also releases the unit's own "
-                        "mute if Whiplash set it."),
+        "description": "Unmute a track, including a unit mute Whiplash set.",
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": TRACK, "hardware": {"type": "boolean", "description": "Also send CC94 unmute to the unit"}}},
     },
     "whiplash_set_tempo": {
         "name": "whiplash_set_tempo",
-        "description": f"Change the tempo live ({BPM_MIN}-{BPM_MAX} BPM); the MIDI clock follows so the Digitakt's FX sync.",
+        "description": f"Change the tempo live ({BPM_MIN}-{BPM_MAX} BPM).",
         "parameters": {"type": "object", "required": ["bpm"], "properties": {
             "bpm": {"type": "number", "minimum": BPM_MIN, "maximum": BPM_MAX}}},
     },
     "whiplash_stop": {
         "name": "whiplash_stop",
-        "description": ("Stop playback: note-offs, All Notes Off on channels 1-8 (and on any of 9-16 that played), and MIDI transport Stop (not in "
-                        "clock-only mode, so a pattern running on the unit isn't halted). "
-                        "Also resets mutes, ramps, mutations, transposes, written parts and any queued switch. Safe to call when nothing is "
-                        "playing (acts as a panic button)."),
+        "description": ("Stop and silence: note-offs, All Notes Off on 1-8 and any of 9-16 that played, MIDI Stop (not in "
+                        "clock-only mode). Resets mutes, ramps, mutations, transposes and written parts; keeps the kit "
+                        "map. Safe as a panic button."),
         "parameters": EMPTY,
     },
     "whiplash_status": {
         "name": "whiplash_status",
-        "description": ("Show what Whiplash is doing: port (and whether it is the silent virtual fallback, or a "
-                        "Digitakt that has become available), transport_mode (start_stop or clock_only), pattern, bpm, bar, queued switch, muted tracks, active "
-                        "ramps with progress, mutations, and last_error if the sequencer stopped on a fault. tracks "
-                        "gives each track in use: assumed role, last sample slot and tune Whiplash sent, transpose, "
-                        "pitch (distance from the sample's own pitch), mute, part (generated or written) and last CCs. "
-                        "parts lists the written parts." + SKILL),
+        "description": ("What Whiplash is doing now: port, pattern, bpm, bar, queued switch, per-track role, slot, pitch, "
+                        "part and mutes, ramps, mutations, kit map, last_error." + SKILL),
         "parameters": EMPTY,
     },
     "whiplash_open_view": {
         "name": "whiplash_open_view",
-        "description": ("Open the Whiplash visualiser: a local web page (http://127.0.0.1 only) in the default browser "
-                        "that shows the beat live while the chat continues here: every track in use with its notes "
-                        "and playhead, BPM, bar, queued switches, mutes, drops, fills, ramps, the MIDI port, an "
-                        "audio spectrum/scope (from the Digitakt's USB audio if the user allows it, else clearly "
-                        "labelled MIDI fallback) and this conversation. Read-only: it never sends MIDI or changes "
-                        "the beat. Works with or without a pattern playing. Use when the user asks to launch, open "
-                        "or show the visualiser/view. Calling it again just reopens the browser on the same page."),
+        "description": ("Open the read-only live visualiser (a local 127.0.0.1 page) in the browser, when the user asks to "
+                        "see the beat."),
         "parameters": {"type": "object", "properties": {
             "port": {"type": "integer", "minimum": 1024, "maximum": 65535,
                      "description": "Local TCP port (default 7341, or a free one if that is taken)"},
@@ -263,7 +222,7 @@ SCHEMAS = {
     },
     "whiplash_close_view": {
         "name": "whiplash_close_view",
-        "description": "Close the Whiplash visualiser's local web server. The beat keeps playing.",
+        "description": "Close the visualiser server; the beat keeps playing.",
         "parameters": EMPTY,
     },
 }

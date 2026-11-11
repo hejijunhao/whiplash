@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.3
+
+The v0.5 plan's P1 batch (items 7-10), answering Phil's live Hermes feedback from Nov 11 2026: wrong track roles for his kit, 5-40 s turns with many `tool_describe` round trips, and no tech house. 17 tools. Nothing here has been tested on a real Digitakt II yet.
+
+Added
+- **Kit map: `whiplash_label_tracks`** (plan item 7). It records what the user says each track holds (`tracks: {"7": "tuned cymbal", "5": "pad"}`) and what slots hold (`slots: {"11": "synth Phil likes"}`).
+  - **Vocabulary.** Free text is matched to one of kick, snare, rim, clap, closed hat, open hat, cymbal, perc, bass, pad, stab, chord, lead, fx, other. Explicit `{role, label}` also works. `null` removes a label; calls merge.
+  - **Patterns follow the map** (`kitmap.route`). Each generated part goes:
+    1. to the track labelled with its role,
+    2. else to a close role (rim/snare, chord to pad, stab to lead, open hat to cymbal),
+    3. else to its default track, unless the user labelled that track as something else,
+    4. else it is dropped.
+
+    Cymbal and fx tracks never get a melodic part. Labelled tracks with nothing routed stay silent until `whiplash_write_part`. Parts keep the native register.
+  - **When it applies.** While playing, a change re-routes at the next bar line and keeps swing, humanize and density. Otherwise it applies at the next start.
+  - **Lifetime.** The map survives `whiplash_stop` and pattern switches. `reset: true` or a gateway restart clears it. It lives in memory only: no file and no MIDI.
+  - **Results.** `whiplash_status` and play results show the label as `tracks[n].role` (no "(assumed)") with `kit_role`, `slot_label` for a labelled slot, `kit`, and `roles_assumed: false` once anything is labelled. `whiplash_select_sample`, `whiplash_set_param` `sample_slot` and the play `setup` echo carry `slot_label`. The label result has `routing` (`parts`, `dropped`, `silent_until_written`). The visualiser's lanes use the labels.
+  - Validated before anything changes. Whiplash still never reads sample names (that needs SysEx).
+- **One-call start: `tracks` on `whiplash_play_pattern`** (item 8). For example `{"6": {"slot": 9, "tune": 64, "transpose": -12, "mute": false}}`.
+  - Slot (CC 19) and tune (CC 16) go out once each, slot first. On a fresh start they are sent before MIDI Start and the first note. When the call is queued they are sent at the switch bar, before that bar's notes, together with the mutes.
+  - A setup CC replaces a running ramp on the same param.
+  - `transpose` merges with the top-level `transpose`, and conflicting values are refused.
+  - The whole call is validated first, so a bad entry changes nothing.
+  - The result echoes `setup` with when it applied and the slot labels.
+- **`techhouse` genre** (item 9) at 126 BPM with 56% swing. It has four on the floor, an offbeat open hat, 16th hats with three-level accents, a rolling off-beat bass around A4 (never on the kick, register unchanged), a sparse stab and perc.
+  - Aliases `tech house`, `tech-house` and `tech_house`. Spacing and case are ignored.
+  - Moods `funky`, `bouncy`, `rolling` and `peak time`.
+  - An unknown genre's error lists the closest matches.
+
+Changed
+- **Shorter tool descriptions** (item 10). Tool descriptions went from 7,302 to about 2,700 characters, even with one more tool. All descriptions, params included, went from 11,357 to about 6,300. The full schema JSON went from 18,108 to about 13,900 bytes.
+  - The detail moved into the `whiplash:digitakt` skill.
+  - The safety caveats stay in the descriptions: pass on `overlap_warning` and the virtual-port warning, HOLD = NOTE and `envelope: "note"` only when the user agrees, `length_audible`, can't list samples, stop as panic, and the read-only view.
+  - A test caps the total size, and the size of each tool's description.
+- The skill gains a "fast path" (label, then start with `tracks` in one call), the kit map rules, and the material moved out of the tool descriptions: switch behaviour, mutate actions, ramps, stop and the virtual port. The "roles are assumptions" section is replaced.
+- `kit_note` points the agent at `whiplash_label_tracks`.
+- Version 0.5.3 in `pyproject.toml`, `plugin.yaml` and `docs/catalog-entry.yaml`. `whiplash_label_tracks` is added to `provides_tools` in both manifests.
+- Reference §15.1 #26-27 and §15.3 Q10-11 cover the kit map and setup timing.
+
+Open decisions (plan recommendations taken)
+- The kit map lives in memory only. Persistence (item 13, `~/.hermes/whiplash/kitmap.json`) still needs Phil's OK.
+- No sample names from the unit (SysEx stays blocked).
+- `cymbal` is added to the plan's vocabulary, because the plan's own cymbal rule and Phil's kit need it.
+
 ## 0.5.2
 
 Review follow-ups from the v0.5.0 review (PR #10): three fixes, each with tests. Still 16 tools. Nothing here has been tested on a real Digitakt II yet.

@@ -758,6 +758,8 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | 23 | v0.5.1 written parts may play on tracks 9-16 (channels 9-16) (`whiplash_write_part`) | ⚠️ | Track n = channel n holds for 9-16 too ([M] p. 25, p. 79). But AUTO CHANNEL or FX CONTROL CH may sit on one of those channels (§7.3, §7.4; factory values are HW question 1), in which case notes and CCs reach a second target. Results on tracks 9-16 carry a `channel_note` saying so. Since v0.5.2, panic also sends CC 123 on each channel 9-16 that played (#17), and `whiplash_transpose` applies to written parts there; a transpose on a track that plays nothing is refused instead of silently doing nothing. |
 | 24 | A retrigger of the same note ends the held one (`engine._run`) | ⚠️ | When a written note is longer than the gap to the next hit of the same note, Whiplash sends that note's note-off just before the new note-on, so the old note-off can't cut the new note. Whether the unit retriggers or layers voices on one track isn't documented here (HW). |
 | 25 | `amp_hold` range 0-126; 127 (HOLD = NOTE) only on request (`ccmap.py`, `engine.set_param`/`ramp`, v0.5.2) | ✅ | [M] p. 56: 0-126 are hold times and NOTE is a separate setting; [G] puts NOTE at CC 80 value 127. So 127 is a mode switch, not the top of a range: clamping or a ramp to 127 would silently change how note-off behaves. Named `amp_hold` clamps to 126, every ramp on CC 80 (named or raw) stops at 126, and `set_param` sends 127 only for `"note"` or exactly 127, with `hold: "NOTE"` in the result. Whether the unit shows NOTE for CC 80 = 127 is HW question 9. |
+| 26 | v0.5.3 kit map: generated parts move onto the tracks the user labelled (`kitmap.route`, `whiplash_label_tracks`) | ⚠️ | Only note routing inside Whiplash changes; nothing is sent when labelling, and the unit is never read (sample names need SysEx, §15.2). Labels are what the user said, so a wrong label routes a part onto the wrong sound. A part moved off tracks 1-5 doesn't get that track's drum fill (fills are keyed to tracks 1-5). |
+| 27 | v0.5.3 `play_pattern(tracks=...)` sends CC 19 (slot) then CC 16 (tune) just before MIDI Start, or at the switch bar before its first note | ⚠️ | Same CCs and values as `whiplash_select_sample` / `set_param` ([M] p. 109; [G]). Whether the unit applies a slot change in time for a note that follows within a millisecond, and whether TUNE stays put across a slot change, is HW (§15.3 Q10-11). |
 
 ### 15.2 Things Whiplash must keep never doing
 
@@ -786,6 +788,8 @@ Check these on the unit, and record the result in this file with a date:
 7. INT TO MAIN = AUTO while the visualiser captures USB audio: do the main outs stay on?
 8. Grid/Slice with SLICE = NOTE: which note plays slice 1 on a track channel?
 9. Written-part length (v0.5.1): with AHD and a fixed HOLD, does `length` change nothing? With CC 80 = 127, does the unit show HOLD = NOTE and does `length` shorten the sound? With ADSR (CC 87 = 1), do length and release shape it? (v0.5 plan HW 2.)
+10. Kit setup timing (v0.5.3): with `play_pattern(tracks: {"6": {"slot": 9}})`, does the first note on track 6 already play slot 9, both on a fresh start (CC 19 just before MIDI Start) and on a queued switch (CC 19 at the bar line, right before the bar's first note)?
+11. After CC 19 changes a track's sample, does TUNE (CC 16) keep the value sent before it, or does the new sample bring its own? Whiplash sends slot first, then tune.
 
 ---
 

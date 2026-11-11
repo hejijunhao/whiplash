@@ -2,7 +2,8 @@
 
 Each pattern is 4 bars of 16 steps. A hit is (step, note, velocity, gate_steps).
 Deep house and soul are ported from Phil's ~/digitakt-deephouse and
-~/digitakt-soul-beat scripts; techno and breaks are new.
+~/digitakt-soul-beat scripts; techno and breaks are new, and techhouse came in v0.5.3.
+The track layout here is the default; kitmap.route() moves parts onto the user's labelled tracks.
 
 Native register (v0.5). See docs/digitakt-ii/reference.md §6.1. Note 60 (C5 in Elektron numbering,
 0 = C0) plays a sample at its own pitch while TUNE is 64 and the preset's OCTAVE is unchanged
@@ -13,6 +14,7 @@ lifts each melodic track by whole octaves at load time until its median note is 
 NATIVE_FLOOR semitones below 60, so a bass sample is not stretched an octave and a half down.
 Intervals are kept, only the register moves. Parts already near or above native are left alone.
 """
+import difflib
 import statistics
 from dataclasses import dataclass, field, replace
 
@@ -152,19 +154,42 @@ def _breaks():
     })
 
 
-RAW = {p.name: p for p in (_deep_house(), _soul(), _techno(), _breaks())}  # the note tables as written
+def _tech_house():
+    """126 BPM: four on the floor, offbeat open hat, shuffled 16th hats, a rolling off-beat bass near native
+    pitch, and a sparse stab. The shuffle is the pattern's swing (56%) plus accented hat velocities."""
+    bass = [{2: 57, 3: 57, 6: 57, 10: 57, 11: 60, 14: 57}, {2: 57, 3: 57, 6: 57, 10: 55, 14: 57},
+            {2: 57, 3: 57, 6: 57, 10: 57, 11: 60, 14: 62}, {2: 57, 6: 57, 7: 57, 10: 55, 13: 55, 14: 57}]
+    hat_vel = lambda s: 84 if s % 4 == 2 else 62 if s % 2 == 0 else 44
+    return Pattern("techhouse", 126, 0.56, {
+        1: "kick", 2: "rim", 3: "clap", 4: "closed hat", 5: "open hat",
+        6: "bass", 7: "stab", 8: "perc"}, {
+        1: _same(_grid("x...x...x...x...", 124)),
+        2: [_grid("..........x.....", 60), _grid(".......x..x.....", 60),
+            _grid("..........x.....", 60), _grid(".......x..x...x.", 60)],
+        3: _same(_grid("....x.......x...", 104)),
+        4: _same(_grid("xxxxxxxxxxxxxxxx", hat_vel)),
+        5: _same(_grid("..x...x...x...x.", 86)),
+        6: _lines(bass, 108, 1),
+        7: [[(6, 64, 96, 1)], [], [(6, 64, 96, 1), (14, 62, 80, 1)], []],
+        8: [_grid("...x.......x....", 72), _grid("...x.......x..x.", 72)] * 2,
+    })
+
+
+RAW = {p.name: p for p in (_deep_house(), _soul(), _techno(), _breaks(), _tech_house())}  # the note tables as written
 PATTERNS = {name: register(p) for name, p in RAW.items()}
 
 ALIASES = {
     "deep house": "deephouse", "deep-house": "deephouse", "house": "deephouse",
     "soul chop": "soul", "hiphop": "soul", "hip hop": "soul", "boom bap": "soul",
     "breakbeat": "breaks", "dnb": "breaks",
+    "tech house": "techhouse", "tech-house": "techhouse", "tech_house": "techhouse",
 }
 MOODS = {
     "groovy": "deephouse", "warm": "deephouse", "late night": "deephouse",
     "chill": "soul", "mellow": "soul", "nostalgic": "soul", "sad": "soul",
     "dark": "techno", "driving": "techno", "hypnotic": "techno", "intense": "techno",
     "energetic": "breaks", "playful": "breaks", "hyped": "breaks", "happy": "breaks",
+    "bouncy": "techhouse", "funky": "techhouse", "rolling": "techhouse", "peak time": "techhouse",
 }
 
 
@@ -177,5 +202,10 @@ def resolve(genre=None, mood=None):
         key = ALIASES.get(key, MOODS.get(key, key))
         if key in PATTERNS:
             return PATTERNS[key]
-        raise ValueError(f"unknown genre/mood {word!r}; genres: {sorted(PATTERNS)}, moods: {sorted(MOODS)}")
+        squashed = key.replace(" ", "").replace("-", "").replace("_", "")
+        if squashed in PATTERNS:
+            return PATTERNS[squashed]
+        close = difflib.get_close_matches(key, [*PATTERNS, *ALIASES, *MOODS], n=3, cutoff=0.6)
+        hint = f"closest: {', '.join(close)}; " if close else ""
+        raise ValueError(f"unknown genre/mood {word!r}; {hint}genres: {sorted(PATTERNS)}, moods: {sorted(MOODS)}")
     return PATTERNS["deephouse"]

@@ -16,8 +16,9 @@ log = logging.getLogger("whiplash")
 TOOLSET = "whiplash"
 SKILL_NAME = "digitakt"  # resolves as "whiplash:digitakt"
 SKILL_PATH = Path(__file__).resolve().parent / "skills" / SKILL_NAME / "SKILL.md"
-SKILL_DESCRIPTION = ("How to drive a Digitakt II through Whiplash: pitch and register, sample slots, note length vs "
-                     "AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.")
+SKILL_DESCRIPTION = ("How to drive a Digitakt II through Whiplash: the kit map and one-call start, pitch and register, "
+                     "sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that "
+                     "come out wrong.")
 
 
 def register_skill(ctx):
