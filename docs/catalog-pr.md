@@ -14,7 +14,7 @@ Whiplash turns Hermes into a live performer on an Elektron Digitakt II over USB 
 
 - Repo: https://github.com/hejijunhao/whiplash (MIT)
 - Pinned commit: `<sha>`
-- Version 0.4.0, `requires_hermes: ">=0.19"`, platforms linux and macos
+- Version 0.5.0, `requires_hermes: ">=0.19"`, platforms linux and macos
 - Python dependencies: `mido>=1.3,<2`, `python-rtmidi>=1.5,<2` (declared in `pyproject.toml`, mirrored in `plugin.yaml`)
 
 ## Hermes surfaces used

@@ -133,7 +133,7 @@ EXPECTED_CC = {
     "filter_env_delay": 91, "filter_key_tracking": 92, "amp_attack": 79, "amp_hold": 80, "amp_decay": 81,
     "amp_sustain": 82, "amp_release": 83, "delay_send": 84, "reverb_send": 85, "chorus_send": 12, "overdrive": 57,
     "bit_reduction": 54, "sample_rate_reduction": 55, "lfo1_speed": 102, "lfo1_depth": 109, "lfo2_speed": 112,
-    "lfo2_depth": 119, "lfo3_speed": 78, "lfo3_depth": 86, "sample_slot": 19,
+    "lfo2_depth": 119, "lfo3_speed": 78, "lfo3_depth": 86, "sample_slot": 19, "amp_mode": 87,
 }
 
 
@@ -316,7 +316,7 @@ def test_live_switch_lands_on_the_bar_without_stop_or_start(fake):
     eng.ramp(6, 127, param="cutoff", start=0, bars=2)
     out = eng.play(P["soul"], bpm=280)
     assert out == {"mode": "queued", "switch_at_bar": 1, "replaced_queued": None, "send_transport": True}
-    assert eng.status()["queued"] == {"pattern": "soul", "bpm": 280, "switch_at_bar": 1}
+    assert eng.status()["queued"] == {"pattern": "soul", "bpm": 280, "switch_at_bar": 1, "transpose": {}}
     wait_bar(eng, 3)
     st = eng.status()
     assert st["pattern"] == "soul" and st["bpm"] == 280 and st["queued"] is None and st["muted"] == [3]

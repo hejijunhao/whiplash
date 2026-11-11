@@ -1,7 +1,7 @@
 """Tool schemas shown to the model."""
 from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
-                     SWING_MIN)
+                     SWING_MIN, TRANSPOSE_MAX)
 from .patterns import MOODS, PATTERNS
 
 TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Digitakt track number (= MIDI channel), 1-8 used by patterns"}
@@ -9,6 +9,7 @@ TRACKS = {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum":
           "description": "Track numbers 1-8 (1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords)"}
 PARAM = {"type": "string", "description": f"Named Digitakt II param (see whiplash_list_params), e.g. {', '.join(list(PARAMS)[:8])}, ..."}
 EMPTY = {"type": "object", "properties": {}}
+SKILL = " See skill whiplash:digitakt for pitch, sample, envelope and transport guidance."
 
 SCHEMAS = {
     "whiplash_list_midi_ports": {
@@ -35,8 +36,10 @@ SCHEMAS = {
                         "carries a 'warning' and the hardware is silent. MIDI Start also starts the Digitakt's own "
                         "sequencer, so trigs in the pattern selected on the unit play on top: every result carries "
                         "an overlap_warning to pass on (select an empty pattern on the unit, or use "
-                        "send_transport=false). If the user wants to watch the beat, "
-                        "whiplash_open_view shows it live in a local browser page."),
+                        "send_transport=false). Melodic parts play near note 60, the sample's own pitch; the result's "
+                        "tracks[n].pitch shows each line's register, and track roles are assumed, not read from the "
+                        "unit. If the user wants to watch the beat, whiplash_open_view shows it live in a local "
+                        "browser page." + SKILL),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
             "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
@@ -49,6 +52,11 @@ SCHEMAS = {
                                                "with the clock. false: clock only, no Start and no Stop, so the "
                                                "Digitakt's own sequencer stays stopped. Changing it while playing "
                                                "restarts instead of queueing.")},
+            "transpose": {"type": "object",
+                          "additionalProperties": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX},
+                          "description": ('Per-track transpose in semitones, e.g. {"6": -12, "7": 5}. Applies from '
+                                          "the first bar (or the switch bar when queued) and carries across switches "
+                                          "until whiplash_stop.")},
         }},
     },
     "whiplash_set_param": {
@@ -79,6 +87,21 @@ SCHEMAS = {
             "track": TRACK,
             "slot": {"type": "integer", "minimum": 0, "maximum": 127,
                      "description": "Sample slot 0-127 in the unit's current sample bank"},
+        }},
+    },
+    "whiplash_transpose": {
+        "name": "whiplash_transpose",
+        "description": ("Move one track's notes up or down from the next bar line, keeping the line's intervals. "
+                        "Use it when a bass or synth sounds stretched, grainy or too low: note 60 is the sample's own "
+                        "pitch, and the result's pitch block shows how far the line sits from it. Absolute (0 = back "
+                        "to the pattern). Carries across pattern switches; whiplash_stop resets it. Notes clamp to "
+                        "the Digitakt's chromatic range 16-84. Needs a pattern playing." + SKILL),
+        "parameters": {"type": "object", "required": ["track"], "properties": {
+            "track": TRACK,
+            "semitones": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX,
+                          "description": "Transpose in semitones (give this or octaves)"},
+            "octaves": {"type": "integer", "minimum": -(TRANSPOSE_MAX // 12), "maximum": TRANSPOSE_MAX // 12,
+                        "description": "Transpose in whole octaves (give this or semitones)"},
         }},
     },
     "whiplash_ramp_param": {
@@ -154,7 +177,9 @@ SCHEMAS = {
         "name": "whiplash_status",
         "description": ("Show what Whiplash is doing: port (and whether it is the silent virtual fallback, or a "
                         "Digitakt that has become available), transport_mode (start_stop or clock_only), pattern, bpm, bar, queued switch, muted tracks, active "
-                        "ramps with progress, mutations, and last_error if the sequencer stopped on a fault."),
+                        "ramps with progress, mutations, and last_error if the sequencer stopped on a fault. tracks "
+                        "gives each track in use: assumed role, last sample slot and tune Whiplash sent, transpose, "
+                        "pitch (distance from the sample's own pitch), mute and last CCs." + SKILL),
         "parameters": EMPTY,
     },
     "whiplash_open_view": {

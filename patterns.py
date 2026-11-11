@@ -3,12 +3,24 @@
 Each pattern is 4 bars of 16 steps. A hit is (step, note, velocity, gate_steps).
 Deep house and soul are ported from Phil's ~/digitakt-deephouse and
 ~/digitakt-soul-beat scripts; techno and breaks are new.
+
+Native register (v0.5). Manual 8.4 MIDI NOTES (OS 1.15A, p. 25): notes 16-84 (E2-C7, C5 = MIDI 60)
+play the active track's sample chromatically, so note 60 is the sample's own pitch and every
+semitone below it pitches the sample down. The note tables below are kept as written; register()
+lifts each melodic track by whole octaves at load time until its median note is no more than
+NATIVE_FLOOR semitones below 60, so a bass sample is not stretched an octave and a half down.
+Intervals are kept, only the register moves. Parts already near or above native are left alone.
 """
-from dataclasses import dataclass, field
+import statistics
+from dataclasses import dataclass, field, replace
 
 DRUM = 60  # note 60 plays a sample at its original pitch
+NATIVE = DRUM
+NOTE_MIN, NOTE_MAX = 16, 84  # manual 8.4: the chromatic range on a track channel
+NATIVE_FLOOR = 7  # semitones: the techno bass lands at 53 (-7), the register Phil fixed by ear (tune +12)
 STEPS = 16
 BARS = 4
+NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
 @dataclass(frozen=True)
@@ -18,6 +30,37 @@ class Pattern:
     swing: float  # 0.50 straight, like the unit's SWING 50-80%
     roles: dict
     bars: dict = field(default_factory=dict)  # track -> [bar0 hits, bar1, bar2, bar3]
+    shifts: dict = field(default_factory=dict)  # track -> semitones register() moved it (melodic tracks only)
+
+
+def note_name(note):
+    """Elektron octave numbering, as on the unit and in the manual: C5 = MIDI 60 (standard MIDI calls it C4)."""
+    return f"{NOTE_NAMES[note % 12]}{note // 12}"
+
+
+def notes_of(bars):
+    return [hit[1] for bar in bars for hit in bar]
+
+
+def is_melodic(bars):
+    """A track is melodic when it plays any note other than the drum note 60."""
+    return any(n != DRUM for n in notes_of(bars))
+
+
+def register(pattern):
+    """Lift melodic tracks by whole octaves so no part sits more than NATIVE_FLOOR below note 60."""
+    bars, shifts = {}, {}
+    for track, track_bars in pattern.bars.items():
+        notes = notes_of(track_bars)
+        if not is_melodic(track_bars):
+            bars[track] = track_bars
+            continue
+        shift, median = 0, statistics.median(notes)
+        while median + shift < NATIVE - NATIVE_FLOOR and max(notes) + shift + 12 <= NOTE_MAX:
+            shift += 12
+        shifts[track] = shift
+        bars[track] = [[(s, n + shift, v, g) for s, n, v, g in bar] for bar in track_bars]
+    return replace(pattern, bars=bars, shifts=shifts)
 
 
 def _grid(pattern, velocity, note=DRUM, gate=1):
@@ -107,7 +150,8 @@ def _breaks():
     })
 
 
-PATTERNS = {p.name: p for p in (_deep_house(), _soul(), _techno(), _breaks())}
+RAW = {p.name: p for p in (_deep_house(), _soul(), _techno(), _breaks())}  # the note tables as written
+PATTERNS = {name: register(p) for name, p in RAW.items()}
 
 ALIASES = {
     "deep house": "deephouse", "deep-house": "deephouse", "house": "deephouse",
