@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased: visualiser pixel-art rack restyle
+
+Changed
+- `whiplash_open_view` page (`view.html`) restyled as a flat, strict-grayscale pixel-art hardware rack, per [docs/executing/viz-style-brief.md](docs/executing/viz-style-brief.md). It is still one self-contained file with no new dependencies, fonts or CDNs, and the tool contracts are unchanged.
+  - **Track modules:** a trig LED and note readout fire on each scheduled hit. The LVL fader and FLT/RES/DEC knobs show the last values sent, plus a fourth knob for any other param. Ramping knobs turn toward a target tick. Each module has a 16-step pixel strip and a mute bat toggle. A mute dims the module, and a drop or fill starting flashes it inverted.
+  - **Tape transport:** the reels turn in proportion to the BPM and stop with the transport. It also has a REC LED, a bitmap BPM, bar and loop position, the queued switch and the port status.
+  - **Master OUT:** the VU needle follows an envelope derived from the scheduled hits and track levels, clearly labelled as not real audio. It follows the real input's RMS after CONNECT AUDIO.
+  - **Hub:** dotted rings pulse on kicks and bar downbeats.
+  - **Cables:** white bezier patch cables run from each track OUT to its master IN. A hit shakes the cable, and a muted or dropped track's cable goes dashed. `R` toggles the cables (it was runway tilt). The spectrum and scope panels are gone.
+- View snapshot param rows carry `max` from `ccmap`, so knob travel matches each param's range.
+
+Added
+- Tests: the page has no external URLs, its palette is strict grayscale, every state field the page reads exists in a real frame, and param `max` follows `ccmap`.
+- `docs/executing/viz-style-brief.md` (the design brief) and a roadmap entry under visualiser evolution.
+
 ## Unreleased: Digitakt II reference (0.4.x patch)
 
 Added

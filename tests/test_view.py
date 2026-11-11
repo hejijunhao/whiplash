@@ -1,6 +1,7 @@
 """Visualiser: state snapshot, action log, conversation hooks, state.db fallback, server lifecycle."""
 import http.client
 import json
+import re
 import socket
 import sqlite3
 import threading
@@ -139,7 +140,7 @@ def test_snapshot_lanes_follow_what_the_agent_drives(fake):
     assert lanes[4]["muted"] and not lanes[4]["hw"]
     assert lanes[5]["density"] == 0.5
     assert lanes[6]["melodic"] and lanes[6]["steps"][0][-1] == view.note_name(lanes[6]["steps"][0][1])
-    assert lanes[6]["params"] == [{"name": "filter_freq", "cc": 74, "value": 20}]
+    assert lanes[6]["params"] == [{"name": "filter_freq", "cc": 74, "value": 20, "max": 127}]
     assert frame["transport_mode"] in ("start_stop", "clock_only")
     assert lanes[1]["sample_slot"] is None
     assert lanes[11]["role"] == "cc only" and lanes[11]["steps"] == [] and lanes[11]["params"][0]["value"] == 90
@@ -407,6 +408,66 @@ def test_page_is_self_contained():
     assert "<script src" not in html and "<link" not in html and "@import" not in html  # no network, no build step
     for label in ("MIDI FALLBACK", "AUDIO", "getUserMedia", "echoCancellation: false", "EventSource"):
         assert label in html
+    # no fonts, CDNs or any other URL: the only one is the SVG namespace name, which is never fetched
+    urls = set(re.findall(r"(?:https?:)?//[\w.-]+\.[a-z]{2,}[^\s\"')]*", html))
+    assert urls <= {"http://www.w3.org/2000/svg"}, urls
+    assert "url(" not in html and "@font-face" not in html and "fetch(" not in html
+
+
+def test_page_palette_is_strict_grayscale():
+    html = view.PAGE.read_text()
+    colours = re.findall(r"#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b", html)
+    assert colours, "palette tokens missing"
+    for c in colours:
+        c = c if len(c) == 6 else "".join(ch * 2 for ch in c)
+        assert c[0:2].lower() == c[2:4].lower() == c[4:6].lower(), f"#{c} is not gray"
+    for r, g, b in re.findall(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", html):
+        assert r == g == b, (r, g, b)
+    for token in ("#171717", "#333333", "#808080", "#F0F0F0"):  # the brief's bg, panel, mid and highlight
+        assert token in html
+
+
+def test_page_reads_only_fields_the_snapshot_has(fake):
+    """Every S.x / lane.x / port.x the page reads exists in a real frame, so motion follows real state."""
+    eng, _ = fake
+    pretend_playing(eng, P["deephouse"])
+    with eng._lock:
+        events = eng._bar_boundary(0)
+    eng.bar_hits = (0, events, frozenset())
+    eng.position = (0, 3, time.perf_counter())
+    eng.set_param(6, 20, param="filter_freq")
+    eng.schedule_drop([1], 2, fill=True)
+    v = view.View(eng, conversation=chat.Conversation(), hooks_active=True)
+    frame = v.frame()
+    html = view.PAGE.read_text()
+    script = html[html.index("<script>"):]
+    used = set(re.findall(r"\bS\.(\w+)", script))
+    assert {"playing", "bpm", "bar", "loop_bar", "lanes", "pos", "port", "queued", "swing", "messages_sent"} <= used
+    assert used <= set(frame), used - set(frame)
+    lane_keys = set().union(*(set(lane) for lane in frame["lanes"]))
+    lane_used = set(re.findall(r"\blane\.(\w+)", script))
+    assert {"steps", "loop", "muted", "drop", "fill", "params", "ramps", "melodic", "role", "track"} <= lane_used
+    assert lane_used <= lane_keys, lane_used - lane_keys
+    assert set(re.findall(r"\bport\.(\w+)", script)) <= set(frame["port"])
+    assert set(re.findall(r"\bS\.queued\.(\w+)", script)) <= {"pattern", "bpm", "at"}
+    assert set(re.findall(r"\bS\.pos\.(\w+)", script)) <= set(frame["pos"])
+    six = {lane["track"]: lane for lane in frame["lanes"]}[6]
+    assert six["params"][0]["max"] == 127  # knob travel comes from ccmap, not a guess in the page
+    assert set(re.findall(r"\bp\.(name|cc|value|max)\b", script)) <= set(six["params"][0])
+    ramp_used = set(re.findall(r"\b(?:r|c\.ramp|lv\.ramp)\.(\w+)", script)) - {"_t0"}
+    eng.ramp(6, 110, param="filter_freq", start=20, bars=4)
+    ramp = view.snapshot(eng)["lanes"]
+    ramp = next(l for l in ramp if l["track"] == 6)["ramps"][0]
+    assert ramp_used <= set(ramp), ramp_used - set(ramp)
+
+
+def test_snapshot_param_max_follows_ccmap(fake):
+    eng, _ = fake
+    pretend_playing(eng, P["deephouse"])
+    eng.set_param(3, 100, param="loop_pos")
+    eng.set_param(3, 50, param="filter_key_tracking")
+    lane = {l["track"]: l for l in view.snapshot(eng)["lanes"]}[3]
+    assert {p["name"]: p["max"] for p in lane["params"]} == {"loop_pos": 120, "filter_key_tracking": 100}
 
 
 def test_events_stream_state_and_chat(server):

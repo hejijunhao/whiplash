@@ -194,6 +194,7 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 ## Later themes
 
 - **Visualiser evolution:**
+  - pixel-art rack restyle (grayscale modules, knobs, patch cables, tape transport, trig-driven VU): see [viz-style-brief.md](viz-style-brief.md), from Phil's 11 Nov 2026 inspiration; PR "Whiplash visualiser: pixel-art rack restyle"
   - section timeline for v0.6
   - live spectrum from the listening loop in v0.7
   - user-move markers in v0.8

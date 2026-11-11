@@ -37,20 +37,20 @@ Track roles (same for all genres): 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 
 
 ## Live visualiser
 
-Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page opens in your default browser while the chat carries on in the terminal. The page only watches: it never sends MIDI and never changes the beat. It works before anything plays too, showing an idle state and the port status.
+Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page opens in your default browser while the chat carries on in the terminal. It is drawn as a flat, grayscale pixel-art rack: a tape transport, a pulse hub, a master OUT with a VU needle, and one module per track patched into it with cables. The page only watches: it never sends MIDI and never changes the beat. It works before anything plays too, showing an idle state and the port status.
 
-- **Tracks:** one lane per track Whiplash is actually driving. That means the pattern's tracks, plus any channel it muted, dropped, filled, ramped or sent a CC to, so a channel touched only by CC still gets a lane.
-  - **Grid:** the current bar's 16 steps, with notes, velocities and gates, on a perspective "runway" with a moving playhead. A 4-bar minimap underneath marks scheduled drops and fills.
-  - **States:** mutes (hatched, `HW` for the unit's own mute), drops (dark with a "back in N bars" countdown), fills (amber) and density.
-  - **Params:** the last value sent for each param. Running ramps are drawn in magenta, moving toward a marker at the target value.
-- **Transport:** a large BPM readout that rolls to a new tempo, the bar with beat dots, the pattern and swing, a queued switch with a beat countdown, and the MIDI port. A real Digitakt shows in cyan, the virtual fallback as a red `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
-- **Analyser:** spectrum, oscilloscope and stereo L/R meters.
-  - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The panel is then labelled `AUDIO · <device>`.
-  - **Without audio:** the panel draws note energy from the MIDI Whiplash scheduled, labelled `MIDI FALLBACK · NOT REAL AUDIO` with hollow amber bars. The per-track meters are always MIDI-derived, because the Digitakt's USB audio is only the stereo main mix.
+- **Tracks:** one module per track Whiplash is actually driving. That means the pattern's tracks, plus any channel it muted, dropped, filled, ramped or sent a CC to, so a channel touched only by CC still gets a module.
+  - **Module:** a 16-step pixel strip with the playhead, a trig LED and note readout that fire on each hit, an LVL fader and FLT/RES/DEC knobs set to the last values Whiplash sent (`--` until it sends one), plus a fourth knob for any other param.
+  - **States:** mutes (LED off, module dimmed, bat toggle down; `HW` for the unit's own mute), drops (dimmed with a `DROP <N` countdown), fills and density as tags. A drop or fill starting flashes the module inverted.
+  - **Ramps:** a ramping knob turns in time toward a tick at the target value.
+- **Tape transport:** a bitmap BPM readout that rolls to a new tempo, REC LED, bar and 4-bar loop position, pattern and swing, a queued switch with a beat countdown, and the MIDI port. The virtual fallback shows as an inverted `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
+- **Master VU:** the needle follows an envelope derived from the scheduled hits and track levels, labelled `MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO`. The tape reels turn with the BPM and stop with the transport; the hub pulses on each kick and bar downbeat.
+  - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The needle then follows the input's RMS, labelled `AUDIO · <device>`.
+  - **Per track:** the trig LEDs are always MIDI-derived, because the Digitakt's USB audio is only the stereo main mix.
 - **Conversation:** your messages and Hermes's replies, streaming word by word.
-  - **Tool calls:** hidden by default. Each reply has a `⚙ N tool calls` chip that expands, and `T` shows all of them.
+  - **Tool calls:** hidden by default. Each reply has an `N tool calls` chip that expands, and `T` shows all of them.
   - **Layout:** in a window narrower than 1100 px (terminal beside it) the panel becomes lower-third captions.
-  - **Linking:** a Whiplash tool call flashes the lane it touched.
+  - **Linking:** a Whiplash tool call blinks the outline of the track module it touched.
 - **Action log:** a one-line ticker of recent Whiplash tool calls along the bottom. Click it for the last 40.
 - **Keys:**
 
@@ -60,7 +60,7 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
   | `T` | show tool calls |
   | `A` | connect audio |
   | `B` | blur the conversation (for screen recordings) |
-  | `R` | runway tilt on/off |
+  | `R` | patch cables on/off |
   | `F` | fullscreen |
   | `?` | help |
 
@@ -202,7 +202,7 @@ Digitakt II on screen, USB to the laptop, Hermes in a terminal beside it. Each l
 
 | Time | Prompt | What happens |
 | --- | --- | --- |
-| 0:00 | *"Is my Digitakt connected? And launch the visualiser."* | `whiplash_list_midi_ports` finds *Elektron Digitakt II*, `whiplash_open_view` opens the page beside the terminal (click CONNECT AUDIO once for the real spectrum). |
+| 0:00 | *"Is my Digitakt connected? And launch the visualiser."* | `whiplash_list_midi_ports` finds *Elektron Digitakt II*, `whiplash_open_view` opens the page beside the terminal (click CONNECT AUDIO once for a real VU level). |
 | 0:04 | *(On the unit: select an empty pattern so its own trigs don't layer in.)* | |
 | 0:08 | *"Play some groovy deep house."* | `whiplash_play_pattern deephouse`: kick, rim, hats, bass and chords at 122 BPM, 55 % swing. |
 | 0:18 | *"Close the filter on the bass, then open it slowly over 8 bars."* | `whiplash_set_param` track 6 `filter_freq` 20, then `whiplash_ramp_param` 20→110 over 8 bars, `curve: exp`. |
