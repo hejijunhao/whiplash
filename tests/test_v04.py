@@ -218,5 +218,6 @@ def test_play_schema_has_send_transport():
 def test_tools_in_manifest_order():
     assert list(tools.HANDLERS)[4] == "whiplash_select_sample" == list(schemas.SCHEMAS)[4]
     assert list(tools.HANDLERS)[5] == "whiplash_transpose" == list(schemas.SCHEMAS)[5]  # v0.5
-    # v0.4's 12 tools, v0.5's transpose, then the visualiser's two
-    assert len(tools.HANDLERS) == 15 and list(tools.HANDLERS)[13:] == ["whiplash_open_view", "whiplash_close_view"]
+    assert list(tools.HANDLERS)[6] == "whiplash_write_part" == list(schemas.SCHEMAS)[6]  # v0.5.1
+    # v0.4's 12 tools, v0.5's transpose, v0.5.1's write_part, then the visualiser's two
+    assert len(tools.HANDLERS) == 16 and list(tools.HANDLERS)[14:] == ["whiplash_open_view", "whiplash_close_view"]

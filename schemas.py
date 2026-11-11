@@ -2,11 +2,14 @@
 from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
+from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .patterns import MOODS, PATTERNS
 
 TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Digitakt track number (= MIDI channel), 1-8 used by patterns"}
-TRACKS = {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 8},
-          "description": "Track numbers 1-8 (1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords)"}
+TRACKS = {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 16},
+          "description": ("Track numbers 1-16 (patterns assume 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, "
+                          "6 bass, 7-8 chords; 9-16 only play written parts)")}
+NOTE = {"type": ["string", "integer"]}
 PARAM = {"type": "string", "description": f"Named Digitakt II param (see whiplash_list_params), e.g. {', '.join(list(PARAMS)[:8])}, ..."}
 EMPTY = {"type": "object", "properties": {}}
 SKILL = " See skill whiplash:digitakt for pitch, sample, envelope and transport guidance."
@@ -104,6 +107,62 @@ SCHEMAS = {
                         "description": "Transpose in whole octaves (give this or semitones)"},
         }},
     },
+    "whiplash_write_part": {
+        "name": "whiplash_write_part",
+        "description": ("Write a track's own notes, melody or rhythm, replacing its generated line from the next bar "
+                        "line. Use it for 'play a melody', 'make the bass four on the floor', 'lock the bass to the "
+                        "kick' or 'shorter notes'. Give ONE of rhythm (preset), grid ('x..x..x.x...x...', one "
+                        "16-step bar or a list of up to 4), steps ([0, 3, 6, 10]), hits ([{step, note, length, "
+                        "velocity, bar}]) or lock_to (copy another track's hits now; rhythm 'on_kick' = lock_to 1). "
+                        "notes cycle over the hits: names in Elektron octaves (C5 = MIDI 60 = the sample's own "
+                        "pitch), MIDI numbers, '.' for a rest, or scale degrees ('1 3 5 b7') when key is given. "
+                        "length is the exact note-off in 16th steps, but it is only audible if the track's AMP MODE "
+                        "is ADSR or HOLD is NOTE: read length_audible in the result; envelope 'note' sets HOLD = "
+                        "NOTE (one CC 80 = 127) when the user agrees. Mutes, drops, fills, density, humanize and "
+                        "transpose still apply. The part carries across pattern switches and whiplash_mutate reset; "
+                        "reset: true or whiplash_stop returns the generated line. Tracks 1-16; needs a pattern "
+                        "playing. Bad input changes nothing." + SKILL),
+        "parameters": {"type": "object", "required": ["track"], "properties": {
+            "track": {**TRACK, "description": "Digitakt track 1-16 (= MIDI channel)"},
+            "rhythm": {"type": "string", "enum": rhythm_names(),
+                       "description": ("Rhythm preset: four_on_floor (every beat), on_kick (copy track 1's hits), "
+                                       "offbeat_8ths, 8ths, 16ths, off_16ths, syncopated (x..x..x...x..x..), "
+                                       "half_time (steps 0 and 8)")},
+            "grid": {"type": ["string", "array"], "items": {"type": "string"},
+                     "description": ("Step mask, 16 cells per bar: x = hit, X = accented hit, . = rest (spaces and | "
+                                     "ignored). One string, or a list of up to 4 bars.")},
+            "steps": {"type": "array", "items": {"type": ["integer", "array"]},
+                      "description": "Steps 0-15 (0 = downbeat, 4 = beat 2) for one bar, or one list per bar (up to 4)"},
+            "hits": {"type": "array", "maxItems": 64, "items": {"type": "object", "required": ["step"], "properties": {
+                "step": {"type": "integer", "minimum": 0, "maximum": 15}, "note": NOTE,
+                "length": {"type": "number", "minimum": LENGTH_MIN, "maximum": LENGTH_MAX},
+                "velocity": {"type": "integer", "minimum": 1, "maximum": 127},
+                "bar": {"type": "integer", "minimum": 1, "maximum": 4, "description": "1-4, default 1"}}},
+                     "description": "Individual hits; per-hit note/length/velocity override the shared ones"},
+            "lock_to": {"type": "integer", "minimum": 1, "maximum": 16,
+                        "description": "Copy this track's current hits (1 = the kick); not followed live"},
+            "notes": {"type": ["array", "string"], "items": NOTE,
+                      "description": ("Notes cycled over the hits, e.g. ['C5', 'D#5', 'G5', 63] or 'A4 C5 . E5'. "
+                                      "Elektron names (C5 = 60), MIDI 16-84, '.' = rest, or degrees with key. "
+                                      "Omit for note 60 (drums, one-shots).")},
+            "key": {"type": "string",
+                    "description": ("Root for scale degrees, e.g. 'A', 'F#', 'Am' (minor), 'A3' (explicit octave). "
+                                    "Without an octave the root sits nearest note 60.")},
+            "scale": {"type": "string", "enum": sorted(SCALES),
+                      "description": "Scale for degrees (default major, or minor for keys like 'Am'). b/# move a degree by a semitone."},
+            "length": {"type": ["number", "array"], "items": {"type": "number"},
+                       "description": (f"Note length in 16th steps, {LENGTH_MIN:g}-{LENGTH_MAX:g} (1 = a 16th, 4 = a "
+                                       "beat), default 1; a list cycles over the hits. Exact MIDI note-off.")},
+            "velocity": {"type": ["integer", "array", "string"], "items": {"type": "integer"},
+                         "description": "1-127 (default 100), a list cycled over the hits, or 'accent' (120 on the beats, 90 between)"},
+            "bars": {"type": "integer", "enum": [1, 2, 4],
+                     "description": "Bars before the part repeats (default: the shortest that plays every note)"},
+            "reset": {"type": "boolean", "description": "true: drop the written part and go back to the generated line"},
+            "envelope": {"type": "string", "enum": ["note"],
+                         "description": ("'note': also send amp_hold 127 (HOLD = NOTE, CC 80) so length is audible "
+                                         "in AHD mode. Changes the kit's sound until reloaded; only when the user agrees.")},
+        }},
+    },
     "whiplash_ramp_param": {
         "name": "whiplash_ramp_param",
         "description": ("Sweep a sound parameter smoothly from one value to another over beats or bars, locked to "
@@ -134,8 +193,8 @@ SCHEMAS = {
                         "default to 1-5); swing (amount 50-80 percent); humanize (amount 0-1 velocity and "
                         "micro-timing looseness, never drifts); drop (silence tracks for 'bars' bars from the next "
                         "bar, then they come back by themselves; fill: true adds a fill on the last dropped bar); "
-                        "reset (back to the original pattern). Mutations last until reset or a new pattern; mutes "
-                        "are separate."),
+                        "reset (back to the original pattern; parts written with whiplash_write_part stay). Mutations "
+                        "last until reset or a new pattern; mutes are separate. density and drop take tracks 1-16."),
         "parameters": {"type": "object", "required": ["action"], "properties": {
             "action": {"type": "string", "enum": ["density", "fill", "swing", "humanize", "drop", "reset"]},
             "tracks": TRACKS,
@@ -169,7 +228,7 @@ SCHEMAS = {
         "name": "whiplash_stop",
         "description": ("Stop playback: note-offs, All Notes Off on channels 1-8, and MIDI transport Stop (not in "
                         "clock-only mode, so a pattern running on the unit isn't halted). "
-                        "Also resets mutes, ramps, mutations and any queued switch. Safe to call when nothing is "
+                        "Also resets mutes, ramps, mutations, transposes, written parts and any queued switch. Safe to call when nothing is "
                         "playing (acts as a panic button)."),
         "parameters": EMPTY,
     },
@@ -179,7 +238,8 @@ SCHEMAS = {
                         "Digitakt that has become available), transport_mode (start_stop or clock_only), pattern, bpm, bar, queued switch, muted tracks, active "
                         "ramps with progress, mutations, and last_error if the sequencer stopped on a fault. tracks "
                         "gives each track in use: assumed role, last sample slot and tune Whiplash sent, transpose, "
-                        "pitch (distance from the sample's own pitch), mute and last CCs." + SKILL),
+                        "pitch (distance from the sample's own pitch), mute, part (generated or written) and last CCs. "
+                        "parts lists the written parts." + SKILL),
         "parameters": EMPTY,
     },
     "whiplash_open_view": {
