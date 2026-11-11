@@ -1,6 +1,6 @@
 # Whiplash 🥁
 
-A [Hermes Agent](https://hermes-agent.nousresearch.com) plugin that lets your agent **jam live on an Elektron Digitakt II** over USB MIDI. Ask for "something groovy at 122", "slowly open the filter on the bass", "drop the kick for two bars with a fill", "switch to techno on the next bar", and Hermes plays it on the hardware: beats on tracks 1-8 with MIDI clock and transport, bar-quantized pattern switches, named sound parameters, clock-synced sweeps, live fills, drops, density, swing and humanize, switching a track to another sample already in the project, mutes, and tempo.
+A [Hermes Agent](https://hermes-agent.nousresearch.com) plugin that lets your agent **jam live on an Elektron Digitakt II** over USB MIDI. Ask for "something groovy at 122", "slowly open the filter on the bass", "drop the kick for two bars with a fill", "switch to techno on the next bar", and Hermes plays it on the hardware: beats on tracks 1-8 with MIDI clock and transport, bar-quantized pattern switches, named sound parameters, clock-synced sweeps, live fills, drops, density, swing and humanize, **written melodies and rhythms** ("four on the floor on the bass", "lock the bass to the kick", "play A, C, E, G on track 7"), switching a track to another sample already in the project, mutes, and tempo.
 
 The timing lives in the plugin, not the model. Hermes makes one validated tool call ("ramp the cutoff over 8 bars"); Whiplash's sequencer does the musical part on its own MIDI clock, so sweeps stay smooth and switches land on the one however long the model takes to answer.
 
@@ -18,12 +18,13 @@ Every tool is prefixed `whiplash_` so it can't collide with another plugin's too
 | `whiplash_set_param` | Instant sound change on one track: a named param (sent as CC, clamped into its range), a raw `cc`, or a raw `nrpn: [msb, lsb]`. |
 | `whiplash_select_sample` | Switches which sample a track plays, by `slot` 0-127 among the samples **already loaded in the project's sample pool** (Sample Slot Select, CC 19). Same as `whiplash_set_param` with `param: "sample_slot"`. Whiplash can't list, preview or load samples; see [Sample select](#sample-select). |
 | `whiplash_transpose` | Moves one track's notes by `semitones` or `octaves` (±48 semitones) from the next bar line, keeping the line's intervals. Absolute (0 = back to the pattern). Carries across pattern switches; `whiplash_stop` resets it. Returns the new `pitch`. Needs a pattern playing. |
+| `whiplash_write_part` | Writes one track's notes, melody or rhythm (tracks 1-16), replacing its generated line from the next bar line. Place hits with one of `rhythm` (`four_on_floor`, `on_kick`, `offbeat_8ths`, `8ths`, `16ths`, `off_16ths`, `syncopated`, `half_time`), `grid` (a 16-cell step mask per bar, `"x..x..x.x..x..x."`), `steps`, `hits` or `lock_to` (copy another track's hits now). `notes` cycle over the hits: Elektron names (`C5` = 60), MIDI numbers, `.` rests, or scale degrees with `key`/`scale`. `length` (16th steps, 0.25-16) is the exact note-off; `velocity`, `bars` (1, 2, 4). `envelope: "note"` also sends HOLD = NOTE (CC 80 = 127). `reset: true` goes back to the generated line. See [Written parts](#written-parts). |
 | `whiplash_ramp_param` | Sweeps a named param (or raw CC) `from` → `to` over `beats` or `bars`, advanced on the MIDI clock. `curve`: linear, exp, log. Returns a ramp id; `cancel: "<id>"` or `"all"`. |
-| `whiplash_mutate` | Live edits to the running pattern: `density` (thin/thicken), `fill`, `swing`, `humanize`, `drop` (with auto-return), `reset`. |
+| `whiplash_mutate` | Live edits to the running pattern: `density` (thin/thicken), `fill`, `swing`, `humanize`, `drop` (with auto-return), `reset`. `density` and `drop` take tracks 1-16; `reset` keeps written parts. |
 | `whiplash_mute_track` / `whiplash_unmute_track` | Live mute. `hardware: true` also flips the unit's own track mute (CC 94). |
 | `whiplash_set_tempo` | Live tempo change (30-300 BPM); the clock follows so the Digitakt's delay/LFOs stay in sync. |
-| `whiplash_stop` | Note-offs, All Notes Off on channels 1-8, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations and any queued switch. Works as a panic button when nothing is playing. |
-| `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `tracks` gives each track in use: role (marked `(assumed)`), the last sample `slot` and `tune` Whiplash sent, `transpose`, `pitch`, mute state and last CCs. |
+| `whiplash_stop` | Note-offs, All Notes Off on channels 1-8, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations, transposes, written parts and any queued switch. Works as a panic button when nothing is playing. |
+| `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `tracks` gives each track in use: role (marked `(assumed)`), the last sample `slot` and `tune` Whiplash sent, `transpose`, `pitch`, mute state, `part` (`generated` or `written`) and last CCs; `parts` lists the written parts. |
 | `whiplash_open_view` | Opens the **live visualiser**, a local web page (`http://127.0.0.1:7341`, or a free port) in the default browser. It shows the beat and the conversation while you keep chatting in the terminal. Optional `port`, and `open_browser: false` to only get the URL. Read-only. |
 | `whiplash_close_view` | Stops the visualiser's local server. The beat keeps playing. |
 
@@ -37,6 +38,15 @@ The plugin also ships a skill, **`whiplash:digitakt`** (`skills/digitakt/SKILL.m
 - **Generated lines sit near native.** Each melodic part is lifted by whole octaves at load time until its median note is no more than 7 semitones below 60. The intervals are kept; only the register moves. So the techno bass plays at 53 (it was 41, 19 semitones down), the soul and breaks basslines move up an octave, and deep house is unchanged. Parts at or above native are left alone. Drum parts (note 60) are never moved.
 - **Transpose** per track with `whiplash_transpose` or `transpose` on `whiplash_play_pattern`. It is applied to note numbers at the bar line and clamped to 16-84. The manual documents 16-84 as the chromatic range on the AUTO channel; the range on a track's own channel is undocumented, so Whiplash stays inside it.
 - **`pitch`** in results, per melodic (or transposed, or tuned) track: `low`/`high` note numbers and names, `semitones_from_native`, `transpose`, `tune`, and `register_shift`. `semitones_from_native` includes `tune - 64` when Whiplash has sent `tune` (CC 16) on that track; `tune: null` means Whiplash hasn't sent it and the unit's value is unknown. Names use Elektron's octave numbering (C5 = 60; Logic calls 60 C3, General MIDI C4). Whiplash can't see the preset OCTAVE or an LFO on tune, so `pitch` assumes neither is in play.
+
+### Written parts
+
+- **Where and what.** `whiplash_write_part` takes one way to place hits and, optionally, the notes to play on them. Notes cycle over the hits; without `notes`, every hit plays note 60 (a drum or one-shot at its own pitch). `bars` defaults to the shortest of 1, 2 or 4 that plays every note at least once, and the part repeats across the 4-bar loop. Scale degrees use the major-scale convention for accidentals (`"1 3 5 b7"`), within the chosen `scale`. A key without an octave puts its root nearest note 60.
+- **Timing.** The part replaces the track's line from the next bar line, like a density change. Mutes, drops, fills, density, humanize and transpose still apply to it. It carries across pattern switches and `whiplash_mutate reset`; `reset: true` or `whiplash_stop` returns the generated line.
+- **`lock_to`** (and `rhythm: "on_kick"`, which is `lock_to: 1`) copies the source track's hits when you call it. Following the source live is not implemented yet.
+- **Length.** A written note's `length` is its exact note-off (generated parts keep the 0.8 gate). If the same note retriggers before its note-off, the held note ends just before the new one, so a long note never cuts its own successor. The unit only shortens a sound on note-off when AMP MODE is ADSR or, in AHD, HOLD is NOTE ([reference](docs/digitakt-ii/reference.md) §5.2; manual p. 56), so every result carries `length_audible`. `envelope: "note"` sends exactly one CC 80 = 127 on that track, and only when asked; it changes the kit's sound until reloaded.
+- **Tracks 9-16** play on channels 9-16. If the unit's AUTO CHANNEL or FX CONTROL CH sits on one of them, the notes and CCs reach that target too (reference §7.4); results on those tracks say so.
+- **Validation.** Everything (track, placement, notes, lengths, velocities, bars, envelope) is checked before anything changes, so bad input never touches the beat or sends a CC.
 
 ### How live changes are timed
 
@@ -198,7 +208,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-190 tests, covering:
+249 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -208,6 +218,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 - hot-plug notices and the explicit-virtual case, rate limiting, port loss and reopen
 - sample-slot select (lookup, send, reject, list) with bank select, sample NRPNs, SysEx and program change still blocked
 - transport modes: Start/Stop by default, clock only (no Start, no Stop), env default, mode change restarts, overlap warning
+- written parts: every placement (rhythm presets, grids, steps, hits, `lock_to`/`on_kick`), note names and scale degrees, notes cycling over hits, note-off at `length` x a sixteenth on the timeline, retriggers not cut short, bar landing, carrying over `mutate reset` and switches, `reset: true`, density/drop/fill/mute on a written part, tracks 9-16, bad input leaving the beat and port untouched, `envelope: "note"` sending exactly one CC 80 = 127, and clock jitter with 8 written parts
 - the native register (no generated line far below note 60, whole-octave shifts, drums untouched), transpose on the wire (clamping, bar landing, carry over a switch, reset on stop), the `pitch` block with a sent tune, the per-track status block, `amp_mode`, and the bundled skill (registration, fallback without the API, frontmatter, no stale claims)
 - input validation, single panic per stop, exit hook, SysEx refusal
 - the visualiser:

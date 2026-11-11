@@ -157,6 +157,17 @@ def transpose(p):
 
 
 @_tool
+def write_part(p):
+    out = ENGINE.write_part(p["track"], rhythm=p.get("rhythm"), grid=p.get("grid"), steps=p.get("steps"),
+                            hits=p.get("hits"), lock_to=p.get("lock_to"), notes=p.get("notes"), key=p.get("key"),
+                            scale=p.get("scale"), length=p.get("length"), velocity=p.get("velocity"),
+                            bars=p.get("bars"), reset=p.get("reset"), envelope=p.get("envelope"))
+    if not out.get("reset"):
+        out["pitch_note"] = eng.PITCH_NOTE
+    return out
+
+
+@_tool
 def ramp_param(p):
     if p.get("cancel") not in (None, ""):
         return {"cancelled": ENGINE.cancel_ramps(p["cancel"]), "active": ENGINE.ramps()}
@@ -250,5 +261,5 @@ def close_view(p):
 
 
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
-                                             select_sample, transpose, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
+                                             select_sample, transpose, write_part, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
                                              status, open_view, close_view)}

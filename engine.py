@@ -26,7 +26,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from . import ccmap, mutate, patterns
+from . import ccmap, mutate, parts, patterns
 
 log = logging.getLogger("whiplash")
 
@@ -43,6 +43,7 @@ RAMP_BEATS_MAX, RAMP_BARS_MAX = 512, 128
 DROP_BARS_MAX = 32
 TRANSPOSE_MAX = 48  # semitones either way (4 octaves); notes still clamp to the 16-84 chromatic range
 TUNE_CC = ccmap.PARAMS["tune"].cc
+AMP_MODE_CC = ccmap.PARAMS["amp_mode"].cc
 SLOT_CC = ccmap.PARAMS["sample_slot"].cc
 _NOT_PARAMS = {123, 6, 38, 98, 99}  # All Notes Off and NRPN data entry: never shown as a track's last_cc
 KIT_NOTE = ("Track roles are the pattern's assumed layout, not what the unit holds: ask the user what each track "
@@ -53,6 +54,15 @@ PITCH_NOTE = ("pitch: MIDI note 60 plays a sample at its own pitch, if tune is 6
               "sent (null = not sent, counted as 64); Whiplash can't see the OCTAVE setting or an LFO on tune. "
               "Names use Elektron octaves (0 = C0, C5 = MIDI 60). A line far below native sounds stretched or "
               "grainy: raise it with whiplash_transpose (or tune) before touching the envelope.")
+LENGTH_NOTE = ("length_audible: length sets the exact MIDI note-off, but the Digitakt only ends a sound on note-off "
+               "when the track's AMP MODE is ADSR (amp_mode 1, CC 87) or, in AHD, HOLD is NOTE (amp_hold 127, CC 80). "
+               "With a fixed HOLD (0-126) every hit sounds the same length, and a long DECAY still rings after "
+               "note-off. Whiplash can't read the unit's envelope: ask the user, or pass envelope: 'note' to set "
+               "HOLD = NOTE on this track (it changes the kit's sound until reloaded; tell the user).")
+HIGH_TRACK_NOTE = ("Tracks 9-16 play on MIDI channels 9-16. If the unit's AUTO CHANNEL or FX CONTROL CH is set to "
+                   "this channel (SETTINGS > MIDI CONFIG > CHANNELS), these notes and CCs also reach the active "
+                   "track or the send FX. Ask the user to check.")
+ENVELOPES = {"note"}
 SWING_MIN, SWING_MAX = 50, 80
 JOIN_TIMEOUT = 2.0
 HOTPLUG_INTERVAL = 2.0  # seconds between port enumerations while on the virtual port
@@ -148,6 +158,25 @@ def check_transpose_map(transpose):
     if not isinstance(transpose, dict):
         raise WhiplashError('transpose must map track to semitones, e.g. {"6": -12, "7": 5}')
     return {check_track(t): check_transpose(v, f"transpose for track {t}") for t, v in transpose.items()}
+
+
+def check_flag(value, what):
+    if value in (None, "", False):
+        return False
+    if value is True or (isinstance(value, str) and value.strip().lower() in ("true", "1", "yes")):
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("false", "0", "no"):
+        return False
+    raise WhiplashError(f"{what} must be true or false, got {value!r}")
+
+
+def check_envelope(value):
+    if value in (None, "") or (isinstance(value, str) and value.strip().lower() in ("keep", "none")):
+        return None
+    word = str(value).strip().lower()
+    if word not in ENVELOPES:
+        raise WhiplashError(f"envelope must be 'note' (sends amp_hold 127 = HOLD NOTE, CC 80) or omitted, got {value!r}")
+    return word
 
 
 def clamp_note(note):
@@ -248,6 +277,8 @@ class Engine:
         self._drops = {}  # track -> (first bar, end bar exclusive)
         self._transpose = {}  # track -> semitones, applied to note numbers at the bar line
         self._fills = {}  # bar -> set(tracks)
+        self._parts = {}  # track -> parts.Part written with whiplash_write_part; merged into _work by _load
+        self._bar_exact = frozenset()  # tracks whose lengths are exact note-offs in the bar being built
         self.sent_count = 0
         self.send_transport = None  # transport mode of the current/last run; None = env default
         # Published by the sequencer thread for the live view, read without any lock: each is
@@ -410,6 +441,8 @@ class Engine:
         self.pattern_start = start_bar
         self._density, self.humanize = {}, 0.0
         self._work = mutate.working(pattern)
+        for track, part in self._parts.items():  # written parts carry across switches and mutate reset
+            self._work[track] = [list(bar) for bar in part.bars]
 
     def stop(self):
         """Stop the sequencer, silence the port once, and reset mutes, ramps and mutations."""
@@ -437,6 +470,7 @@ class Engine:
                     self._queued = None
                     self._drops, self._fills = {}, {}
                     self._transpose = {}
+                    self._parts = {}
                     if self.pattern is not None:
                         self._load(self.pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
@@ -519,6 +553,7 @@ class Engine:
             del self._fills[old]
         fills = self._fills.pop(bar_n, set())
         self.bar_fills = (bar_n, frozenset(fills))
+        self._bar_exact = frozenset(self._parts)
         idx = (bar_n - self.pattern_start) % patterns.BARS
         r = mutate.rng(self.seed, "humanize", bar_n) if self.humanize else None
         events = collections.defaultdict(list)
@@ -548,6 +583,9 @@ class Engine:
         mido = __import__("mido")
         pending = []  # heap of (time, seq, ch, note, vel)
         seq = 0
+        exact = frozenset()  # tracks playing written parts: length is the exact note-off, no GATE factor
+        last_off = {}  # (ch, note) -> (time, seq) of the latest note-off scheduled for it
+        stale = set()  # seqs of note-offs superseded by a retrigger of the same note
         next_tick = time.perf_counter() + 0.01
         tick = 0
         events = {}
@@ -563,6 +601,7 @@ class Engine:
                         if events is None:
                             break
                         self.bar_hits = (bar_n, events, self.bar_fills[1])
+                        exact = self._bar_exact
                     tick_len = 60.0 / self.bpm / PPQN
                     swing, muted = self.swing, set(self.muted)
                 if sub == 0:
@@ -573,13 +612,24 @@ class Engine:
                         if track in muted:
                             continue
                         ch, on = track - 1, t0 + offset * tick_len
+                        prev = last_off.get((ch, note))
+                        if prev is not None and prev[0] > on:
+                            # the same note retriggers before its earlier note-off: end it just before the
+                            # new note-on instead, so the old note-off can't cut the new note short
+                            stale.add(prev[1])
+                            heapq.heappush(pending, (on - 1e-4, seq, ch, note, 0)); seq += 1
                         heapq.heappush(pending, (on, seq, ch, note, vel)); seq += 1
-                        heapq.heappush(pending, (on + gate * sixteenth * GATE - 1e-4, seq, ch, note, 0)); seq += 1
+                        off = on + gate * sixteenth * (1.0 if track in exact else GATE) - 1e-4
+                        heapq.heappush(pending, (off, seq, ch, note, 0))
+                        last_off[(ch, note)] = (off, seq); seq += 1
                 # wait for the tick, flushing note events on time
                 while True:
                     now = time.perf_counter()
                     while pending and pending[0][0] <= now:
-                        _, _, ch, note, vel = heapq.heappop(pending)
+                        _, s, ch, note, vel = heapq.heappop(pending)
+                        if s in stale:
+                            stale.discard(s)
+                            continue
                         self._note(mido, ch, note, vel)
                     if now >= next_tick or stop.is_set():
                         break
@@ -591,8 +641,8 @@ class Engine:
                 tick += 1
                 next_tick += tick_len
             # flush note-offs for notes still sounding (pending note-ons are simply dropped)
-            for _, _, ch, note, vel in sorted(pending):
-                if vel == 0 and (ch, note) in self._sounding:
+            for _, s, ch, note, vel in sorted(pending):
+                if vel == 0 and s not in stale and (ch, note) in self._sounding:
                     self._note(mido, ch, note, 0)
         except Exception as exc:
             log.exception("sequencer thread crashed")
@@ -790,13 +840,15 @@ class Engine:
         amount = _number(amount)
         if not -1 <= amount <= 1:
             raise WhiplashError("density amount must be -1 (thinnest) .. 0 (original) .. 1 (busiest)")
-        tracks = check_tracks(tracks)
+        tracks = check_tracks(tracks, high=16)
         with self._lock:
             self._require_playing()
+            empty = [t for t in tracks if not any(self._base(t) or [])]
+            if empty:
+                raise WhiplashError(f"track(s) {empty} play nothing to thin or thicken")
             for track in tracks:
-                pristine = mutate.working(self.pattern)[track]
                 self._density[track] = amount
-                self._work[track] = mutate.density(pristine, amount, self.seed, track)
+                self._rebuild(track)
             return {"density": {str(t): a for t, a in sorted(self._density.items())}, "applies": "next bar"}
 
     def mutate_swing(self, amount):
@@ -830,7 +882,7 @@ class Engine:
             return {"fill_at_bar": at, "tracks": tracks}
 
     def schedule_drop(self, tracks, bars, fill=False):
-        tracks = check_tracks(tracks)
+        tracks = check_tracks(tracks, high=16)
         bars = check_whole(bars, 1, DROP_BARS_MAX, "drop bars")
         with self._lock:
             self._require_playing()
@@ -883,6 +935,119 @@ class Engine:
                                f"{self._queued['at']}")
             return out
 
+    # ---- written parts -------------------------------------------------
+    def _base(self, track):
+        """A track's line before density (caller holds _lock): its written part, else the pattern's."""
+        part = self._parts.get(track)
+        if part is not None:
+            return [list(bar) for bar in part.bars]
+        if self.pattern is None:
+            return None
+        return mutate.working(self.pattern).get(track)
+
+    def _rebuild(self, track):
+        """Recompute one track's working line from its base and density (caller holds _lock)."""
+        base = self._base(track)
+        if base is None:
+            self._work.pop(track, None)
+        elif self._density.get(track):
+            self._work[track] = mutate.density(base, self._density[track], self.seed, track)
+        else:
+            self._work[track] = base
+
+    def _length_note(self, track):
+        ch = track - 1
+        hold, mode = self._cc_values.get((ch, ccmap.PARAMS["amp_hold"].cc)), self._cc_values.get((ch, AMP_MODE_CC))
+        if mode == 1:
+            return "Whiplash last sent amp_mode 1 (ADSR) on this track, so length and release should shape it. " + LENGTH_NOTE
+        if hold == 127:
+            return "Whiplash last sent amp_hold 127 (NOTE) on this track, so length should be audible. " + LENGTH_NOTE
+        return LENGTH_NOTE
+
+    def write_part(self, track, rhythm=None, grid=None, steps=None, hits=None, lock_to=None, notes=None, key=None,
+                   scale=None, length=None, velocity=None, bars=None, reset=False, envelope=None):
+        """Write a track's line from the next bar line: where the hits go, and what notes they play.
+
+        Exactly one of rhythm / grid / steps / hits / lock_to places the hits. lock_to (and rhythm
+        'on_kick' = lock_to 1) copies the source track's hits as they are now; it does not follow later
+        changes. The part replaces the generated line in the working pattern, so mutes, drops, fills,
+        density and humanize still apply; it carries across pattern switches and whiplash_mutate reset,
+        and reset: true or whiplash_stop clears it. Everything is validated before anything changes.
+        envelope 'note' sends one CC 80 = 127 (HOLD = NOTE) on the track, only when asked.
+        """
+        track = check_track(track)
+        reset = check_flag(reset, "reset")
+        envelope = check_envelope(envelope)
+        if reset:
+            extra = [k for k, v in (("rhythm", rhythm), ("grid", grid), ("steps", steps), ("hits", hits),
+                                    ("lock_to", lock_to), ("notes", notes), ("key", key), ("scale", scale),
+                                    ("length", length), ("velocity", velocity), ("bars", bars),
+                                    ("envelope", envelope)) if v not in (None, "", [])]
+            if extra:
+                raise WhiplashError(f"reset: true takes only track (got {', '.join(extra)})")
+            with self._lock:
+                self._require_playing()
+                had = self._parts.pop(track, None)
+                self._rebuild(track)
+                return {"track": track, "reset": True, "was_written": had is not None,
+                        "part": "generated" if any(self._work.get(track) or []) else None,
+                        "applies": "next bar", "at_bar": self.bar + 1}
+        try:
+            kind, value = parts.placement(rhythm, grid, steps, hits, lock_to)
+            source = None
+            if kind == "lock_to":
+                source = check_track(value)
+                if source == track:
+                    raise WhiplashError("lock_to must name another track (e.g. 1 for the kick)")
+            with self._lock:
+                self._require_playing()
+                source_bars = self._base(source) if source else None
+            part = parts.build(kind, source if source else value, notes=notes, key=key, scale=scale, length=length,
+                               velocity=velocity, bars=bars, source_bars=source_bars)
+        except parts.PartError as exc:
+            raise WhiplashError(str(exc)) from None
+        sent = None
+        if envelope == "note":  # opt-in, after validation: exactly one CC 80 = 127 on this track
+            self.ensure_port()
+            sent = self.set_param(track, 127, param="amp_hold")
+        with self._lock:
+            self._require_playing()
+            replaced = track in self._parts
+            self._parts[track] = part
+            self._rebuild(track)
+            transpose = self._transpose.get(track, 0)
+            out = {"track": track, "part": "written", "placed_by": part.source, "bars": part.bars_written,
+                   "repeats": f"every {part.bars_written} bar(s) across the 4-bar loop",
+                   "applies": "next bar", "at_bar": self.bar + 1, "replaced_written": replaced,
+                   "written": parts.describe(part), "transpose": transpose,
+                   "pitch": self._pitch(track, part.bars, transpose, None),
+                   "length_audible": self._length_note(track)}
+            if part.key:
+                out["key"] = part.key
+            if source:
+                out["locked_to"] = {"track": source, "follows_live": False,
+                                    "note": "copied the source's hits now; later density, fills or edits on it "
+                                            "are not followed"}
+            if part.unused_notes:
+                out["unused_notes"] = part.unused_notes
+                out["note"] = (f"{part.unused_notes} note(s) did not fit in 4 bars of hits and won't play; "
+                               "add hits or give fewer notes")
+            if transpose:
+                out["transpose_note"] = (f"track {track} is transposed {transpose:+d} semitones, which still "
+                                         "applies on top of these notes (whiplash_transpose 0 to remove it)")
+            if self._density.get(track):
+                out["density"] = self._density[track]
+            if self._queued:
+                out["carries_into"] = (f"the queued switch to {self._queued['pattern'].name} at bar "
+                                       f"{self._queued['at']}")
+        if sent is not None:
+            out["envelope"] = {"amp_hold": 127, "cc": sent["cc"], "meaning": "HOLD = NOTE (AHD mode)",
+                               "warning": "this changes the track's sound in the unit's kit until it is reloaded; "
+                                          "tell the user"}
+        if track > 8:
+            out["channel_note"] = HIGH_TRACK_NOTE
+        return out
+
     def _pitch(self, track, bars, transpose, pattern):
         """Pitch summary for one track (caller holds _lock), or None for an unpitched drum part."""
         tune = self._cc_values.get((track - 1, TUNE_CC))
@@ -908,7 +1073,11 @@ class Engine:
         with self._lock:
             current = pattern is None
             pattern = self.pattern if current else pattern
-            work = self._work if current else mutate.working(pattern)
+            if current:
+                work = self._work
+            else:  # a queued pattern: written parts carry into it
+                work = mutate.working(pattern)
+                work.update({t: part.bars for t, part in self._parts.items()})
             transpose = dict(self._transpose) if transpose is None else transpose
             last = collections.defaultdict(dict)
             for (ch, control), value in self._cc_values.items():
@@ -926,9 +1095,11 @@ class Engine:
                     "role": f"{role} (assumed)" if role else None,
                     "slot": cc.get("sample_slot"), "tune": cc.get("tune"),
                     "transpose": transpose.get(track, 0),
-                    "pitch": self._pitch(track, work.get(track), transpose.get(track, 0), pattern),
+                    "pitch": self._pitch(track, work.get(track), transpose.get(track, 0),
+                                         None if track in self._parts else pattern),
                     "muted": track in self.muted or track in self.hw_muted,
-                    "part": "generated" if work.get(track) and any(work[track]) else None,
+                    "part": ("written" if track in self._parts else
+                             "generated" if work.get(track) and any(work[track]) else None),
                     "last_cc": {k: v for k, v in cc.items() if k not in ("sample_slot", "tune")},
                 }
             return out
@@ -953,6 +1124,7 @@ class Engine:
                             "transpose": {str(t): v for t, v in sorted((queued.get("transpose") or {}).items())}}
                            if queued else None),
                 "transpose": {str(t): v for t, v in sorted(self._transpose.items())},
+                "parts": {str(t): {"placed_by": p.source, "bars": p.bars_written} for t, p in sorted(self._parts.items())},
                 "tracks": self.tracks_summary(), "roles_assumed": True, "kit_note": KIT_NOTE,
                 "pitch_note": PITCH_NOTE,
                 "muted": sorted(self.muted), "hardware_muted": sorted(self.hw_muted),
@@ -978,7 +1150,7 @@ class Engine:
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "density": dict(self._density), "humanize": self.humanize, "work": dict(self._work),
                 "drops": dict(self._drops), "fills": {b: set(t) for b, t in self._fills.items()},
-                "transpose": dict(self._transpose),
+                "transpose": dict(self._transpose), "parts": set(self._parts),
                 "cc_values": dict(self._cc_values), "messages_sent": self.sent_count,
                 "position": self.position, "bar_hits": self.bar_hits,
                 "transport_mode": transport_mode(self.transport_on()),
