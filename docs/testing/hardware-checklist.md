@@ -1,6 +1,9 @@
 # Hardware test session: Whiplash on a Digitakt II
 
-This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.6.0 plus the visualiser's key and chord display** that hasn't been checked on a real unit yet (v0.6.1's `whiplash_arrange` and fills by role have their HW checks in the v0.6 build plan, not here yet):
+This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.7.1** that hasn't been checked on a real unit yet, except v0.6.2's transitions and `whiplash_mix` (PR #19): those have their hardware checks in that PR and reference §15.3 Q15-17, and aren't in this file yet:
+- v0.7.1: the kit scan, `whiplash_scan_kit` (one note per track heard and classified; labels proposed, never applied) (Part W, PR #22's HW 7.1-1 to 7.1-8),
+- v0.7.0: the listening loop, `whiplash_listen` (capture, loudness, kick timing, the loudness guard, the ramp and CC-rate caps) (Part V, PR #20's HW 7.0-1 to 7.0-9),
+- v0.6.1: `whiplash_arrange` (`short_demo`, `club`), fills that follow the kit map (a kick labelled on track 9), `routing` on play results with `routing.vacated`, routing around written parts, settings that follow a relabelled part, queued results that show their own setup, and no extra Stop before a fresh Start (Part R, PR #17's HW 6.1-1 to 6.1-9),
 - v0.6.0: keys and scales on `whiplash_play_pattern`, chord progressions (`whiplash_set_progression`), and the visualiser's KEY module and per-track chord lines,
 - v0.5.3: the kit map (`whiplash_label_tracks`), one-call start (`tracks` on `whiplash_play_pattern`), the `techhouse` genre and aliases, and the shorter tool descriptions (turn latency),
 - the visualiser v0.5 update: kit labels, `SMP` slot labels, `NO PART`, written parts as a piano roll, `TRN`/`LEN`/`HLD NOTE` tags, and the tracks 9-16 row,
@@ -18,6 +21,9 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part B** covers v0.5.3 in depth: kit map, one-call start, tech house, latency. It is the newest code.
 - **Part C** covers written parts (v0.5.1), **Part D** the v0.5.2 fixes, and **Part E** the visualiser.
 - **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
+- **Part R** (after P) covers v0.6.1: arrangement, fills by role, and the routing report (PR #17's HW 6.1-1 to 6.1-9). R1 is the demo's optional arrangement beat: run it before using that beat on stage.
+- **Part V** (after R) covers v0.7.0's listening loop (PR #20's HW 7.0-1 to 7.0-9). It needs USB AUDIO/MIDI, numpy and sounddevice on the Air, and microphone permission. V6 unplugs the cable, so do it last, with Part L.
+- **Part W** (after V) covers v0.7.1's kit scan (PR #22's HW 7.1-1 to 7.1-8), with the same setup as V. W8 unplugs the cable, so do it last, with Part L.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
 
@@ -32,7 +38,7 @@ Type the prompts as written; *italic* text in a prompt is a placeholder. If Herm
 ```bash
 git -C ~/whiplash pull          # symlinked checkout; or: hermes plugins update whiplash
 hermes gateway restart          # required: the gateway keeps old plugin code until it restarts
-hermes plugins list             # whiplash -> enabled (v0.6.1, 19 tools)
+hermes plugins list             # whiplash -> enabled (v0.7.1, 22 tools)
 ```
 
 A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` shows fewer tools or an older version, the gateway didn't restart: run it again.
@@ -41,7 +47,22 @@ If Hermes earlier auto-created a local skill for Whiplash, delete it. Look for `
 
 Start a **new chat** after the restart, so the kit map and the conversation start empty.
 
-### 0.2 On the unit
+### 0.2 Clock timing on the Air (2 min, no unit needed)
+
+From the checkout, with Hermes running as it will on stage:
+
+```bash
+uv run python scripts/clock_jitter.py --runs 3              # 30 s each, real time
+uv run python scripts/clock_jitter.py --runs 2 --load 8     # with every core busy
+```
+
+- [ ] Write down, for each run, `late_p50`, `late_p99`, `late_max`, `sleep_p50` and `sleep_p99`. This measures the laptop, not the gateway or the unit.
+- **For reference** ([docs/testing/clock-jitter.md](clock-jitter.md)):
+  - Linux idle: late p50 0.05 ms, p99 under 0.4 ms, and a 1 ms sleep takes 1.05 ms.
+  - The macOS CI runner VMs: late p50 7-10 ms, p99 about 24 ms, and a 1 ms sleep takes 7-10 ms.
+- **If `sleep_p50` is above 2 ms or `late_p50` above 1 ms,** the Air's timers are coarse: the clock may run several ms late. Tell the Whiplash agent before the demo (clock-jitter.md §6 item 2 is the fix), and note it here.
+
+### 0.3 On the unit
 
 - [ ] **SETTINGS > MIDI CONFIG > PORT CONFIG:** INPUT FROM = USB (or MIDI+USB), RECEIVE NOTES on, RECEIVE CC/NRPN on.
 - [ ] **SYNC:** CLOCK RECEIVE on, TRANSPORT RECEIVE on.
@@ -79,7 +100,8 @@ This is the hackathon demo ([docs/demo/hackathon-demo.md](../demo/hackathon-demo
 - **Expect:**
   - **One** `whiplash_play_pattern(genre: "deephouse", tracks: {"6": {"slot": 9}})`, not a play followed by `whiplash_select_sample`.
   - The result echoes `setup` for track 6 with `slot_label: "dirty bass"`, and `tracks["6"].pitch` low 52, high 65, with no `register_shift`.
-  - `tracks` (play results carry no `routing` field; `whiplash_label_tracks` and `whiplash_status` describe the kit): kick, rim, clap, closed hat and bass on 1-4 and 6; the **open hat part moves to track 7** (open hat -> cymbal is a close role), so track 7 shows the open-hat line under your label; there are no chord parts anywhere, and track 8 has no part. If you want the routing spelled out, ask *"How did you route the beat onto my kit?"*: Hermes can re-send the labels, whose result carries `routing` (chords `dropped`, track 8 `silent_until_written`).
+  - `tracks`: kick, rim, clap, closed hat and bass on 1-4 and 6; the **open hat part moves to track 7** (open hat -> cymbal is a close role), so track 7 shows the open-hat line under your label; there are no chord parts anywhere, and track 8 has no part.
+  - `routing` (on play results since v0.6.1) spells it out: the open hat on 7, the chord parts `dropped`, track 8 `silent_until_written`, and `vacated: {"5": 7}` with a `vacated_note`: unlabelled track 5 lost its open hat to your cymbal on 7. **Hermes should tell you track 5 plays nothing now.** Whether it should keep the open hat instead is an open question for Phil (R5).
   - Hermes passes on the `overlap_warning`.
 - **Listen:**
   - 122 BPM with swing. **No chords on the tuned cymbals.** Track 7 plays the open-hat rhythm, and track 8 is silent.
@@ -122,7 +144,7 @@ This is the hackathon demo ([docs/demo/hackathon-demo.md](../demo/hackathon-demo
 - **Expect:**
   - `whiplash_play_pattern(genre: "techhouse")` (the words "tech house" resolve; no error, no second try). The result says `mode: "queued"`.
   - The switch lands on a bar line at 126 BPM with no Stop/Start: the unit's delay keeps ringing in time.
-  - The kit map applies the same way as in A3: the open hat goes to track 7, the stab and perc parts are dropped (no track for them), and track 8 keeps its **written melody** (written parts carry across switches). Check it in `tracks` or in A8's status, not in a `routing` field (play results have none).
+  - The kit map applies the same way as in A3: the open hat goes to track 7, the stab and perc parts are dropped (no track for them), and track 8 keeps its **written melody** (written parts carry across switches). The queued result's `routing` says so: `written: [8]` (a written track is never a routing target), the stab and perc `dropped`, and `vacated: {"5": 7}` again. A8's status shows the same.
   - `tracks["6"].pitch` low 55, high 62 (G4-D5), no `register_shift`.
 - **Listen:** four on the floor, an offbeat open hat (on the cymbal), 16th hats with accents, and a rolling off-beat bass that never lands on the kick. The bass is still the dirty bass (slot 9: the unit keeps the CC 19 change). The melody on 8 carries on.
 - **Look:** the BPM readout rolls to 126; the transport shows the queued switch with a beat countdown first.
@@ -458,6 +480,196 @@ Rehearse P1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 
 ---
 
+## R. Arrangement, fills by role and the routing report, v0.6.1 (PR #17's HW 6.1-1 to 6.1-9; §15.1 #26, #30-31; §15.3 Q14)
+
+**Setup:** as in §0: `hermes plugins list` shows whiplash v0.7.1 (22 tools; Part R needs v0.6.1 or later), new chat, empty pattern selected, **don't touch project slots 1-3**, AUTO CHANNEL and FX CONTROL CH off channels 9-12. Reload the pattern ([FUNC] + [NO]) between checks, and **don't save**.
+
+Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v061` (no unit needed) must end in `RESULT: PASS`. It runs R1 at 30 s and R2, and checks the MIDI, not the sound.
+
+### R1. A short track: intro, build, drop, outro (HW 6.1-1; the demo's optional arrangement beat)
+- **Type:** *"Play techno, and make it a 30-second track: intro, build, drop, outro."* Then, during the build, *"Which section are we in?"*
+- **Expect:**
+  - `whiplash_play_pattern(techno)`, then `whiplash_arrange(preset: "short_demo", seconds: 30)`: 16 bars at 130 BPM, from the next bar line. The result lists the sections with `plays_now`.
+  - On the demo kit (7-8 tuned cymbals, as after Part A), `plays_now` reads: **intro (4 bars)** 1, 4, 7: kick and hats, the cymbal counting as a hat; **build (4)** adds rim and clap (2, 3) **on the one**, and the kick sits out the build's last bar; **drop (4)** adds the bass on 6, landing on the one; **outro (4)** drums only. Every section but the outro ends on a fill.
+  - The build ramps `filter_freq` 20 → 127 on the *music* tracks. The demo kit has none (the stab and perc are dropped), so no CC goes out. On an unlabelled kit, the techno stab on track 7 is a music track and its filter opens over the build (R3).
+  - Status gives `arrangement.current`: `section: "build"`, `bars_left`, `next: "drop"`.
+  - **It stops by itself** on the bar line after the outro, with MIDI Stop and no hanging notes. If a ramp ran, Hermes tells you the filter stays where the build left it (127) until you reload.
+- **Longer variant (as in PR #17):** *"Play some deep house, then make it a 90-second track."* That is 44 bars at 122 BPM, with a break (no kick or bass) between two drops.
+- [ ] Pass · [ ] Fail. Stopped by itself at the end: ____. Notes:
+
+### R2. A kick labelled on track 9 gets the kick fill (HW 6.1-2)
+- **Setup:** a kick sample on track 9, and channel 9 free of AUTO CHANNEL and FX CONTROL CH.
+- **Type:** *"Track 9 is my kick. Play techno."* Then *"Give me a fill."*
+- **Expect:**
+  - `whiplash_label_tracks({"9": "kick"})`, and the result carries a `channel_note` about channel 9. From the start, the kick plays on **track 9**, not track 1.
+  - `whiplash_mutate fill`: the result's `tracks` include 9. **Track 9 sits out the last beat** of the fill bar, the snare rolls and the hats ratchet, and the kick is back on the one.
+- [ ] Pass · [ ] Fail. Notes:
+
+### R3. Does the build's CC 74 sweep sound like a filter opening? (HW 6.1-3; §15.3 Q14)
+- **Setup:** *"Clear the kit map"*, then R1's prompt again, so the techno stab on track 7 is a music track.
+- **During the build,** listen to the stab on track 7.
+- **Expect:** CC 74 going 20 → 127 sounds like a low-pass opening on these presets' filter machine. If it doesn't, note the machine (reference §4.2).
+- [ ] Recorded: ____
+
+### R4. Club preset (HW 6.1-4; optional if time is short)
+- **Type:** *"Play techno as a club track."*
+- **Expect:** `preset: "club"`, 80 bars (about 2.5 min at 130 BPM). Spot-check the build at bar 17 and the drop at bar 25, both on the one, and the clean stop at the end.
+- [ ] Pass · [ ] Fail. Notes:
+
+### R5. Tuned cymbals on 7-8 empty track 5: the routing report (HW 6.1-5; §15.1 #26, open design question)
+- **Type:** *"Tracks 7 and 8 are tuned cymbals."* Then *"Play some deep house."*
+- **Expect:** the sound is the same as A3. The play result's `routing.vacated` is `{"5": 7}` with a `vacated_note`, and **Hermes says track 5 plays nothing now** because its open hat moved to the cymbal on 7.
+- **Decide (Phil):** should an unlabelled track 5 keep the open hat instead? This only reports it; the routing order is unchanged until you decide.
+- [ ] Pass · [ ] Fail. Decision: keep the documented order / unlabelled tracks keep the default layout. Notes:
+
+### R6. Transpose follows a relabelled part (HW 6.1-6)
+- **Type:** *"Play techno and put the bass up an octave."* Then *"Actually track 10 is my bass."*
+- **Expect:** from the next bar, the bass plays on **track 10, still an octave up** (`follows_part: {"transpose": {"6->10": 12}}`), and track 6 goes quiet. The result has a `channel_note` for 10.
+- [ ] Pass · [ ] Fail. Notes:
+
+### R7. A queued switch shows its own setup (HW 6.1-7)
+- **Type, while techno plays:** *"Switch to soul on the next bar with the dirty bass (slot 9) on track 6 and track 8 muted."*
+- **Expect:** the queued result already shows track 6 `slot: 9` and track 8 `muted: true`, marked `setup_at_switch`, and `muted_at_switch` lists 8. At the switch, the bass changes sample on the one and track 8 is silent.
+- [ ] Pass · [ ] Fail. Notes:
+
+### R8. A written part replaces the routed one, with no second bass (HW 6.1-8)
+- **Type, on deep house:** *"Track 10 is my bass."* Then *"Write a four-on-the-floor bass on track 10 with A4."*
+- **Expect:** the written bass replaces the generated one, and **no second bass appears on track 6**. The result says `replaces_generated: "bass (pattern track 6)"`.
+- [ ] Pass · [ ] Fail. Notes:
+
+### R9. No extra Stop before a fresh Start (HW 6.1-9; §15.1 #31)
+- **Type:** *"Stop."* Then *"Play techno."*
+- **Expect:** the unit's own sequencer starts cleanly from the top. Nothing from the old position carries on. (With a MIDI monitor: no second All Notes Off and MIDI Stop just before the Start.)
+- [ ] Pass · [ ] Fail. Notes:
+
+### R10. The unit follows Whiplash's clock steadily (§15.3 Q25; optional, during any long run such as R1's 90-second variant or R4)
+- **Look and listen:** the unit's tempo readout should sit still at the BPM Whiplash sends (130.0 on techno). Note any flicker, an audible hiccup or a tempo wobble, and the time it happened. Then ask *"What's the status?"*: if a later Whiplash version reports clock lateness there, copy those numbers next to your note.
+- [ ] Recorded: readout ____ hiccups ____
+
+---
+
+## V. The listening loop, v0.7.0 (PR #20's HW 7.0-1 to 7.0-9; §15.1 #34-35; §15.3 Q7, Q18-21)
+
+`whiplash_listen` records the unit's USB audio for 1-8 bars from the next bar line and reports loudness, bands, kick timing and clipping. Capture only: nothing is sent to the unit by a listen. This part is new and **untested on hardware**.
+
+**Setup (once):**
+- **On the unit:** SETTINGS > **USB CONFIG = USB AUDIO/MIDI** ([M] 14.8.1, p. 83; MIDI keeps working), and AUDIO ROUTING > **USB OUT = MAIN** (p. 81). Select an empty pattern as usual; **don't touch slots 1-3**.
+- **On the Air,** into the Python that runs Hermes: `pip install 'numpy>=1.24' 'sounddevice>=0.4.6'`, then `hermes gateway restart`. `hermes plugins list` should show whiplash v0.7.0 or later (21 tools in v0.7.0, 22 in v0.7.1).
+- **macOS microphone permission:** the first listen triggers a prompt for the app that runs Hermes (Terminal, iTerm or the gateway's host app). Click Allow. If you missed it: System Settings > Privacy & Security > Microphone, switch that app on, quit and reopen it, then `hermes gateway restart`. Without permission the listen returns an error with this hint, or silence.
+
+### V1. A first listen (HW 7.0-1; §15.3 Q18)
+- **Type:** *"Play deep house, then listen to two bars."*
+- **Expect:**
+  - The result names the Digitakt as `device`. **Write down the exact name** (Q18).
+  - `lufs_ish` is roughly −20 to −8, and `kick.heard` = 8.
+  - The beat never hiccups during the listen.
+- [ ] Pass · [ ] Fail. Device name: ____ `lufs_ish`: ____
+
+### V2. In time, and swing heard (HW 7.0-2; §15.3 Q20)
+- **Type:** *"Is it in time?"* Then *"Set swing to 70 and listen again."*
+- **Expect:**
+  - First: `kick.median_offset_ms` is a steady few ms. **Write the number down** (Q20: the USB round trip). `spread_ms` is small.
+  - After swing 70: `swing_estimate` is near 70, and Hermes says so.
+- [ ] Pass · [ ] Fail. `median_offset_ms`: ____ `spread_ms`: ____
+
+### V3. Bass against kick (HW 7.0-3)
+- **Type:** *"Does the bass clash with the kick?"*
+- **Expect:** Hermes quotes `low_end` / `bands.low`, proposes a fix (bass level or filter down), applies it and listens again. `kick_over_rest_db` goes up, and it sounds cleaner.
+- [ ] Pass · [ ] Fail. Notes:
+
+### V4. Clipping and the loudness guard (HW 7.0-4)
+- **Setup:** push the unit hot (main volume and overdrive) until it clips.
+- **Type, in order:** *"Listen."*, *"Turn the bass up."*, *"Do it anyway."*, *"It's too loud, fix it without killing the vibe."*
+- **Expect:**
+  - The listen shows `clipping: true`.
+  - The raise is refused with the loudness-guard hint.
+  - With `force`, it goes through with a `guard` note.
+  - The fix brings levels down over a bar or two, with no hard cut, and the next listen shows no clipping.
+- **Afterwards:** turn main volume and overdrive back on the unit.
+- [ ] Pass · [ ] Fail. Notes:
+
+### V5. Track level shows in the listen (HW 7.0-5; §15.3 Q19)
+- **Type:** *"Bring the bass down 20, then listen."*
+- **Expect:** `lufs_ish` and `bands.low` drop (Q19: does TRACK LEVEL CC 95 reach the USB main mix).
+- [ ] Pass · [ ] Fail. Before / after `lufs_ish`: ____ / ____
+
+### V6. Unplug mid-listen (HW 7.0-6; do it near the end, like Part L)
+- **Action:** start a listen, then pull the USB cable.
+- **Expect:** `whiplash_listen` errors cleanly ("stopped delivering audio"). MIDI shares the cable, so the beat stops with `port_lost`, as in L1. Replug and resume as in L2.
+- [ ] Pass · [ ] Fail. Notes:
+
+### V7. USB MIDI only (HW 7.0-7)
+- **Setup:** USB CONFIG back to **USB MIDI**.
+- **Type:** *"Listen."*
+- **Expect:** a clean error naming USB AUDIO/MIDI. Every other tool still works. Set USB CONFIG back to USB AUDIO/MIDI afterwards if you continue.
+- [ ] Pass · [ ] Fail. Notes:
+
+### V8. Outs during a listen (HW 7.0-8; §15.3 Q7)
+- **During any listen,** check whether the main outs and headphones stay audible (INT TO MAIN = AUTO).
+- [ ] Recorded: main outs ____ headphones ____
+
+### V9. Ramp cap at 300 BPM (HW 7.0-9; §15.1 #35; §15.3 Q21)
+- **Type:** *"Speed up to 300."* Then *"Ramp filter, level and pan on all 16 tracks over 1 bar."*
+- **Expect:** past 48 ramps, Hermes gets the cap message. Notes stay on time, and the ramps that ran end where asked (Q21: does the unit keep up with the CC rate).
+- **Afterwards:** *"Back to 122"*, and reload the pattern ([FUNC] + [NO]); levels and pans changed.
+- [ ] Pass · [ ] Fail. Notes:
+
+---
+
+## W. Kit scan, v0.7.1 (PR #22's HW 7.1-1 to 7.1-8; §15.1 #36; §15.3 Q22-24)
+
+`whiplash_scan_kit` plays one note 60 per track, alone, with the sequencer stopped. It hears each note through the v0.7.0 capture path and **proposes** labels. It never applies them: Hermes asks first and calls `whiplash_label_tracks` only on your yes. This part is new and **untested on hardware**.
+
+**Setup:** the same as Part V (USB CONFIG = USB AUDIO/MIDI, USB OUT = MAIN, numpy and sounddevice in Hermes's Python, microphone allowed). `hermes plugins list` should show whiplash v0.7.1 with 22 tools. **Select an empty pattern on the unit and keep its sequencer stopped.**
+
+### W1. Scan, and nothing is applied (HW 7.1-1; §15.3 Q22)
+- **Type:** *"Stop. Scan my kit."*
+- **Expect:**
+  - Each track sounds **once, alone, in order 1-16**, about 1-2 s apart. Nothing else plays.
+  - Hermes shows a list (track: label, confidence) and **applies nothing**: *"What's my kit map?"* shows no new labels.
+  - **Note which labels are wrong,** with their `features` (Q22: tunes the thresholds).
+- [ ] Pass · [ ] Fail. Wrong labels (track: proposed → actual): ____
+
+### W2. Accept with a correction (HW 7.1-2)
+- **Type:** *"Yes, but track 7 is a tuned cymbal."*
+- **Expect:** **one** `whiplash_label_tracks` call with your correction merged in. The status kit map matches.
+- [ ] Pass · [ ] Fail. Notes:
+
+### W3. The unit's own pattern is playing (HW 7.1-3; §15.3 Q24)
+- **Setup:** select a pattern with trigs and press [PLAY] on the unit.
+- **Type:** *"Scan my kit."*
+- **Expect:** refused before **any** note, with "already making sound … own pattern". Press [STOP] on the unit, ask again, and it scans. Select the empty pattern again afterwards.
+- [ ] Pass · [ ] Fail. Notes:
+
+### W4. A Whiplash beat is playing (HW 7.1-4)
+- **Type:** *"Play techno."* Then *"Scan my kit."*
+- **Expect:** refused with the `whiplash_stop` hint. The beat keeps playing untouched. *"Stop"* before moving on.
+- [ ] Pass · [ ] Fail. Notes:
+
+### W5. A track muted on the unit (HW 7.1-5; §15.3 Q23)
+- **Setup:** mute a track on the unit.
+- **Type:** *"Scan my kit."*
+- **Expect:** that track comes back `silent`, with the mute/level/slot hint. Unmute it afterwards.
+- [ ] Pass · [ ] Fail. Mute mode used (global / pattern): ____
+
+### W6. Long tails (HW 7.1-7)
+- **Setup:** give one track a long pad or reverb tail.
+- **Expect:** the next note waits for the tail (up to about 2 s). `tail_overlap` appears only if it rings longer than that.
+- [ ] Pass · [ ] Fail. Notes:
+
+### W7. Tracks 9-16 only (HW 7.1-8)
+- **Setup:** AUTO CHANNEL and FX CONTROL CH off channels 9-16.
+- **Type:** *"Scan tracks 9 to 16."*
+- **Expect:** only those tracks sound, and the result carries a `channel_note` about the AUTO / FX channels.
+- [ ] Pass · [ ] Fail. Notes:
+
+### W8. Unplug mid-scan (HW 7.1-6; do it last, with Part L)
+- **Action:** start a scan, then pull the USB cable.
+- **Expect:** a clean error, and no stuck note after replugging.
+- [ ] Pass · [ ] Fail. Notes:
+
+---
+
 ## F. Pitch and register, v0.5.0 (plan HW 1; §15.3 Q2)
 
 **Setup:** *"Clear the kit map."*
@@ -515,7 +727,7 @@ Rehearse P1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 ### G1. The plugin and skill load after a gateway restart
 - **Type:** `/plugins`, then *"List your skills. Is whiplash:digitakt there? Open it and tell me what it says about the kit map and pitch."*
 - **Expect:**
-  - whiplash is enabled, v0.5.3.
+  - whiplash is enabled, v0.7.1 (22 tools).
   - `skills_list` shows `whiplash:digitakt`.
   - `skill_view("whiplash:digitakt")` returns the "Fast path: label, then start in one call" section and the "note 60 plays a sample at its own pitch" section.
   - No stale local `whiplash-digitakt` skill appears alongside it.
@@ -704,19 +916,28 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 
 | Open question (§15.3) | Check |
 | --- | --- |
-| Q1 Factory channel settings | 0.2 |
+| Q1 Factory channel settings | 0.3 |
 | Q2 Note 60, 48 and 72 on a track channel; KB octave; range | F1, F2, F3, F7 |
 | Q3 Which mute mode CC 94 drives | J4 |
 | Q4 CC 19 = 0 | I1 |
 | Q5 CC 123 | J7, D3 (partial) |
 | Q6 Default VELOCITY TO VOL and AMP HOLD | H1, J3 |
-| Q7 INT TO MAIN while capturing | E3 |
+| Q7 INT TO MAIN while capturing | E3, V8 |
 | Q8 SLICE = NOTE, slice 1 | K3 |
 | Q9 Written-part length vs HOLD/MODE; HOLD = NOTE display | C3, D4-D6 (and §15.1 #24: C6) |
 | Q10 Setup slot lands on the first note (fresh start and queued) | A3, B5, B6 |
 | Q11 TUNE after a slot change | B5 |
 | Q12 Notes one audio track sounds at once | P2 |
 | Q13 A chord spread across chord tracks | P3 |
+| Q14 CC 74 build sweep sounds like a filter opening | R3 |
+| Q18 Listen input name, channels, sample rate | V1 |
+| Q19 TRACK LEVEL in the USB main mix | V5 |
+| Q20 Round-trip kick offset and spread | V2 |
+| Q21 CC rate at 300 BPM with 48 ramps | V9 |
+| Q22 Kit scan labels on Phil's kit | W1 |
+| Q23 Kit scan and the unit's mutes | W5 |
+| Q24 Kit scan and the unit's own pattern | W3 |
+| Q25 The unit follows Whiplash's clock steadily | R10 (and 0.2 for the laptop) |
 
 | Plan item / §15.1 | Check |
 | --- | --- |
@@ -730,3 +951,11 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 | §15.1 #27 setup CCs | A3, B5-B7 |
 | v0.6 HW 6.0-1 to 6.0-5 (keys, progressions) | P1-P5 |
 | Visualiser key and chords (v0.6.0) | E8 |
+| v0.6.1 HW 6.1-1 to 6.1-9 (arrangement, fills by role, routing) | R1-R9 |
+| §15.1 #26 routing report (`routing`, `vacated`) | A3, A7, R5 |
+| §15.1 #30 arrangement without song mode or program change | R1, R4 |
+| §15.1 #31 no extra Stop before Start | R9, A9 |
+| v0.7.0 HW 7.0-1 to 7.0-9 (listening loop) | V1-V9 |
+| §15.1 #34-35 listen and the safety caps | V1-V9 |
+| v0.7.1 HW 7.1-1 to 7.1-8 (kit scan) | W1-W8 |
+| §15.1 #36 kit scan: one note per track, never applied | W1-W8 |

@@ -39,7 +39,7 @@ Recording and export are one roadmap feature, split in two:
 
 - **[M]** *Elektron Digitakt II User Manual*, OS 1.17 (see [docs/digitakt-ii/README.md](../digitakt-ii/README.md)), cited by page.
 - **[G]** [midi.guide Digitakt II](https://midi.guide/d/elektron/digitakt-ii/).
-- **[R]** [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md). v0.8.0 adds §15.1 #37 and §15.3 Q25-30.
+- **[R]** [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md). v0.8.0 adds §15.1 #37 and §15.3 Q26-31.
 
 Every claim marked **HW** needs a check on the unit.
 
@@ -71,7 +71,7 @@ Moves on the track's own channel name the track. Moves on the AUTO channel don't
    - NRPN (CC 99/98, then data CC 6) is assembled per channel and mapped through `ccmap` `Param.nrpn`. Those addresses come from midi.guide only, and §8.3 lists several where the manual disagrees, so NRPN moves are marked `unsure` on those addresses.
    - Notes are counted per track.
    - Everything else (SysEx, program change, clock, transport, aftertouch, pitch bend) is ignored and counted by type. It is **never** re-sent and never recorded.
-4. **Echo filter.** If the unit, or a MIDI thru in between, echoes Whiplash's own messages back, they must not count as user moves. While the input is open, `Engine.send` notes the last value per (kind, channel, number) with its time. An incoming CC or note matching what Whiplash sent less than 60 ms earlier is ignored (`echoes_ignored`). **HW** (Q27).
+4. **Echo filter.** If the unit, or a MIDI thru in between, echoes Whiplash's own messages back, they must not count as user moves. While the input is open, `Engine.send` notes the last value per (kind, channel, number) with its time. An incoming CC or note matching what Whiplash sent less than 60 ms earlier is ignored (`echoes_ignored`). **HW** (Q28).
 5. **Last user moves.** These are the 32 most recent moves. Consecutive moves of the same track and param are merged into one gesture, with `from`, `value` and `said` ("track 6 filter_freq 40 -> 90"). `whiplash_status.play_along` shows the last 8.
 6. **Ramps yield.**
    - A user CC or NRPN on a (track, CC) where a Whiplash ramp runs is appended to a lock-free `grabs` deque (bounded, 256).
@@ -140,15 +140,15 @@ The menu names come from the manual. Confirm them on the unit and note any that 
 
 | # | Prompt in Hermes, or action | Listen or look for | Reference |
 | --- | --- | --- | --- |
-| HW 8.0-1 | "Play techno. Play along with me." Turn track 6's filter knob. Then "what did I just change?" | `play_along.port` names the Digitakt. Hermes lists "track 6 filter_freq a -> b" with the right track and param. Note the input's name. | Q25 |
-| HW 8.0-2 | "Ramp track 6's filter from 20 to 127 over 8 bars." Halfway, grab the filter knob. | The sweep stops at once and your knob wins. The next answer says Hermes yielded (`yielded_to_user`), and status lists it. | Q26 |
-| HW 8.0-3 | Without touching anything, let a ramp run for 4 bars with play-along on. | No yield, and `echoes_ignored` stays 0 (or counts, if the unit echoes Whiplash's CCs). Note which. | Q27 |
-| HW 8.0-4 | "Answer whatever I play on track 7, on track 8." Put the unit in KEYBOARD mode on track 7 and play 4 notes in one bar. | On the next bar, track 8 plays a 4-note reply in key, on the grid, near its native pitch. Then try `echo` and `harmonize`. | Q28 |
-| HW 8.0-5 | Set OUTPUT CH to AUTO, then repeat 8.0-1. | Moves show on the AUTO channel's number, not track 6 (expected). Set it back. | Q25 |
-| HW 8.0-6 | Set PARAM OUTPUT to NRPN, turn track 6's filter and level. | Moves come back via `nrpn`. Note whether filter_freq and track_level are named right (midi.guide addresses, `unsure` flags). | Q29 |
+| HW 8.0-1 | "Play techno. Play along with me." Turn track 6's filter knob. Then "what did I just change?" | `play_along.port` names the Digitakt. Hermes lists "track 6 filter_freq a -> b" with the right track and param. Note the input's name. | Q26 |
+| HW 8.0-2 | "Ramp track 6's filter from 20 to 127 over 8 bars." Halfway, grab the filter knob. | The sweep stops at once and your knob wins. The next answer says Hermes yielded (`yielded_to_user`), and status lists it. | Q27 |
+| HW 8.0-3 | Without touching anything, let a ramp run for 4 bars with play-along on. | No yield, and `echoes_ignored` stays 0 (or counts, if the unit echoes Whiplash's CCs). Note which. | Q28 |
+| HW 8.0-4 | "Answer whatever I play on track 7, on track 8." Put the unit in KEYBOARD mode on track 7 and play 4 notes in one bar. | On the next bar, track 8 plays a 4-note reply in key, on the grid, near its native pitch. Then try `echo` and `harmonize`. | Q29 |
+| HW 8.0-5 | Set OUTPUT CH to AUTO, then repeat 8.0-1. | Moves show on the AUTO channel's number, not track 6 (expected). Set it back. | Q26 |
+| HW 8.0-6 | Set PARAM OUTPUT to NRPN, turn track 6's filter and level. | Moves come back via `nrpn`. Note whether filter_freq and track_level are named right (midi.guide addresses, `unsure` flags). | Q30 |
 | HW 8.0-7 | "Bring the bass down 20 over 2 bars." Then "undo that." | Levels go back on the next bar line. Then write a part on track 7, "undo that": the old line returns on the bar. | |
 | HW 8.0-8 | Unplug USB with play-along on. | `play_along.lost` says so. The beat stops with `port_lost` as in L1 (same cable). Replug, then `whiplash_play_along` again. | |
-| HW 8.0-9 | Play fast 16ths in KEYBOARD mode while turning two knobs, at 160 BPM. | The beat stays tight, with no audible lag on Whiplash's notes. | Q30 |
+| HW 8.0-9 | Play fast 16ths in KEYBOARD mode while turning two knobs, at 160 BPM. | The beat stays tight, with no audible lag on Whiplash's notes. | Q31 |
 
 Constraints throughout:
 - No SysEx and no program change are sent, and no received message is ever forwarded.

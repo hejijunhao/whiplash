@@ -6,7 +6,7 @@ calls these. mido is imported lazily (through engine._mido) only when the input 
 What the unit sends, and when (docs/digitakt-ii/reference.md §7.2, manual 14.4 p. 77-79): only with SETTINGS >
 MIDI CONFIG > PORT CONFIG OUTPUT TO including USB, ENCODER DEST / TRIG KEY DEST at INT+EXT, on the track's own
 channel when OUTPUT CH is the track channel (else the AUTO channel), as CC or NRPN per PARAM OUTPUT. None of this
-is hardware-verified yet (§15.3 Q25-30).
+is hardware-verified yet (§15.3 Q26-31).
 
 Received messages are never re-sent: the reader only reads them. SysEx, program change, clock and transport from
 the unit are ignored and counted.
