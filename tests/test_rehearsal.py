@@ -21,14 +21,26 @@ def _load_script():
 rehearse = _load_script()
 
 
+def _rehearse(out, **kwargs):
+    """Run the rehearsal at 4x. Clock jitter is measured in real time, and a shared CI runner (macOS
+    especially) sometimes stalls every process for a few ms: main's own CI hit this (run 43015115037,
+    "tech house: 5.07 ms"). So a run whose only violations are jitter is run once more, and the second
+    run must pass. A jitter regression in the engine reproduces; one noisy burst on the runner doesn't.
+    Any other violation fails at once."""
+    saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
+    for attempt in (1, 2):
+        r = rehearse.Rehearsal(speed=4, out=out / f"try{attempt}", log=lambda *a: None, **kwargs)
+        r.run()
+        report = r.write()
+        assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved  # nothing left patched
+        if not r.violations or not all(w == "global" and " ms over " in v for w, v in r.violations):
+            break
+    return r, report
+
+
 @pytest.fixture(scope="module")
 def rehearsal(tmp_path_factory):
-    saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
-    r = rehearse.Rehearsal(speed=4, out=tmp_path_factory.mktemp("rehearsal"), log=lambda *a: None)
-    r.run()
-    report = r.write()
-    assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved  # nothing left patched
-    return r, report
+    return _rehearse(tmp_path_factory.mktemp("rehearsal"))
 
 
 def test_the_demo_rehearses_clean(rehearsal):
@@ -105,12 +117,7 @@ def test_the_v06_section_is_off_by_default(rehearsal):
 
 @pytest.fixture(scope="module")
 def rehearsal_v06(tmp_path_factory):
-    saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
-    r = rehearse.Rehearsal(speed=4, out=tmp_path_factory.mktemp("rehearsal_v06"), log=lambda *a: None, v06=True)
-    r.run()
-    report = r.write()
-    assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved
-    return r, report
+    return _rehearse(tmp_path_factory.mktemp("rehearsal_v06"), v06=True)
 
 
 def test_the_v06_progression_rehearses_clean(rehearsal_v06):
