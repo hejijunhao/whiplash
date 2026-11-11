@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+Whiplash goes from playing a beat to performing it: three new tools (11 in all), and pattern changes that land on the bar.
+
+Added
+- `whiplash_ramp_param`: sweeps a named param or raw CC `from` → `to` over `beats` or `bars`, advanced on the sequencer's MIDI clock. Curves linear, exp and log. It sends only when the integer value changes, runs several ramps at once (a new one on the same track/param replaces the old), and cancels by id or `all`. `whiplash_stop` cancels all ramps, and `whiplash_set_param` on the same param cancels that ramp. Needs a pattern playing.
+- `whiplash_mutate`: live `density` (thin/thicken), `fill` (one-bar drum fill on the next bar), `swing` (50-80 %), `humanize` (bounded, never drifts), `drop` (silence tracks for N bars with auto-return and optional fill), and `reset`. Deterministic, seeded, and timed to the bar.
+- `whiplash_list_params`: the named Digitakt II parameter map, grouped, with ranges, centres and aliases.
+- Bar-quantized pattern switching. `whiplash_play_pattern` while playing queues the new pattern for the next bar line (`mode: "queued"`, `switch_at_bar`) without a Stop/Start. Mutes, ramps and scheduled drops/fills carry over; density, swing and humanize reset. A second queued call replaces the first.
+- Hot-plug notify. While on the virtual fallback port, every tool result carries `device_available` and a notice once a Digitakt appears. Whiplash never switches on its own. Port enumeration is rate-limited to every 2 s and never runs in the clock thread.
+- Port loss. If a send fails (USB unplugged), the port is dropped, `whiplash_status` shows `port_lost`, and the next call re-detects and reopens it.
+- `docs/catalog-entry.yaml` and `docs/catalog-pr.md`: drafts for the Hermes plugin catalog submission.
+- CI also runs on `feat/v2`.
+
+Changed
+- **Parameter map rewritten** from the Digitakt II manual (Appendix B), cross-checked with midi.guide: 36 params across track, src, filter, amp, fx and lfo, with ranges and centres. Named params are sent as CC only, because several NRPN addresses disagree between the two sources. Out-of-range values clamp into the param's range (switches like `mute` and `play_mode` reject instead). Unknown names get close-match suggestions. The old names keep working as aliases (`level`, `volume`, `cutoff`, `filter_cutoff`, `resonance`, `filter_resonance`, `decay`).
+- **Mutes now carry over** a live pattern switch. They still reset on `whiplash_stop` and on a fresh start.
+- `whiplash_play_pattern` returns `mode` (`started` or `queued`). `whiplash_stop` also returns `ramps_cancelled`.
+- Stopping mid-beat sends note-offs only for notes actually sounding, with no stray note-offs for note-ons that never went out.
+- The MIDI backend error suggests the ALSA runtime when `libasound` is missing.
+
 ## 0.2.0
 
 **Breaking:** every tool is now prefixed `whiplash_` (`play_pattern` → `whiplash_play_pattern`, `stop` → `whiplash_stop`, and so on), so Whiplash can't collide with another plugin's tools.
