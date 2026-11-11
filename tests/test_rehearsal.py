@@ -1,5 +1,6 @@
 """scripts/rehearse_demo.py: the hackathon demo, rehearsed against a recording port at 4x clock."""
 import importlib.util
+import time
 from pathlib import Path
 
 import mido
@@ -172,6 +173,8 @@ def _clocks(late_ms, period=0.02, speed=1):
 
 
 class _Canary:
+    late_threshold = rehearse.LATE_MS / 1000  # a machine with precise sleeps
+
     def __init__(self, stalls=()):
         self.stalls = list(stalls)
 
@@ -214,11 +217,26 @@ def test_the_timing_rule_excuses_only_stalls_the_canary_saw():
     assert quiet["contended"] == 0 and quiet["allowed"] == 2
 
 
-def test_the_canary_records_a_machine_stall():
+def test_the_canary_measures_the_machine():
     canary = rehearse.Canary(limit=0.002).start()
-    assert canary.proc is not None and abs(canary.offset) < 0.05  # a system-wide clock in both processes
+    assert canary.proc is not None and abs(canary.offset) < 1.0  # one system-wide clock (the offset is pipe latency)
+    time.sleep(0.3)
     canary.stop()
-    assert canary.loops > 0 and isinstance(canary.stalls, list)
+    assert canary.loops > 10 and canary.sleep_p50 >= 0.001 and canary.sleep_p99 >= canary.sleep_p50
+    assert canary.stall_threshold >= 0.002 and canary.late_threshold >= rehearse.LATE_MS / 1000
+    assert all(b - a > canary.stall_threshold for a, b in canary.stalls) and canary.describe().startswith("a 1 ms")
+
+
+def test_a_coarse_machine_raises_the_late_threshold():
+    canary = rehearse.Canary()
+    canary.sleeps = [(k * 0.01, k * 0.01 + 0.007) for k in range(99)] + [(1.0, 1.03)]  # 7 ms sleeps, one 30 ms
+    canary._digest()
+    assert canary.stalls == [(1.0, 1.03)]
+    assert canary.stall_threshold == pytest.approx(0.021) and canary.late_threshold == pytest.approx(0.03)
+    late = [7.0] * 400  # the engine's ticks 7 ms late, as on that machine: not a stall there
+    late[200] = 45.0
+    t = rehearse.timing(_clocks(late), 1, canary)
+    assert t["limit_ms"] == pytest.approx(30.0) and t["over"] == 1
 
 
 # ---- optional v0.6.1 section (--v061): off by default ---------------------------------------------------
@@ -286,10 +304,12 @@ def _load_jitter():
 def test_clock_jitter_measures_and_sees_a_busy_python_thread():
     jitter = _load_jitter()
     saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
-    quiet = jitter.run_once(speed=4, seconds=12, bpm=126)
+    quiet = jitter.run_once(speed=1, seconds=8, bpm=126)
     hog = jitter.run_once(speed=1, seconds=8, bpm=126, gil_hog=True)
     assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved
-    assert quiet["ticks"] > 300 and quiet["period_ms"] == pytest.approx(60000 / 126 / 24 / 4, rel=0.05)
+    assert quiet["ticks"] > 300 and quiet["period_ms"] == pytest.approx(60000 / 126 / 24, rel=0.05)
     # a CPU-bound thread in the same process holds the GIL for its switch interval (5 ms) at a time: every wake-up
-    # of the clock thread waits for it, and the canary (another process) can't see it, so it is never excused
-    assert hog["late_p50"] > 1.0 and hog["unexcused"] > hog["allowed"], hog
+    # of the clock thread waits for it (Linux: 0.05 -> 5 ms; macOS runner: 7 -> 13 ms)
+    assert hog["late_p50"] > quiet["late_p50"] + 2.0, (quiet, hog)
+    if quiet["late_limit"] <= rehearse.LATE_MS:  # precise sleeps: the canary (another process) can't excuse it
+        assert hog["unexcused"] > hog["allowed"], hog

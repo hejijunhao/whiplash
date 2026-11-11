@@ -164,50 +164,66 @@ CANARY_CODE = r"""
 import json, sys, threading, time
 done = threading.Event()
 threading.Thread(target=lambda: (sys.stdin.read(), done.set()), daemon=True).start()
-limit, stalls, loops = float(sys.argv[1]), [], 0
+sleeps = []
 print(json.dumps({"t0": time.perf_counter()}), flush=True)
 while not done.is_set():
     a = time.perf_counter()
     time.sleep(0.001)
-    b = time.perf_counter()
-    loops += 1
-    if b - a > limit:
-        stalls.append((a, b))
-print(json.dumps({"stalls": stalls, "loops": loops}), flush=True)
+    sleeps.append((a, time.perf_counter()))
+print(json.dumps({"sleeps": sleeps}), flush=True)
 """
 
 
 class Canary:
-    """A separate Python process that sleeps 1 ms at a time and records every wake-up more than `limit` late.
-    Those are moments the machine (scheduler, VM host, CI runner) stalled, independent of Whiplash: a tick that
-    was late during one is excused. Whiplash's own causes of lateness (work on the clock thread, its lock held by
-    a tool call, a busy Python thread in its process) don't stall another process, so they are never excused.
-    perf_counter is a system-wide monotonic clock on Linux and macOS; the start handshake checks that."""
+    """A separate Python process that sleeps 1 ms at a time for the whole run and records how long each sleep took.
+
+    It gives two things:
+    - **The machine's timing floor.** On Linux a 1 ms sleep takes about 1.1 ms; on a macOS CI runner it took about
+      7 ms (docs/testing/clock-jitter.md §4). The engine waits in short sleeps too, so a tick is only counted as
+      late beyond what a sleep costs on this machine: `late_threshold` is LATE_MS, or the canary's p99 sleep if
+      that is longer.
+    - **Machine stalls:** sleeps longer than `stall_threshold` (2 ms, or 3x the canary's median sleep if that is
+      longer). A tick late during one is excused, and each one during a segment adds to its allowance.
+
+    Whiplash's own causes of lateness (work on the clock thread, its lock held by a tool call, a busy Python thread
+    or a garbage collection in its process) don't slow another process, so they are never excused on a quiet
+    machine. perf_counter is a system-wide monotonic clock on Linux and macOS (mach time / CLOCK_MONOTONIC)."""
 
     def __init__(self, limit=CANARY_STALL):
-        self.limit, self.stalls, self.loops, self.offset, self.proc = limit, [], 0, 0.0, None
+        self.limit, self.proc, self.offset = limit, None, 0.0
+        self.sleeps, self.stalls, self.loops = [], [], 0
+        self.sleep_p50 = self.sleep_p99 = None
+        self.stall_threshold, self.late_threshold = limit, LATE_MS / 1000
 
     def start(self):
         try:
-            self.proc = subprocess.Popen([sys.executable, "-I", "-c", CANARY_CODE, str(self.limit)],
+            self.proc = subprocess.Popen([sys.executable, "-I", "-c", CANARY_CODE],
                                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-            self.offset = time.perf_counter() - json.loads(self.proc.stdout.readline())["t0"]
+            self.offset = time.perf_counter() - json.loads(self.proc.stdout.readline())["t0"]  # pipe latency only
         except Exception:
-            self.proc = None  # no canary: nothing is excused
+            self.proc = None  # no canary: nothing is excused, and LATE_MS is the threshold
         return self
 
     def stop(self):
         if self.proc is None:
             return self
         try:
-            out, _ = self.proc.communicate("", timeout=10)
-            data = json.loads(out.strip().splitlines()[-1])
-            shift = self.offset if abs(self.offset) > 0.05 else 0.0  # same clock: the offset is just pipe latency
-            self.stalls = [(a + shift, b + shift) for a, b in data["stalls"]]
-            self.loops = data["loops"]
+            out, _ = self.proc.communicate("", timeout=30)
+            self.sleeps = [tuple(x) for x in json.loads(out.strip().splitlines()[-1])["sleeps"]]
         except Exception:
             self.proc.kill()
-            self.stalls = []
+            self.sleeps = []
+        return self._digest()
+
+    def _digest(self):
+        """From the recorded sleeps: the machine's sleep percentiles, both thresholds and the stalls."""
+        self.loops = len(self.sleeps)
+        if self.sleeps:
+            took = sorted(b - a for a, b in self.sleeps)
+            self.sleep_p50, self.sleep_p99 = took[len(took) // 2], took[min(len(took) - 1, int(len(took) * 0.99))]
+            self.stall_threshold = max(self.limit, 3 * self.sleep_p50)
+            self.late_threshold = max(LATE_MS / 1000, self.sleep_p99)
+            self.stalls = [(a, b) for a, b in self.sleeps if b - a > self.stall_threshold]
         return self
 
     def covers(self, start, end, slack=0.0005):
@@ -216,6 +232,16 @@ class Canary:
     def count(self, start, end):
         """Machine stalls the canary saw between start and end."""
         return sum(1 for a, b in self.stalls if a <= end and b >= start)
+
+    def describe(self):
+        if self.proc is None:
+            return "no canary: nothing excused"
+        if not self.sleeps:
+            return "the canary returned nothing: nothing excused"
+        return (f"a 1 ms sleep took p50 {self.sleep_p50 * 1000:.2f} / p99 {self.sleep_p99 * 1000:.2f} ms over "
+                f"{self.loops} sleeps; {len(self.stalls)} machine stall(s) over {self.stall_threshold * 1000:.1f} ms"
+                + (f", longest {max(b - a for a, b in self.stalls) * 1000:.1f} ms" if self.stalls else "")
+                + f"; ticks count as late over {self.late_threshold * 1000:.1f} ms")
 
 
 def lateness(clocks, speed):
@@ -231,11 +257,13 @@ def lateness(clocks, speed):
 
 
 def timing(clocks, speed, canary):
-    """Lateness of one stretch of clocks: percentiles (ms), the ticks later than LATE_MS, and those grouped into
+    """Lateness of one stretch of clocks: percentiles (ms), the ticks later than the canary's late_threshold (LATE_MS
+    on a machine with precise sleeps), and those grouped into
     stalls (late ticks with at most one on-time tick between them). A stall is excused when the canary saw the
     machine stall during any of its ticks. `allowed` is how many unexcused stalls the segment may have."""
     late = lateness(clocks, speed)
-    over = [k for k, l in enumerate(late) if l * 1000 > LATE_MS]
+    limit = getattr(canary, "late_threshold", LATE_MS / 1000)
+    over = [k for k, l in enumerate(late) if l > limit]
     stalls = []
     for k in over:
         if stalls and k - stalls[-1][-1] <= 2:
@@ -249,7 +277,7 @@ def timing(clocks, speed, canary):
     seconds = clocks[-1].real - clocks[0].real
     contended = canary.count(clocks[0].real, clocks[-1].real)
     return {"ticks": len(late), "p50": pick(0.5), "p99": pick(0.99), "max": ms[-1], "over": len(over),
-            "stalls": len(stalls), "unexcused": len(unexcused), "contended": contended,
+            "stalls": len(stalls), "unexcused": len(unexcused), "contended": contended, "limit_ms": limit * 1000,
             "allowed": 1 + int(seconds / STALL_EVERY) + contended,
             "where": [f"{clocks[st[0]].where} ({len(st)} ticks, {max(late[k] for k in st) * 1000:.1f} ms)"
                       for st in unexcused]}
@@ -923,12 +951,14 @@ class Rehearsal:
 
     @staticmethod
     def bpm_of(events, bar, bars=2):
-        """Tempo over whole bars of clock (first clock of `bar` to the first clock `bars` later), in the
-        engine's (musical) time. Per-tick gaps are no good at high --speed: a coarse sleep (macOS) skews
-        their median, while the engine's absolute schedule keeps the bar length exact."""
+        """Tempo over `bars` bars from `bar`, in the engine's (musical) time: the median one-bar span over every
+        start tick in the window. Per-tick gaps are no good at high --speed, where a coarse sleep (macOS) skews
+        their median. Two single clocks aren't either, since either one may be late (a macOS runner's ticks are
+        often 7 ms or more late). The engine's absolute schedule keeps the bar length exact."""
         a, b = bar * BAR, (bar + bars) * BAR
-        t = {s.clocks: s.music for s in events if s.msg.type == "clock" and s.clocks in (a, b)}
-        return 4 * 60.0 * bars / (t[b] - t[a]) if len(t) == 2 else 0.0
+        t = {s.clocks: s.music for s in events if s.msg.type == "clock" and a <= s.clocks <= b}
+        spans = [t[k + BAR] - t[k] for k in range(a, b - BAR + 1) if k in t and k + BAR in t]
+        return 4 * 60.0 / statistics.median(spans) if spans else 0.0
 
     def check_global(self, lines):
         from whiplash import ccmap
@@ -971,19 +1001,18 @@ class Rehearsal:
                 last[s.run] = s
         segments = {name: [s for s in events if s is not last.get(s.run)] for name, events in segments.items()}
         canary = self.canary
-        lines.append(f"  clock timing (real-time lateness vs the engine's own grid; ticks > {LATE_MS:g} ms late form a "
-                     "stall, which counts unless the canary process saw the machine stall then; allowed: 1 + 1 per "
-                     f"{STALL_EVERY:g} s + 1 per machine stall the canary saw in the segment)")
-        lines.append(f"  canary: {len(canary.stalls)} machine stall(s) over {canary.limit * 1000:g} ms in "
-                     f"{canary.loops} 1 ms sleeps" + ("" if canary.proc else " (no canary: nothing excused)")
-                     + (f", longest {max(b - a for a, b in canary.stalls) * 1000:.1f} ms" if canary.stalls else ""))
+        lines.append(f"  clock timing (real-time lateness vs the engine's own grid; ticks late by more than {LATE_MS:g} ms, "
+                     "or by more than a 1 ms sleep takes on this machine (p99), form a stall, which counts unless the "
+                     f"canary process saw the machine stall then; allowed: 1 + 1 per {STALL_EVERY:g} s + 1 per machine "
+                     "stall the canary saw in the segment)")
+        lines.append(f"  canary: {canary.describe()}")
         for name, events in segments.items():
             if len(events) < 2 * BAR:
                 continue
             t = timing(events, self.speed, canary)
             self.check("global", t["unexcused"] <= t["allowed"],
                        f"{name}: {t['ticks']} ticks, lateness p50 {t['p50']:.2f} / p99 {t['p99']:.2f} / max "
-                       f"{t['max']:.2f} ms; {t['over']} tick(s) over {LATE_MS:g} ms in {t['stalls']} stall(s), "
+                       f"{t['max']:.2f} ms; {t['over']} tick(s) over {t['limit_ms']:.1f} ms in {t['stalls']} stall(s), "
                        f"{t['unexcused']} not seen by the canary (allowed {t['allowed']}"
                        + (f", {t['contended']} for machine stalls" if t["contended"] else "") + ")", lines)
             for where in t["where"]:

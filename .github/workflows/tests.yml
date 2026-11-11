@@ -49,3 +49,5 @@ jobs:
           uv run python scripts/clock_jitter.py --runs 3 --seconds 20
           uv run python scripts/clock_jitter.py --runs 3 --seconds 40 --speed 4
           uv run python scripts/clock_jitter.py --runs 2 --seconds 20 --load 3
+          uv run python scripts/clock_jitter.py --runs 2 --seconds 20 --qos
+          uv run python scripts/clock_jitter.py --runs 2 --seconds 20 --spin 1

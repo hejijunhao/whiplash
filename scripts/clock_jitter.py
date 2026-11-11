@@ -24,6 +24,11 @@ Conditions you can add, alone or together:
 --calls         real tool calls (status, set_param, density, label_tracks, write_part, queued same-tempo
                 switch) every --call-every seconds, as Hermes makes them, but far more often.
 --switch-interval S   sys.setswitchinterval(S) for the run (the interpreter's default is 0.005 s).
+--qos           macOS only: the sequencer thread asks for QOS_CLASS_USER_INTERACTIVE first (pthread_set_qos_class_self_np),
+                which exempts its timers from coalescing. Applied by wrapping Engine._run from here; engine.py is
+                unchanged. A candidate engine fix (docs/testing/clock-jitter.md §6).
+--spin MS       the engine's sleeps busy-wait their last MS ms instead of sleeping (a sleep shorter than MS is all
+                spin): the other candidate fix, at the cost of CPU. Applied through the engine's time module.
 --gc-heap N     N extra long-lived container objects in the process and a full gc.collect() every --gc-every
                 seconds from another thread: a large host process (the gateway) doing a full collection, which
                 holds the GIL for its whole duration.
@@ -88,8 +93,10 @@ def stats(clocks, speed, canary):
         "gap_p95_of_period": round(pct(dev, 95) / period, 3),
         f"over_{R.LATE_MS:g}ms": verdict["over"], "stalls": verdict["stalls"], "unexcused": verdict["unexcused"],
         "allowed": verdict["allowed"],
+        "late_limit": round(verdict["limit_ms"], 3),
         "canary_stalls": len(canary.stalls),
         "canary_max": round(max((b - a for a, b in canary.stalls), default=0) * 1000, 3),
+        "sleep_p50": round((canary.sleep_p50 or 0) * 1000, 3), "sleep_p99": round((canary.sleep_p99 or 0) * 1000, 3),
     }
 
 
@@ -104,15 +111,48 @@ CALLS = [
 ]
 
 
+class SpinTime(R.ScaledTime):
+    """ScaledTime whose sleep busy-waits its last `spin` real seconds."""
+
+    def __init__(self, speed, spin):
+        super().__init__(speed)
+        self.spin = spin
+
+    def sleep(self, seconds):
+        real = max(0.0, seconds) / self.speed
+        end = time.perf_counter() + real
+        if real > self.spin:
+            time.sleep(real - self.spin)
+        while time.perf_counter() < end:
+            pass
+
+
+def macos_qos():
+    """Set this thread to QOS_CLASS_USER_INTERACTIVE on macOS. Returns True if it was set."""
+    if sys.platform != "darwin":
+        return False
+    import ctypes
+    lib = ctypes.CDLL("/usr/lib/libSystem.dylib")
+    return lib.pthread_set_qos_class_self_np(0x21, 0) == 0  # QOS_CLASS_USER_INTERACTIVE
+
+
 def run_once(speed=1.0, seconds=30.0, bpm=126, genre="techhouse", load=0, gil_hog=False, calls=False,
-             call_every=0.25, switch_interval=None, gc_heap=0, gc_every=2.0):
+             call_every=0.25, switch_interval=None, gc_heap=0, gc_every=2.0, qos=False, spin=0.0):
     """One run. Returns the stats dict. The engine and modules are patched as the rehearsal does, and restored."""
     R.load_whiplash()
     import mido  # noqa: F401  (imported before any load: a first import under --gil-hog stalls the start, not the clock)
     from whiplash import engine, tools, view
-    clock = R.ScaledTime(speed)
+    clock = SpinTime(speed, spin / 1000) if spin else R.ScaledTime(speed)
     port = R.RecordingPort(clock)
     saved = (tools.ENGINE, engine.time, view.time, engine.list_ports, sys.getswitchinterval())
+    qos_set = []
+    if qos:
+        run = engine.Engine._run
+
+        def run_with_qos(self, *args):
+            qos_set.append(macos_qos())
+            return run(self, *args)
+        engine.Engine._run = run_with_qos
     eng = engine.Engine(opener=lambda name: (port, R.DEVICE, False), lister=lambda: [R.DEVICE])
     tools.ENGINE = eng
     engine.time = view.time = clock
@@ -172,6 +212,8 @@ def run_once(speed=1.0, seconds=30.0, bpm=126, genre="techhouse", load=0, gil_ho
         finally:
             tools.ENGINE, engine.time, view.time, engine.list_ports, si = saved
             sys.setswitchinterval(si)
+            if qos:
+                engine.Engine._run = run
     del heap
     if errors:
         raise RuntimeError(f"tool calls failed: {errors[:3]}")
@@ -180,7 +222,8 @@ def run_once(speed=1.0, seconds=30.0, bpm=126, genre="techhouse", load=0, gil_ho
     if len(ticks) < 2 * BAR:
         raise RuntimeError(f"only {len(ticks)} clocks recorded")
     res = stats(ticks, speed, canary)
-    res.update(speed=speed, bpm=bpm, load=load, gil_hog=gil_hog, calls=calls, gc_heap=gc_heap,
+    res.update(speed=speed, bpm=bpm, load=load, gil_hog=gil_hog, calls=calls, gc_heap=gc_heap, spin_ms=spin,
+               qos=(qos_set[0] if qos_set else False) if qos else None,
                switch_interval=switch_interval
                or saved[4], platform=sys.platform, python=sys.version.split()[0])
     return res
@@ -201,21 +244,23 @@ def main(argv=None):
     ap.add_argument("--gc-heap", type=int, default=0, help="extra long-lived objects; with a full collection every "
                     "--gc-every seconds (default 0: off)")
     ap.add_argument("--gc-every", type=float, default=2.0)
+    ap.add_argument("--qos", action="store_true", help="macOS: user-interactive QoS on the sequencer thread")
+    ap.add_argument("--spin", type=float, default=0.0, help="busy-wait the last MS ms of each engine sleep")
     ap.add_argument("--json", action="store_true", help="one JSON object per run")
     args = ap.parse_args(argv)
     if not 0.25 <= args.speed <= 16:
         ap.error("--speed must be between 0.25 and 16")
     cols = ("late_p50", "late_p95", "late_p99", "late_max", "late_over_2ms", f"over_{R.LATE_MS:g}ms", "stalls", "unexcused",
-            "allowed", "canary_stalls")
+            "allowed", "sleep_p50", "sleep_p99")
     if not args.json:
         print(f"speed {args.speed}x, {args.bpm} BPM, {args.seconds} s, load {args.load}, gil_hog {args.gil_hog}, "
-              f"calls {args.calls}, gc_heap {args.gc_heap}, switch_interval "
+              f"calls {args.calls}, gc_heap {args.gc_heap}, qos {args.qos}, spin {args.spin} ms, switch_interval "
               f"{args.switch_interval or sys.getswitchinterval()}")
         print("run  ticks  " + "  ".join(f"{c:>13}" for c in cols) + "   (ms; period "
               f"{60000 / args.bpm / 24 / args.speed:.2f} ms)")
     for i in range(args.runs):
         res = run_once(args.speed, args.seconds, args.bpm, args.genre, args.load, args.gil_hog, args.calls,
-                       args.call_every, args.switch_interval, args.gc_heap, args.gc_every)
+                       args.call_every, args.switch_interval, args.gc_heap, args.gc_every, args.qos, args.spin)
         if args.json:
             print(json.dumps(res), flush=True)
         else:
