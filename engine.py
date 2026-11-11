@@ -11,9 +11,15 @@ enumerates ports, so tool calls can't stall the clock.
 Everything musical is timed off the sequencer's own MIDI clock: a live pattern
 switch lands on the next bar line, drops and fills are bar-scheduled, and ramps
 advance one step per clock tick.
+
+Transport: by default a run sends MIDI Start, clock, and Stop. Start also starts the Digitakt's
+own sequencer, so trigs stored in the pattern selected on the unit play on top of Whiplash.
+send_transport=False (or WHIPLASH_SEND_TRANSPORT=0) sends clock only, and then never sends Stop
+either, so Whiplash can't halt a pattern someone runs on the unit.
 """
 import atexit
 import collections
+import os
 import heapq
 import logging
 import threading
@@ -39,6 +45,9 @@ SWING_MIN, SWING_MAX = 50, 80
 JOIN_TIMEOUT = 2.0
 HOTPLUG_INTERVAL = 2.0  # seconds between port enumerations while on the virtual port
 MUTE_CC = ccmap.MUTE_CC
+TRANSPORT_ENV = "WHIPLASH_SEND_TRANSPORT"
+_FALSE = {"0", "false", "no", "off", "clock_only", "clock-only"}
+_TRUE = {"1", "true", "yes", "on", ""}
 CURVES = {
     "linear": lambda p: p,
     "exp": lambda p: p ** 3,  # ease-in: slow start, fast finish (the classic filter sweep)
@@ -48,6 +57,33 @@ CURVES = {
 
 class WhiplashError(Exception):
     pass
+
+
+def default_send_transport():
+    """WHIPLASH_SEND_TRANSPORT default: unset/1/true -> send Start/Stop; 0/false/clock_only -> clock only."""
+    raw = os.environ.get(TRANSPORT_ENV)
+    if raw is None:
+        return True
+    value = raw.strip().lower()
+    if value in _FALSE:
+        return False
+    if value not in _TRUE:
+        log.warning("ignoring %s=%r (use 1 or 0); sending transport", TRANSPORT_ENV, raw)
+    return True
+
+
+def check_send_transport(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in _FALSE | (_TRUE - {""}):
+        return value.strip().lower() not in _FALSE
+    raise WhiplashError(f"send_transport must be true or false, got {value!r}")
+
+
+def transport_mode(send_transport):
+    return "start_stop" if send_transport else "clock_only"
 
 
 def _number(value):
@@ -182,6 +218,7 @@ class Engine:
         self._drops = {}  # track -> (first bar, end bar exclusive)
         self._fills = {}  # bar -> set(tracks)
         self.sent_count = 0
+        self.send_transport = None  # transport mode of the current/last run; None = env default
 
     # ---- port handling -------------------------------------------------
     def ensure_port(self, port=None, allow_virtual=True):
@@ -282,34 +319,47 @@ class Engine:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
-    def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True):
+    def transport_on(self):
+        return default_send_transport() if self.send_transport is None else self.send_transport
+
+    def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None):
         """Start a pattern, or queue a live switch to it at the next bar line.
 
+        send_transport: True sends MIDI Start/Stop around the clock, False sends clock only,
+        None keeps the running mode (or uses the WHIPLASH_SEND_TRANSPORT default on a fresh start).
         Returns {"mode": "queued", "switch_at_bar", "replaced_queued"} when a pattern is already
-        playing on the same port (clock keeps running; mutes and ramps carry over), else
-        {"mode": "started", "was_playing", "mutes_cleared", "ramps_cancelled"}.
+        playing on the same port in the same transport mode (clock keeps running; mutes and ramps
+        carry over), else {"mode": "started", "was_playing", "mutes_cleared", "ramps_cancelled"}.
+        Both carry "send_transport".
         """
         bpm = check_bpm(pattern.bpm if bpm is None else bpm)  # validate before touching the running beat
         bars = check_bars(bars)
+        send_transport = check_send_transport(send_transport)
         with self._transport:
-            if self.playing() and self._port is not None and (port is None or port == self.port_name):
+            same_mode = send_transport is None or send_transport == self.send_transport
+            if (self.playing() and self._port is not None and (port is None or port == self.port_name)
+                    and same_mode):
                 with self._lock:
                     replaced = self._queued["pattern"].name if self._queued else None
                     at = self.bar + 1
                     self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at}
-                return {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced}
-            stopped = self.stop()
+                return {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
+                        "send_transport": self.send_transport}
+            if send_transport is None:
+                send_transport = default_send_transport()
+            stopped = self.stop()  # stops in the old mode (no Stop if the old run was clock-only)
             self.ensure_port(port)
             with self._lock:
+                self.send_transport = send_transport
                 self._load(pattern, bpm, bars, start_bar=0)
                 self.bar = 0
                 self.last_error = None
                 self._stop, self._done = threading.Event(), threading.Event()
                 self._thread = threading.Thread(
-                    target=self._run, args=(send_clock, self._stop, self._done),
+                    target=self._run, args=(send_clock, send_transport, self._stop, self._done),
                     name="whiplash-seq", daemon=True)
                 self._thread.start()
-            return {"mode": "started", **stopped}
+            return {"mode": "started", "send_transport": send_transport, **stopped}
 
     def _load(self, pattern, bpm, bars, start_bar):
         """Make pattern current (caller holds _lock). Resets mutations, keeps mutes, ramps, drops."""
@@ -368,7 +418,8 @@ class Engine:
             self._sounding.clear()
             for ch in range(8):
                 self._cc(mido, ch, 123, 0)
-            self.send(mido.Message("stop"))
+            if self.transport_on():  # clock-only runs never sent Start, so they never send Stop
+                self.send(mido.Message("stop"))
 
     def set_tempo(self, bpm):
         bpm = check_bpm(bpm)
@@ -439,7 +490,7 @@ class Engine:
                 events[step].append((track, note, vel, gate, offset))
         return events
 
-    def _run(self, send_clock, stop, done):
+    def _run(self, send_clock, send_transport, stop, done):
         mido = __import__("mido")
         pending = []  # heap of (time, seq, ch, note, vel)
         seq = 0
@@ -447,7 +498,8 @@ class Engine:
         tick = 0
         events = {}
         try:
-            self.send(mido.Message("start"))
+            if send_transport:
+                self.send(mido.Message("start"))
             while not stop.is_set():
                 step_abs, sub = divmod(tick, TICKS_PER_STEP)
                 bar_n, step = divmod(step_abs, patterns.STEPS)
@@ -533,7 +585,11 @@ class Engine:
             return spec.cc, spec
         number = check_whole(cc, 0, 119, "cc")
         if number in ccmap.BLOCKED_CCS:
-            raise WhiplashError(f"CC {number} is blocked (sample slot/bank select, bank select, or NRPN/data entry)")
+            raise WhiplashError(f"CC {number} is blocked (sample bank select, bank select, or NRPN/data entry)")
+        if number in ccmap.NAMED_ONLY_CCS:
+            name = ccmap.NAMED_ONLY_CCS[number]
+            raise WhiplashError(f"CC {number} is only sent as the named param: use param={name!r} "
+                                "(or whiplash_select_sample)")
         return number, None
 
     @staticmethod
@@ -569,7 +625,8 @@ class Engine:
             if not (0 <= msb <= 127 and 0 <= lsb <= 127):
                 raise WhiplashError("nrpn msb and lsb must each be 0-127")
             if (msb, lsb) in ccmap.BLOCKED_NRPNS:
-                raise WhiplashError("that NRPN changes sample assignment and is blocked")
+                raise WhiplashError("that NRPN changes sample assignment and is blocked; use param='sample_slot' "
+                                    "(or whiplash_select_sample) to pick a slot in the current bank")
             value = check_whole(value, 0, 16383, "NRPN value", " (14-bit; a 7-bit amount v is v * 128)")
             hi, lo = value >> 7, value & 0x7F
             with self._lock:  # keep the four CCs together on the wire
@@ -752,6 +809,7 @@ class Engine:
             return {
                 "playing": self.playing(), "port": self.port_name, "virtual": self.virtual,
                 "fallback": self.fallback, "port_lost": self.port_lost,
+                "send_transport": self.transport_on(), "transport_mode": transport_mode(self.transport_on()),
                 "pattern": self.pattern.name if self.pattern else None, "bpm": self.bpm,
                 "bar": self.bar, "pattern_bar": self.bar - self.pattern_start, "bars": self.bars_total,
                 "queued": ({"pattern": queued["pattern"].name, "bpm": queued["bpm"], "switch_at_bar": queued["at"]}
