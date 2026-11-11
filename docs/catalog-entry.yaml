@@ -20,7 +20,7 @@ maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.5.3"
+version: "0.6.0"
 readme: true
 platforms: [linux, macos]
 known_issues:
@@ -40,6 +40,7 @@ capabilities:
     - whiplash_label_tracks
     - whiplash_transpose
     - whiplash_write_part
+    - whiplash_set_progression
     - whiplash_ramp_param
     - whiplash_mutate
     - whiplash_mute_track

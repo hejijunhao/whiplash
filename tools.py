@@ -95,7 +95,8 @@ def list_params(p):
 def play_pattern(p):
     pattern = patterns.resolve(p.get("genre"), p.get("mood"))
     result = ENGINE.play(pattern, bpm=p.get("bpm"), bars=p.get("bars"), port=p.get("port"),
-                         send_transport=p.get("send_transport"), transpose=p.get("transpose"), tracks=p.get("tracks"))
+                         send_transport=p.get("send_transport"), transpose=p.get("transpose"), tracks=p.get("tracks"),
+                         key=p.get("key"), scale=p.get("scale"))
     transport = {"send_transport": result["send_transport"],
                  "transport_mode": eng.transport_mode(result["send_transport"]),
                  "overlap_warning": overlap_warning(result["send_transport"])}
@@ -103,6 +104,7 @@ def play_pattern(p):
         status = ENGINE.status()
         out = {"mode": "queued", "playing": status["pattern"], "next": pattern.name,
                "switch_at_bar": result["switch_at_bar"], "bar": status["bar"],
+               "key": status["queued"]["key"],
                "bpm_at_switch": result_bpm(p, pattern), "swing": pattern.swing,
                "bars": eng.check_bars(p.get("bars")),
                "tracks": ENGINE.tracks_summary(pattern, transpose=_queued_transpose(status)),
@@ -113,8 +115,10 @@ def play_pattern(p):
             out["replaced_queued"] = result["replaced_queued"]
         if result.get("setup"):
             out["setup"] = setup_echo(result["setup"], f"at the switch, bar {result['switch_at_bar']}")
+        if status["progression"]:
+            out["progression_carried"] = status["progression"]["names"]
         return out
-    out = {"mode": "started", "playing": pattern.name, "bpm": ENGINE.bpm, "swing": pattern.swing,
+    out = {"mode": "started", "playing": pattern.name, "key": ENGINE.key_name(), "bpm": ENGINE.bpm, "swing": pattern.swing,
            "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual,
            "tracks": ENGINE.tracks_summary(),
            "replaced_playing": result["was_playing"], "mutes_cleared": result["mutes_cleared"],
@@ -199,6 +203,13 @@ def write_part(p):
     if not out.get("reset"):
         out["pitch_note"] = eng.PITCH_NOTE
     return out
+
+
+@_tool
+def set_progression(p):
+    return ENGINE.set_progression(chords=p.get("chords"), bars_per_chord=p.get("bars_per_chord"),
+                                  voicing=p.get("voicing"), key=p.get("key"), scale=p.get("scale"),
+                                  tracks=p.get("tracks"), clear=p.get("clear"))
 
 
 @_tool
@@ -295,5 +306,5 @@ def close_view(p):
 
 
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
-                                             select_sample, label_tracks, transpose, write_part, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
+                                             select_sample, label_tracks, transpose, write_part, set_progression, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
                                              status, open_view, close_view)}

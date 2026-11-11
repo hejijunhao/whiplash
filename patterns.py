@@ -35,6 +35,7 @@ class Pattern:
     roles: dict
     bars: dict = field(default_factory=dict)  # track -> [bar0 hits, bar1, bar2, bar3]
     shifts: dict = field(default_factory=dict)  # track -> semitones register() moved it (melodic tracks only)
+    key: tuple = None  # (pitch class, scale name): the key the melodic tracks are written in (v0.6)
 
 
 def note_name(note):
@@ -175,7 +176,12 @@ def _tech_house():
     })
 
 
-RAW = {p.name: p for p in (_deep_house(), _soul(), _techno(), _breaks(), _tech_house())}  # the note tables as written
+# The key each pattern's melodic tracks are written in (pitch class 0 = C). Deep house and soul lean on G# (the
+# harmonic-minor leading tone), which harmony.in_key keeps as an offset from the scale.
+HOME_KEYS = {"deephouse": (9, "minor"), "soul": (9, "minor"), "techno": (5, "minor"), "breaks": (7, "minor"),
+             "techhouse": (9, "minor")}
+RAW = {p.name: replace(p, key=HOME_KEYS[p.name])
+       for p in (_deep_house(), _soul(), _techno(), _breaks(), _tech_house())}  # the note tables as written
 PATTERNS = {name: register(p) for name, p in RAW.items()}
 
 ALIASES = {
