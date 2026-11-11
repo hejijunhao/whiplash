@@ -32,5 +32,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Install dependencies from pyproject.toml
         run: uv sync
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: jsdom for the visualiser render check (tests/test_view_harmony.py)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/js" --no-audit --no-fund jsdom@24.1.3
+          echo "NODE_PATH=$RUNNER_TEMP/js/node_modules" >> "$GITHUB_ENV"
+          echo "WHIPLASH_JSDOM=required" >> "$GITHUB_ENV"
       - name: Tests
         run: uv run pytest -q -rs

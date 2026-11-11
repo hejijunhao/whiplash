@@ -3,6 +3,7 @@
 
     uv run python scripts/rehearse_demo.py               # real time, about 30 s
     uv run python scripts/rehearse_demo.py --speed 4     # 4x clock, about 8 s
+    uv run python scripts/rehearse_demo.py --v06         # plus the optional v0.6 progression section
 
 It runs the tool calls behind docs/demo/hackathon-demo.md (the hardware checklist's Part A,
 A1-A9) through the real tool handlers and engine, in order, with the music running between
@@ -27,6 +28,12 @@ It writes, into --out (default: <tmp>/whiplash-rehearsal):
 Exit status: 0 if every check passed, 1 on any violation, 2 if the rehearsal itself crashed.
 --speed scales the engine's clock (its perf_counter and sleep), not the tool calls: the beat,
 bar quantize and ramps behave as at 1x. Jitter is measured in real time either way.
+
+--v06 adds an optional section after Part A (off by default, so the default run stays the demo):
+"deep house in A minor, i-VI-III-VII, two bars per chord, pads on track 7" (hardware check HW 6.0-1,
+checklist P1, and the demo's optional encore), with the synth (slot 11) on the pad track. It checks that every chord change lands on a bar line, the bass plays the roots,
+drum notes never transpose, the tuned cymbal and the fx track get no chord notes, and the visualiser
+shows the key and the chords.
 
 This is a rehearsal against a recording port. It proves nothing about how the unit sounds or
 responds: that still needs docs/testing/hardware-checklist.md Part A on a real Digitakt II.
@@ -142,6 +149,7 @@ class Step:
     new_run: bool = False  # a play from stop: the recorder starts counting clocks again
     probe_view: bool = False
     results: list = field(default_factory=list)
+    probe: tuple = None  # (HTTP status, /state frame or error) when probe_view
     call_pos: tuple = None  # (run, clocks, index into sent)
 
 
@@ -175,8 +183,30 @@ def demo_steps():
     ]
 
 
+V06_PROMPT = ("Track 7 is a pad now. Play deep house in A minor with the dirty bass on 6 and my synth on 7: "
+              "i-VI-III-VII, two bars per chord.")
+V06_CHORDS = ("i", "VI", "III", "VII")
+V06_BARS_PER_CHORD = 2
+V06_STOP_BAR = 10  # a full 8-bar loop of the progression, and the wrap back to i on bar 9
+
+
+def v06_steps():
+    """Optional (--v06): the v0.6.0 progression beat (hardware checklist P1, HW 6.0-1; the demo's encore). It runs
+    after Part A, so the kit map still says tracks 7-8 are tuned cymbals: 7 is relabelled a pad (9 is marked fx,
+    so the run also proves an fx track gets nothing), then one start with slots and key, then the progression."""
+    return [
+        Step("H1", V06_PROMPT,
+             [("whiplash_label_tracks", {"tracks": {"7": "pad", "9": "fx"}}),
+              ("whiplash_play_pattern", {"genre": "deephouse", "key": "A", "scale": "minor",
+                                         "tracks": {"6": {"slot": 9}, "7": {"slot": 11}}}),
+              ("whiplash_set_progression", {"chords": "-".join(V06_CHORDS), "bars_per_chord": V06_BARS_PER_CHORD})],
+             new_run=True, probe_view=True),
+        Step("H2", "Stop.", [("whiplash_stop", {})], at=(V06_STOP_BAR, 5)),
+    ]
+
+
 class Rehearsal:
-    def __init__(self, speed=1.0, out=None, log=print):
+    def __init__(self, speed=1.0, out=None, log=print, v06=False):
         self.speed = speed
         self.out = Path(out) if out else Path(tempfile.gettempdir()) / "whiplash-rehearsal"
         self.log = log
@@ -185,7 +215,8 @@ class Rehearsal:
         self.engine_mod, self.tools, self.view = engine, tools, view
         self.clock = ScaledTime(speed)
         self.port = RecordingPort(self.clock)
-        self.steps = demo_steps()
+        self.v06 = v06
+        self.steps = demo_steps() + (v06_steps() if v06 else [])
         self.violations = []  # (where, text)
         self.view_probe = None
         self.end = None  # len(port.sent) when the run finished
@@ -245,7 +276,7 @@ class Rehearsal:
                     step.results.append((name, params, json.loads(raw)))
                 self.log(f"{step.id} {step.calls[0][0]} at {self._pos(step)}")
                 if step.probe_view:
-                    self._wait_for(1, 0)
+                    self._wait_for(1, 48)  # mid bar 1: the beat (and a progression set for bar 1) is running
                     self._probe_view(step)
             time.sleep(0.05)
         finally:
@@ -258,9 +289,11 @@ class Rehearsal:
             return
         try:
             with urllib.request.urlopen(url.rstrip("/") + "/state", timeout=5) as resp:
-                self.view_probe = (resp.status, json.loads(resp.read()))
+                step.probe = (resp.status, json.loads(resp.read()))
         except Exception as exc:
-            self.view_probe = (None, f"{type(exc).__name__}: {exc}")
+            step.probe = (None, f"{type(exc).__name__}: {exc}")
+        if self.view_probe is None:
+            self.view_probe = step.probe
 
     @staticmethod
     def _pos(step):
@@ -319,7 +352,8 @@ class Rehearsal:
                  f"speed {self.speed}x, output: recording port named {DEVICE!r} (fake; nothing was sent to "
                  "any device), whiplash v" + self._version(),
                  f"{len(self.port.sent)} messages recorded across {self.port.run} run(s)",
-                 "Not a hardware test: run docs/testing/hardware-checklist.md Part A on the unit.", ""]
+                 "Not a hardware test: run docs/testing/hardware-checklist.md Part A on the unit"
+                 + (" (and P1 for the v0.6 section)." if self.v06 else "."), ""]
         r = {s.id: s for s in self.steps}
         for i, step in enumerate(self.steps):
             lines.append(f"{step.id}  \"{step.prompt}\"")
@@ -401,8 +435,8 @@ class Rehearsal:
         roles = {t: (v or {}).get("role") for t, v in tracks.items()}
         bad = {t: ro for t, ro in roles.items() if ro and any(w in ro for w in ("chord", "pad", "stab"))}
         self.check("A3", not bad, f"no chord parts anywhere ({bad or 'none'})", lines)
-        if self.view_probe is not None:
-            status, body = self.view_probe
+        if step.probe is not None:
+            status, body = step.probe
             ok = status == 200 and isinstance(body, dict) and body.get("playing") is True
             self.check("A3", ok, f"visualiser /state answers while playing (HTTP {status})", lines)
 
@@ -544,6 +578,68 @@ class Rehearsal:
         run = step.call_pos[0]
         self.check("A9c", not self.hanging(self.run_events(run)), "no hanging notes", lines)
 
+    # -- optional v0.6 section (--v06) ---------------------------------------------------------
+    def check_h1(self, step, r, lines):
+        from whiplash import harmony, patterns
+        run = step.call_pos[0]
+        label, play, prog = self.res(step, 0), self.res(step, 1), self.res(step, 2)
+        kit = (label.get("kit") or {}).get("tracks", {})
+        roles = {t: (kit.get(t) or {}).get("role") for t in ("7", "8", "9")}
+        self.check("H1", roles == {"7": "pad", "8": "cymbal", "9": "fx"}, f"kit roles 7-9 {roles}", lines)
+        self.check("H1", play.get("mode") == "started" and play.get("playing") == "deephouse"
+                   and play.get("key") == "A minor", f"started {play.get('playing')} in {play.get('key')}", lines)
+        start = prog.get("starts_at_bar")
+        names = [c.get("name") for c in prog.get("progression") or []]
+        self.check("H1", names == ["Am", "F", "C", "G"] and prog.get("bars_per_chord") == V06_BARS_PER_CHORD,
+                   f"progression {' '.join(V06_CHORDS)} = {names}, {prog.get('bars_per_chord')} bars each", lines)
+        self.check("H1", start == step.call_pos[1] // BAR + 1, f"it starts on the next bar line (bar {start})", lines)
+        modes = prog.get("tracks") or {}
+        self.check("H1", modes == {"6": "root", "7": "chords"},
+                   f"track modes {modes}: bass follows the roots, the pad voices the chords, nothing else", lines)
+        if start is None or len(names) != len(V06_CHORDS):
+            return
+        voiced = [set(c["notes"]) for c in prog["progression"]]
+        roots = [harmony.parse_chord(c, harmony.Key(9, "minor")).root for c in V06_CHORDS]
+        end = r["H2"].call_pos[1] // BAR  # the last whole bar played is end - 1
+        chord = lambda b: ((b - start) // V06_BARS_PER_CHORD) % len(V06_CHORDS)
+        bad_pad, bad_bass, changes = [], [], []
+        for b in range(start, end):
+            pad = [s for s in self.notes_in_bar(run, b, 6)]
+            bass = {s.msg.note % 12 for s in self.notes_in_bar(run, b, 5)}
+            if not pad or not {s.msg.note for s in pad} <= voiced[chord(b)]:
+                bad_pad.append(b)
+            if bass and bass != {roots[chord(b)]}:
+                bad_bass.append(b)
+            if b == start or chord(b) != chord(b - 1):
+                changes.append((b, pad[0].clocks - b * BAR if pad else None))
+        lines.append("  chord changes (bar, clocks after the bar line of the first pad note): "
+                     + ", ".join(f"{b}:{c}" for b, c in changes))
+        self.check("H1", not bad_pad, f"every pad note in bars {start}-{end - 1} is a tone of that bar's chord "
+                   f"(bad bars: {bad_pad or 'none'})", lines)
+        self.check("H1", all(c == 0 for _, c in changes) and len(changes) >= len(V06_CHORDS),
+                   f"each of {len(changes)} chord changes lands exactly on the bar line", lines)
+        self.check("H1", not bad_bass, f"the bass (track 6) plays each chord's root (bad bars: {bad_bass or 'none'})",
+                   lines)
+        events = self.run_events(run)
+        drums = sorted({(s.msg.channel + 1, s.msg.note) for s in events if s.msg.type == "note_on"
+                        and s.msg.channel in (0, 1, 2, 3, 4, 7) and s.msg.note != patterns.DRUM})
+        self.check("H1", not drums, f"drums and the tuned cymbal stay on note 60, never transposed ({drums or 'none'})",
+                   lines)
+        fx = [s for s in events if s.msg.type == "note_on" and s.msg.channel == 8]
+        self.check("H1", not fx, f"no notes on the fx track 9 ({len(fx)})", lines)
+        if step.probe is not None:
+            status, body = step.probe
+            h = body.get("harmony") if isinstance(body, dict) else None
+            p = (h or {}).get("progression") or {}
+            ok = status == 200 and (h or {}).get("key") == "A minor" and [c["name"] for c in p.get("chords", [])] == names
+            self.check("H1", ok, f"the visualiser shows the key and the chords (HTTP {status}, key "
+                       f"{(h or {}).get('key')}, now {p.get('index')})", lines)
+
+    def check_h2(self, step, r, lines):
+        run = step.call_pos[0]
+        self.check("H2", self.res(step).get("was_playing") is True, "stopped a running beat", lines)
+        self.check("H2", not self.hanging(self.run_events(run)), "no hanging notes", lines)
+
     def engine_send_transport(self, r):
         return bool(self.res(r["A3"]).get("send_transport"))
 
@@ -584,7 +680,9 @@ class Rehearsal:
         self.check("global", not blocked, f"no blocked CC {sorted(ccmap.BLOCKED_CCS)} ({blocked or 'none'})", lines)
         slot = sorted({(s.msg.channel + 1, s.msg.value) for s in sent if s.msg.type == "control_change"
                        and s.msg.control == ccmap.PARAMS["sample_slot"].cc})
-        self.check("global", slot == [(6, 9)], f"CC 19 only as slot 9 on track 6 ({slot})", lines)
+        want = [(6, 9), (7, 11)] if self.v06 else [(6, 9)]
+        self.check("global", slot == want, "CC 19 only as slot 9 on track 6" + (" and slot 11 on track 7 (v0.6)" if
+                   self.v06 else "") + f" ({slot})", lines)
         self.check("global", not self.hanging(sent), f"no note left sounding at the end ({self.hanging(sent) or 'none'})",
                    lines)
         self.check("global", self.engine.last_error is None, f"engine last_error {self.engine.last_error}", lines)
@@ -598,6 +696,8 @@ class Rehearsal:
             segments["deep house, live calls"] = [s for s in run1 if r["A4"].call_pos[1] <= s.clocks < switch * BAR]
             segments["tech house"] = [s for s in run1 if s.clocks >= switch * BAR]
         segments["techno (second run)"] = [s for s in sent if s.run == 2 and s.msg.type == "clock"]
+        if self.v06:
+            segments["deep house in A minor, progression (v0.6)"] = [s for s in sent if s.run == 3 and s.msg.type == "clock"]
         base_events = segments["deep house (before the A4 call)"]
         if len(base_events) < 50:
             self.fail("global", "too few clocks for a jitter baseline")
@@ -668,11 +768,12 @@ def main(argv=None):
     ap.add_argument("--speed", type=float, default=1.0, help="clock speed-up, 1 = real time (default), max 16")
     ap.add_argument("--out", help="output directory (default: <tmp>/whiplash-rehearsal)")
     ap.add_argument("-q", "--quiet", action="store_true", help="print only the result and file paths")
+    ap.add_argument("--v06", action="store_true", help="also rehearse the optional v0.6 progression beat (off by default)")
     args = ap.parse_args(argv)
     if not 0.25 <= args.speed <= 16:
         ap.error("--speed must be between 0.25 and 16")
     say = (lambda *a: None) if args.quiet else print
-    rehearsal = Rehearsal(speed=args.speed, out=args.out, log=say)
+    rehearsal = Rehearsal(speed=args.speed, out=args.out, log=say, v06=args.v06)
     try:
         rehearsal.run()
     except Exception:

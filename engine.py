@@ -1914,4 +1914,5 @@ class Engine:
                 "cc_values": dict(self._cc_values), "messages_sent": self.sent_count,
                 "position": self.position, "bar_hits": self.bar_hits,
                 "transport_mode": transport_mode(self.transport_on()),
+                "harmony": (self._key, self.effective_key(), self._prog, dict(self._prog_modes), dict(self._prog_ranks), self._prog_pads),
             }
