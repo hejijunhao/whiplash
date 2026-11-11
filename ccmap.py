@@ -30,6 +30,9 @@ one path is the validated named param. Sample BANK select (CC 24, NRPN 1:9) and 
 "sample" NRPN 1:3 (midi.guide only, absent from the manual) stay blocked, as do NRPN 1:8 raw.
 Machine type (Oneshot/Werp/Stretch/...): neither source lists a CC or NRPN for it (it is only
 reached via the MACHINE menu, [FUNC] + [SRC], Appendix A.1), so Whiplash can't switch machines.
+Amp hold (v0.5.2): CC 80 values 0-126 are hold times, but 127 switches HOLD to NOTE, so `amp_hold`
+has range 0-126: clamping and ramps (raw cc 80 ramps too) never reach 127. set_param sends 127 only
+for an explicit value 'note' or exactly 127, and labels the result "HOLD = NOTE".
 Amp mode (v0.5): manual B.5 AMP PARAMETERS (p. 110) "Mode" CC 87, NRPN 1:40; midi.guide "Amp: Mode 87
 [0-1] 0: AHD; 1: ADSR". Manual 11.7 AMP PAGE (p. 56): in AHD a fixed HOLD (0-126) ignores Note Off, and
 HOLD = NOTE follows Note On/Off; midi.guide gives amp hold CC 80 value 127 = Note. So a MIDI note length
@@ -115,8 +118,10 @@ _TABLE = (
        aliases=("key_tracking",), nrpn=(1, 69)),
     # amp
     _c("amp_attack", 79, "amp", "Amp envelope attack", aliases=("attack",), nrpn=(1, 30)),
-    _c("amp_hold", 80, "amp", "Amp envelope hold (AHD mode): 0-126 fixed hold that ignores note-off; 127 = NOTE "
-       "(the midi.guide default), hold until note-off", aliases=("hold",), nrpn=(1, 31)),
+    _c("amp_hold", 80, "amp", "Amp envelope hold (AHD mode): 0-126 fixed hold that ignores note-off. Clamps and "
+       "ramps stay in 0-126. 127 = NOTE (the midi.guide default, hold until note-off) is a mode switch: only sent "
+       "for an explicit value 'note' or exactly 127, and the result says HOLD = NOTE", max=126, aliases=("hold",),
+       nrpn=(1, 31)),
     _c("amp_decay", 81, "amp", "Amp envelope decay: how long each hit rings", aliases=("decay",), nrpn=(1, 32)),
     _c("amp_sustain", 82, "amp", "Amp envelope sustain", aliases=("sustain",), nrpn=(1, 33)),
     _c("amp_release", 83, "amp", "Amp envelope release", aliases=("release",), nrpn=(1, 34)),

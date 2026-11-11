@@ -1,5 +1,5 @@
 name: whiplash
-version: "0.5.1"
+version: "0.5.2"
 description: "Jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats on tracks 1-8, bar-quantized switches, named params, clock-synced ramps, fills/drops/density, sample-slot select, clock-only option, mutes, tempo. No SysEx, ever."
 author: pgbouncer
 license: MIT

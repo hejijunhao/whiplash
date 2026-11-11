@@ -35,6 +35,7 @@ SSE_PING = 15.0
 PAGE = Path(__file__).with_name("view.html")
 CC_NAMES = {p.cc: p.name for p in ccmap.PARAMS.values()}
 CC_MAX = {p.cc: p.max for p in ccmap.PARAMS.values()}  # knob/fader travel on the page
+CC_MAX[ccmap.PARAMS["amp_hold"].cc] = 127  # 127 (HOLD = NOTE) can still be sent explicitly
 SAMPLE_SLOT_CC = ccmap.PARAMS["sample_slot"].cc
 HIDDEN_CCS = ccmap.BLOCKED_CCS | {123, eng.MUTE_CC, SAMPLE_SLOT_CC}  # all-notes-off, NRPN plumbing; mute/slot are badges
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]

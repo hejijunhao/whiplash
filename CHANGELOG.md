@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.2
+
+Review follow-ups from the v0.5.0 review (PR #10): three fixes, each with tests. Still 16 tools. Nothing here has been tested on a real Digitakt II yet.
+
+Fixed
+- **Transpose on tracks 9-16.** `whiplash_transpose` and `play_pattern(transpose=...)` used to return success on a track that plays nothing, such as 9-16 without a written part, and then do nothing. Transpose applies to any track that plays, including written parts on 9-16. A non-zero transpose on a track with no notes (in the current pattern, the queued one, or a carried written part) is now refused with an error that says to write the part first. It is validated before anything changes. `0` is always accepted.
+- **All Notes Off on 9-16.** Stop, panic and the run's own exit sent CC 123 only on channels 1-8, but written parts can play on 9-16. CC 123 now also goes to every channel 9-16 that played a note since the last panic, and to no other. Channels 1-8 still get it every time, as before. The clock thread only adds the channel to a set when it sends a note-on.
+- **`amp_hold` can't slip into HOLD = NOTE.** On CC 80, 127 is not the longest hold: it switches HOLD to NOTE (manual 11.7 p. 56; midi.guide), and this was the top of a clamped, rampable range. The fix:
+  - Named `amp_hold` now has range 0-126.
+  - Every ramp on CC 80 (named or raw `cc: 80`) stops at 126 and says why in `hold_note`.
+  - `whiplash_set_param` sends 127 only for `value: "note"` or exactly 127, and labels the result `hold: "NOTE"` with a warning to tell the user.
+  - `write_part` `envelope: "note"` uses the same path, and its result carries the same label.
+  - Values above 127 were already refused as non-7-bit. The skill, README, schemas and reference (§5.2, §8.0, §15.1 #25) say so.
+
+Changed
+- README: the test count is checked by a test now. Also corrected "HOLD = NOTE (the usual default)": that is only the midi.guide default (reference §15.3 Q6). The CHANNELS setup now says to keep AUTO/FX CONTROL CH off any channel 9-16 you write parts on.
+- The view keeps `amp_hold` knob travel at 0-127, so an explicit NOTE shows at the top.
+- Version 0.5.2 in `pyproject.toml`, `plugin.yaml` and `docs/catalog-entry.yaml`.
+
 ## 0.5.1
 
 Written parts: Hermes can now write melodies, basslines and rhythms itself, the three asks from the Nov 11 2026 Digitakt II session that v0.5.0 left open ("play different notes so it's a melody", "4/4 on the bass drum, not 16ths", "plays non-stop"). 16 tools. Nothing here has been tested on a real Digitakt II yet.
