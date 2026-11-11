@@ -1,6 +1,7 @@
 # Hardware test session: Whiplash on a Digitakt II
 
-This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.5.3 plus the visualiser v0.5 update (PR #13)** that hasn't been checked on a real unit yet:
+This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.6.0 plus the visualiser's key and chord display** that hasn't been checked on a real unit yet:
+- v0.6.0: keys and scales on `whiplash_play_pattern`, chord progressions (`whiplash_set_progression`), and the visualiser's KEY module and per-track chord lines,
 - v0.5.3: the kit map (`whiplash_label_tracks`), one-call start (`tracks` on `whiplash_play_pattern`), the `techhouse` genre and aliases, and the shorter tool descriptions (turn latency),
 - the visualiser v0.5 update: kit labels, `SMP` slot labels, `NO PART`, written parts as a piano roll, `TRN`/`LEN`/`HLD NOTE` tags, and the tracks 9-16 row,
 - v0.5.2: transpose on tracks 9-16, All Notes Off on the 9-16 channels in use, and `amp_hold` 127 (NOTE) only when asked for,
@@ -16,6 +17,7 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part A (about 10 min)** is the smoke test. It is the hackathon demo path, prompt for prompt ([docs/demo/hackathon-demo.md](../demo/hackathon-demo.md)), so if A passes, the demo is safe. Stop there if time is short.
 - **Part B** covers v0.5.3 in depth: kit map, one-call start, tech house, latency. It is the newest code.
 - **Part C** covers written parts (v0.5.1), **Part D** the v0.5.2 fixes, and **Part E** the visualiser.
+- **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
 
@@ -30,10 +32,10 @@ Type the prompts as written; *italic* text in a prompt is a placeholder. If Herm
 ```bash
 git -C ~/whiplash pull          # symlinked checkout; or: hermes plugins update whiplash
 hermes gateway restart          # required: the gateway keeps old plugin code until it restarts
-hermes plugins list             # whiplash -> enabled (v0.5.3, 17 tools)
+hermes plugins list             # whiplash -> enabled (v0.6.0, 18 tools)
 ```
 
-A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` still shows 16 tools or v0.5.2, the gateway didn't restart: run it again.
+A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` still shows 17 tools or v0.5.3, the gateway didn't restart: run it again.
 
 If Hermes earlier auto-created a local skill for Whiplash, delete it. Look for `~/.hermes/skills/whiplash-digitakt/` or anything similar under `~/.hermes/skills/`. It holds stale claims such as "can't switch samples".
 
@@ -399,9 +401,59 @@ Written parts sit around C5 (note 60 = native pitch). They carry across pattern 
   - The conversation streams word by word, with the `· hooks` source shown.
 - [ ] Pass · [ ] Fail. Notes:
 
-### E8. Close
+### E8. Key, chords and chord lines (v0.6.0)
+- **Setup:** do this during P1 (Part P, below), visualiser open, window at least 1100 px wide.
+- **Expect:**
+  - A full-width **KEY** module under the tape/hub/master row reads `A MINOR` with a `SET` tag, and `4 CHORDS · 2 BARS EACH · CLOSE · LOOP 8`.
+  - One cell per chord: the numeral as typed, case kept (`i VI III VII`: lower case = minor), the chord name (`Am F C G`) and its voiced notes.
+  - The chord playing is an inverted (white) cell with one small square per bar of the chord. The next chord has a dashed border, and four LEDs fill on its cell during the last bar before the change.
+  - The highlight moves **on the one**, with the chord you hear, not a beat late. The new cell flashes once.
+  - `FOLLOW · 6 ROOT · 7 CHD` under the cells. Module 6 shows a chord line such as `ROOT A4 > F4 @3`: the note it plays in this chord, then in the next one, and the bar of the change. Module 7 shows `CHD` with the chord tones it plays. Drum modules and the cymbal on 8 show no chord line.
+  - *"Clear the progression"*: the cells go, `NO PROGRESSION` shows, the key stays. *"Stop"*: the KEY module disappears.
+  - *"Play techno"* (no key given): the module reads `F MINOR` with a `HOME` tag. *"Switch to breaks in A minor on the next bar"*: `NEXT KEY A MINOR @N` until the switch.
+- [ ] Pass · [ ] Fail. Highlight on the one: ____
+
+### E9. Close
 - **Type:** *"Close the visualiser."*
 - **Expect:** the page loses its connection, and the beat keeps playing.
+- [ ] Pass · [ ] Fail. Notes:
+
+---
+
+## P. Keys and chord progressions, v0.6.0 (plan HW 6.0-1 to 6.0-5; §15.1 #28-29; §15.3 Q12-13)
+
+Rehearse P1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v06` (no unit needed) must end in `RESULT: PASS`. That checks the MIDI, not the sound.
+
+### P1. i-VI-III-VII in A minor, two bars per chord (HW 6.0-1; the demo's encore)
+- **Setup:** after Part A (tracks 7-8 labelled tuned cymbals), visualiser open.
+- **Type:** *"Track 7 is a pad now. Play deep house in A minor with the dirty bass on 6 and my synth on 7: i-VI-III-VII, two bars per chord."*
+- **Expect:**
+  - Hermes calls `whiplash_label_tracks`, `whiplash_play_pattern` (key A minor, slots 9 and 11) and `whiplash_set_progression`. The result lists tracks `6: root, 7: chords` and nothing else.
+  - The chord changes every 2 bars, **on the one**: Am, F, C, G, then back to Am.
+  - Track 6 plays each chord's root. Track 7 plays chord tones.
+  - The drums sound unchanged. Track 8 (tuned cymbal) plays its open-hat rhythm, never a chord tone.
+  - Nothing sounds out of key against a held A minor note in KB mode.
+  - The visualiser follows (E8).
+- [ ] Pass · [ ] Fail. Notes:
+
+### P2. How many notes does one audio track sound? (HW 6.0-2; §15.3 Q12)
+- **Type:** *"Stack the chords on track 7."* (`tracks: {"7": "stack"}`)
+- **Expect:** record what you hear: one note of the chord, all three, or a cut-off note. This decides whether `stack` becomes the chord-track default.
+- [ ] Recorded: ____
+
+### P3. Two chord tracks sound the chord across tracks (HW 6.0-3; §15.3 Q13)
+- **Type:** *"Track 8 is a pad too."*
+- **Expect:** from the next bar, `whiplash_status` shows tracks 7 and 8 both in `chords` mode. Each hit sounds like the chord spread across the two tracks, on different tones.
+- [ ] Pass · [ ] Fail. Notes:
+
+### P4. A cymbal never gets chords (HW 6.0-4)
+- **Type:** *"Track 8 is a tuned cymbal."* Then *"Put chords on track 8."*
+- **Expect:** Hermes reports a refusal (cymbal), and track 8 keeps playing what it played.
+- [ ] Pass · [ ] Fail. Notes:
+
+### P5. Techno in A minor (HW 6.0-5)
+- **Type:** *"Stop."* Then *"Play techno in A minor."*
+- **Expect:** the bass moves from F to A. The drums sound unchanged. No stretched or grainy bass (the register check). The visualiser's KEY module reads `A MINOR · SET`.
 - [ ] Pass · [ ] Fail. Notes:
 
 ---
@@ -663,6 +715,8 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 | Q9 Written-part length vs HOLD/MODE; HOLD = NOTE display | C3, D4-D6 (and §15.1 #24: C6) |
 | Q10 Setup slot lands on the first note (fresh start and queued) | A3, B5, B6 |
 | Q11 TUNE after a slot change | B5 |
+| Q12 Notes one audio track sounds at once | P2 |
+| Q13 A chord spread across chord tracks | P3 |
 
 | Plan item / §15.1 | Check |
 | --- | --- |
@@ -674,3 +728,5 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 | Item 10 latency (soft) | A1-A8 turn times, B9 |
 | §15.1 #26 kit map | A3, B1-B4, E4 |
 | §15.1 #27 setup CCs | A3, B5-B7 |
+| v0.6 HW 6.0-1 to 6.0-5 (keys, progressions) | P1-P5 |
+| Visualiser key and chords (v0.6.0) | E8 |

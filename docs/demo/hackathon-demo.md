@@ -52,6 +52,17 @@ Type each prompt as written. Times are cumulative and approximate; each Hermes t
 
 Close with the line: *"Every change landed on the bar, whatever the model's latency. Whiplash never saves to the unit, never sends SysEx or program changes, and the visualiser only watches."*
 
+### Optional encore: a chord progression (+30 s, v0.6.0)
+
+Only if the slot has time left **and** checklist P1 passed on the unit. Rehearse it with `uv run python scripts/rehearse_demo.py --v06` (the default rehearsal leaves it out). It starts from stop, after the run above.
+
+| Time | Type | Audience hears | Audience sees (visualiser) |
+| --- | --- | --- | --- |
+| +0:00 | *"Track 7 is a pad now. Play deep house in A minor with the dirty bass on 6 and my synth on 7: i-VI-III-VII, two bars per chord."* | Deep house again, the synth on 7 playing chord tones, the bass following the roots. The chord changes every 2 bars, on the one: Am, F, C, G. The drums and the cymbal on 8 don't change. | The **KEY** module appears: `A MINOR`, cells `i VI III VII` with the chord names. The playing chord is lit and moves on the bar; the next one counts down four beats. Modules 6 and 7 show `ROOT` and `CHD` lines with the notes they play in this chord. |
+| +0:25 | *"Stop."* | Clean silence. | The KEY module goes away with the beat. |
+
+Say it: *"The chords are note numbers rewritten at the bar line. Nothing on the unit changes: no scale, no root note, no saves."*
+
 ---
 
 ## If something misbehaves
@@ -70,6 +81,7 @@ Keep the music going and fix it with one prompt. Each of these is safe to type m
 | "tech house" errors or picks another genre | *"Switch to techhouse on the next bar."* (one word), or *"Switch to techno on the next bar."* |
 | A filter sweep is still running when you want it gone | *"Cancel all ramps."* |
 | Results say `warning`: virtual port, silent | The Digitakt isn't the output. *"Is my Digitakt connected?"*, then *"Play deep house on the Digitakt."* |
+| Encore: the chords sound out of tune or thin on track 7 | *"Stop."* and skip the encore. (A one-voice audio track plays one chord tone per hit: checklist P2/P3.) |
 | The visualiser froze or closed | Keep playing; the beat doesn't depend on it. *"Launch the visualiser"* again, or reload the browser tab. |
 | Hermes is slow to answer | Keep talking; the beat is on Whiplash's clock and doesn't wait for the model. |
 

@@ -96,6 +96,27 @@ body.nocables #cables { display: none; }
 #masterCtl { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 #audioDev { max-width: 200px; background: var(--dark); border: 2px solid var(--mid); color: var(--hi); text-transform: uppercase; font-size: 11px; }
 
+/* key / chords (v0.6.0): the key, the progression, the chord now and the one coming on the bar */
+#harm { grid-column: 1 / -1; }
+#keyName { font-size: 14px; letter-spacing: 0.12em; white-space: nowrap; }
+#chordRow { display: flex; flex-wrap: wrap; gap: 8px; }
+.cell { position: relative; min-width: 76px; padding: 4px 8px 6px; background: var(--dark); border: 2px solid var(--mid); display: flex; flex-direction: column; gap: 2px; }
+.cell .num { font-size: 18px; line-height: 22px; letter-spacing: 0.04em; white-space: nowrap; }   /* case matters: i = minor, I = major */
+.cell .cname { color: var(--mid2); white-space: nowrap; }
+.cell .cnotes { font-size: 10px; color: var(--mid2); white-space: nowrap; }
+.cell .cbars { display: flex; gap: 2px; margin-top: 2px; min-height: 4px; }
+.cell .cbars i { width: 4px; height: 4px; background: var(--off); }
+.cell .cbars i.on { background: var(--hi); }
+.cell.now { background: var(--hi); border-color: var(--hi); color: var(--bg); }
+.cell.now .cname, .cell.now .cnotes { color: var(--panel); }
+.cell.now .cbars i { background: var(--mid); } .cell.now .cbars i.on { background: var(--bg); }
+.cell.next { border: 2px dashed var(--hi); }
+.cell .cue { position: absolute; right: 4px; top: 4px; display: flex; gap: 2px; }
+#harmFoot { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; min-height: 14px; }
+#nextKey { color: var(--hi); font-size: 11px; }
+.chd { margin-top: 6px; font-size: 10px; color: var(--mid2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 12px; }
+.chd b { color: var(--hi); font-weight: normal; }
+
 /* track modules */
 #tracks, #tracksHi { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 40px 24px; align-content: start; }
 .trk .tb { display: grid; grid-template-columns: 26px minmax(0, 1fr) 52px; gap: 8px; align-items: start; }
@@ -129,7 +150,7 @@ body.nocables #cables { display: none; }
 .trk.muted, .trk.dropped { opacity: 0.42; }
 .trk.dropped { border-style: dashed; }
 .trk.enter { opacity: 0; }
-.mod.flash { animation: invert 280ms steps(1, end) 2; }
+.mod.flash, .cell.flash { animation: invert 280ms steps(1, end) 2; }
 @keyframes invert { 0% { filter: invert(1); } 50% { filter: none; } }
 .mod.ping { animation: ping 600ms steps(1, end); }
 @keyframes ping { 0%, 34% { outline: 2px solid var(--hi); outline-offset: 4px; } 35%, 66% { outline: none; } 67%, 100% { outline: 2px solid var(--hi); outline-offset: 4px; } }
@@ -268,6 +289,14 @@ body.nocables #cables { display: none; }
         </div>
       </section>
 
+      <section class="mod hidden" id="harm">
+        <i class="screw tl"></i><i class="screw tr"></i><i class="screw bl"></i><i class="screw br"></i>
+        <div class="mhead"><canvas class="px" data-px="KEY" data-s="2"></canvas><span id="keyName"></span><span class="tag" id="keySrc"></span>
+          <span class="sp"></span><span class="lbl-txt" id="progMeta"></span><i class="led big" id="chordLed" title="chord change"></i></div>
+        <div id="chordRow"></div>
+        <div id="harmFoot"><span class="lbl-txt" id="progFollow"></span><span id="nextKey"></span></div>
+      </section>
+
       <div id="tracks"></div>
       <div id="hiHead" class="hidden"><canvas class="px" data-px="TRK 9-16" data-s="2"></canvas><span class="lbl-txt">CHECK AUTO / FX CONTROL CH</span></div>
       <div id="tracksHi" class="hidden"></div>
@@ -402,6 +431,7 @@ function onState(frame) {
   syncClock(frame, now);
   renderTransport();
   renderTracks();
+  renderHarmony();
   renderLog();
   $("chatSrc").textContent = frame.chat_source === "hooks" ? "HOOKS" : "STATE.DB" + (frame.chat_error ? " (UNAVAILABLE)" : "");
   $("msgCount").textContent = `MSG ${S.messages_sent}`;
@@ -476,6 +506,7 @@ function makeTrack(lane) {
         <canvas class="px mutelbl"></canvas></div>
     </div>
     <canvas class="strip"></canvas>
+    <div class="chd hidden" title="follows the progression: the notes it plays in this chord, then in the next"></div>
     <div class="tags"></div>`;
   paintStatic(el);
   pxText(el.querySelector(".ttl"), `TRK ${lane.track}`, 2, C.hi);
@@ -483,7 +514,7 @@ function makeTrack(lane) {
   const knobs = [...el.querySelectorAll(".knob")].map((k) => ({ el: k, ind: k.querySelector(".ki"), tick: k.querySelector(".kt"), lbl: k.querySelector("canvas"),
     kv: k.querySelector(".kv"), shown: null }));
   return { el, data: lane, role: el.querySelector(".role"), tags: el.querySelector(".tags"), led: el.querySelector(".trig"), jack: el.querySelector(".jack"),
-    strip: el.querySelector(".strip"), note: el.querySelector(".note"), rng: el.querySelector(".rng"), lever: el.querySelector(".bat .bl"), muteLbl: el.querySelector(".mutelbl"),
+    strip: el.querySelector(".strip"), chd: el.querySelector(".chd"), note: el.querySelector(".note"), rng: el.querySelector(".rng"), lever: el.querySelector(".bat .bl"), muteLbl: el.querySelector(".mutelbl"),
     thumb: el.querySelector(".thumb"), lvlKv: el.querySelector(".fader .kv"), knobs, controls: [], ledUntil: 0, ledOn: false,
     wasDropped: false, wasFilling: false, noteText: "--" };
 }
@@ -684,6 +715,85 @@ function drawRoll(ctx, w, h, lane, shown, cur, cw, gap) {
     ctx.fillStyle = s === cur ? C.dark : v >= 100 ? C.hi : C.mid2;
     ctx.fillRect(s * unit, y, len, nh);   // ends a gap short of the next step, so retriggers stay visible
   }
+}
+
+// ---- key / chords (v0.6.0) --------------------------------------------------------------
+// S.harmony: the key the beat plays in and, after whiplash_set_progression, the progression. The chord
+// playing at any bar is ((bar - start) / bars_per_chord) mod chords, the same lookup the sequencer
+// makes at the bar line, so the highlight moves on the extrapolated playhead, exactly on the bar.
+const MODE_TITLE = { CHD: "chords: one chord tone per hit", STK: "stack: every chord tone on every hit", ROOT: "root: the chord root", SNAP: "snap: nearest scale note" };
+const harm = { sig: null, cells: [], shownIdx: null, shownBar: null };
+const keyCase = (name) => { const [root, ...rest] = String(name).split(" "); return [root, ...rest.map((w) => w.toUpperCase())].join(" "); };   // Bb, never BB
+function chordAt(P, bar) {
+  if (bar < P.start) return { idx: null, into: 0, nextAt: P.start, nextIdx: 0 };
+  const n = P.chords.length, into = (bar - P.start) % P.bars_per_chord;
+  const idx = Math.floor((bar - P.start) / P.bars_per_chord) % n, nextAt = bar + P.bars_per_chord - into;
+  return { idx, into, nextAt, nextIdx: Math.floor((nextAt - P.start) / P.bars_per_chord) % n };
+}
+function renderHarmony() {
+  const H = S.playing ? S.harmony : null, box = $("harm");
+  if (!H || !H.key) { if (!box.classList.contains("hidden")) { box.classList.add("hidden"); layoutDirty = true; } harm.sig = null; return; }
+  if (box.classList.contains("hidden")) { box.classList.remove("hidden"); layoutDirty = true; }
+  const P = H.progression;
+  $("keyName").textContent = keyCase(P ? P.key : H.key);
+  $("keySrc").textContent = H.key_source === "set" ? "SET" : "HOME";
+  $("keySrc").title = H.key_source === "set" ? "key set by play_pattern(key) or a progression; it holds until stop" : "the pattern's home key";
+  $("progMeta").textContent = P ? `${P.chords.length} CHORDS · ${P.bars_per_chord} BAR${P.bars_per_chord === 1 ? "" : "S"} EACH · ${P.voicing} · LOOP ${P.loop_bars}` : "";
+  const nk = H.next_key;
+  $("nextKey").textContent = nk ? `NEXT KEY ${keyCase(nk.key)} @${nk.at + 1}` : "";
+  const follow = S.lanes.filter((l) => l.harmony).map((l) => `${l.track} ${l.harmony.tag}`);
+  $("progFollow").textContent = P ? (follow.length ? "FOLLOW · " + follow.join(" · ") : "NO TRACK FOLLOWS") : "";
+  const sig = P ? JSON.stringify([P.start, P.bars_per_chord, P.chords]) : "none";
+  if (sig !== harm.sig) {
+    harm.sig = sig; harm.shownIdx = null; harm.shownBar = null;
+    const row = $("chordRow");
+    if (!P) {
+      row.innerHTML = `<span class="lbl-txt">NO PROGRESSION · ASK HERMES FOR CHORDS, E.G. I-VI-III-VII</span>`;
+      harm.cells = [];
+    } else {
+      row.innerHTML = P.chords.map((c, i) => `<div class="cell" data-i="${i}" title="${esc(c.symbol)} = ${esc(c.name)}: ${esc(c.notes.join(" "))}">
+        <span class="cue hidden">${"<i class=\"led\"></i>".repeat(4)}</span>
+        <div class="num">${esc(c.symbol)}</div>${c.symbol !== c.name ? `<div class="cname">${esc(c.name)}</div>` : ""}
+        <div class="cnotes">${esc(c.notes.join(" "))}</div><div class="cbars">${"<i></i>".repeat(Math.min(16, P.bars_per_chord))}</div></div>`).join("");
+      harm.cells = [...row.children];
+    }
+    layoutDirty = true;
+  }
+  tickHarmony(playheadAbs(performance.now()), performance.now(), true);
+}
+function tickHarmony(ph, now, force) {
+  const H = S && S.playing ? S.harmony : null, P = H && H.progression;
+  const bar = ph === null ? (S ? S.bar : 0) : Math.floor(ph / STEPS);
+  if (P && harm.cells.length) {
+    const at = chordAt(P, bar);
+    if (force || at.idx !== harm.shownIdx || bar !== harm.shownBar) {
+      if (harm.shownIdx !== null && at.idx !== harm.shownIdx && at.idx !== null) {   // the chord just changed
+        if (harm.cells[at.idx]) flash(harm.cells[at.idx]);
+        $("chordLed").classList.add("on"); setTimeout(() => $("chordLed").classList.remove("on"), 160);
+      }
+      harm.cells.forEach((el, i) => {
+        el.classList.toggle("now", i === at.idx);
+        el.classList.toggle("next", i === at.nextIdx && at.nextIdx !== at.idx);
+        [...el.querySelector(".cbars").children].forEach((b, k) => b.classList.toggle("on", i === at.idx && k <= at.into));
+      });
+      harm.shownIdx = at.idx; harm.shownBar = bar;
+      for (const L of tracks.values()) chordLine(L, bar);
+    }
+    // the next chord's cue: four beat LEDs fill during the last bar before the change
+    const cell = harm.cells[at.nextIdx], beatsLeft = ph === null ? 99 : Math.ceil((at.nextAt * STEPS - ph) / 4);
+    harm.cells.forEach((el, i) => el.querySelector(".cue").classList.toggle("hidden", !(i === at.nextIdx && beatsLeft <= 4 && at.nextIdx !== at.idx)));
+    if (cell && beatsLeft <= 4) [...cell.querySelector(".cue").children].forEach((led, i) => led.classList.toggle("on", i < 4 - Math.max(0, beatsLeft)));
+  } else if (force) for (const L of tracks.values()) chordLine(L, bar);
+}
+// a track following the progression: its mode, the notes it plays in this chord, and in the next one
+function chordLine(L, bar) {
+  const hm = L.data.harmony;
+  L.chd.classList.toggle("hidden", !hm);
+  if (!hm) return;
+  const crossed = bar >= hm.next_at;   // the playhead is past the change but the next frame isn't here yet
+  const now = crossed ? hm.next : hm.now, next = crossed ? [] : hm.next;
+  const html = `${esc(hm.tag)} <b>${esc(now.join(" ") || "-")}</b>` + (next.length && next.join() !== now.join() ? ` &gt; ${esc(next.join(" "))} @${hm.next_at + 1}` : "");
+  if (L.chd.innerHTML !== html) { L.chd.innerHTML = html; L.chd.title = (MODE_TITLE[hm.tag] || hm.mode) + (hm.active ? "" : ` · starts at bar ${hm.next_at + 1}`); }
 }
 
 // ---- transport visuals ---------------------------------------------------------------
@@ -1004,6 +1114,7 @@ function frame(now) {
       drawControls(L, now, false);
     }
   }
+  tickHarmony(ph, now);
   drawTape(ph, dt);
   drawHub(now);
   drawVu(dt, now);
