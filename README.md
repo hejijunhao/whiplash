@@ -29,13 +29,13 @@ Every tool is prefixed `whiplash_` so it can't collide with another plugin's too
 | `whiplash_open_view` | Opens the **live visualiser**, a local web page (`http://127.0.0.1:7341`, or a free port) in the default browser. It shows the beat and the conversation while you keep chatting in the terminal. Optional `port`, and `open_browser: false` to only get the URL. Read-only. |
 | `whiplash_close_view` | Stops the visualiser's local server. The beat keeps playing. |
 
-Default track roles (same for all genres): 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords/chops/stabs. Whiplash can't see what the unit holds, so until the user labels the tracks, results mark the roles `(assumed)` and carry a `kit_note` telling the agent to ask.
+Default track roles: 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7 chords/chops/stabs, 8 chords, pad or perc depending on the genre. Whiplash can't see what the unit holds, so until the user labels the tracks, results mark the roles `(assumed)` and carry a `kit_note` telling the agent to ask.
 
 ### Kit map
 
 Tell Hermes what your tracks hold ("track 7 is a cymbal, track 5 is a pad") and it calls `whiplash_label_tracks`. Each generated part then goes, in order:
 1. to a track labelled with the same role,
-2. else to one with a close role (rim and snare, chord to pad, stab to lead, open hat to cymbal),
+2. else to one with a close role (rim and snare either way, chord to pad or stab, pad to chord, stab to lead or chord, lead to stab, open hat to cymbal),
 3. else to its default track, if you haven't labelled that track as something else,
 4. else it is dropped.
 
@@ -79,7 +79,7 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
   - **Pitch:** the note range under the note readout (Elektron names, C5 = 60) includes the live transpose, and a `TRN +12` tag shows a transpose. Note names match what `whiplash_write_part` echoes.
   - **Written parts:** a `WR` tag, and the strip becomes a small piano roll: each note at its pitch, running for its length in steps. A `LEN` tag gives the length range. It is dashed when Whiplash has sent neither `amp_mode` 1 (ADSR) nor `amp_hold` 127 on that track, because the unit may then ignore note-off (reference §5.2). `HLD NOTE` or `ADSR`/`AHD` shows what Whiplash last sent for the envelope, not what the kit is set to.
   - **Kit map:** a track you labelled with `whiplash_label_tracks` shows your label as its role in white (assumed roles stay gray). The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until you write one.
-  - **Tracks 9-16:** they play only written parts, so they get their own row under 1-8 with a reminder to keep AUTO / FX CONTROL CH off those channels.
+  - **Tracks 9-16:** they play written parts, or generated parts the kit map routed there, so they get their own row under 1-8 with a reminder to keep AUTO / FX CONTROL CH off those channels.
 - **Tape transport:** a bitmap BPM readout that rolls to a new tempo, REC LED, bar and 4-bar loop position, pattern and swing, a queued switch with a beat countdown, and the MIDI port. The virtual fallback shows as an inverted `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
 - **Master VU:** the needle follows an envelope derived from the scheduled hits and track levels, labelled `MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO`. The tape reels turn with the BPM and stop with the transport; the hub pulses on each kick and bar downbeat.
   - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The needle then follows the input's RMS, labelled `AUDIO · <device>`.
@@ -226,7 +226,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-360 tests, covering:
+363 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -240,6 +240,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 - the native register (no generated line far below note 60, whole-octave shifts, drums untouched), transpose on the wire (clamping, bar landing, carry over a switch, reset on stop), the `pitch` block with a sent tune, the per-track status block, `amp_mode`, and the bundled skill (registration, fallback without the API, frontmatter, no stale claims)
 - v0.5.2: transpose on written parts on tracks 9-16 and refusal on silent tracks, All Notes Off on exactly the channels that played (1-8 always, 9-16 only after a note), and `amp_hold` never reaching HOLD = NOTE by clamp or ramp (named or raw CC 80) while `"note"` / 127 sends it with a label
 - v0.5.3: the kit map (role vocabulary, routing onto labelled tracks, fallbacks, no chords on cymbal/fx tracks, re-routing on the bar, lifetime across stop and switches, slot labels in results, bad labels changing nothing), per-track setup on `whiplash_play_pattern` (each CC once, before MIDI Start on a fresh start and at the switch bar when queued, a bad entry rejecting the whole call), the `techhouse` pattern and aliases, and a size budget on tool descriptions that keeps the safety caveats
+- the v0.5.3 review follow-ups: a fill leaves a melodic line on tracks 1-5 alone (a bass routed onto track 2 never becomes a roll), and explicit kit roles accept `closed_hat`-style spelling
 - input validation, single panic per stop, exit hook, SysEx refusal
 - the visualiser:
   - the state snapshot and which lanes appear
@@ -257,6 +258,8 @@ All of this runs against fake or virtual ports. Behaviour on a real Digitakt II 
 ## 90-second demo: a build and drop
 
 Digitakt II on screen, USB to the laptop, Hermes in a terminal beside it. Each line is what you type.
+
+For a live audience, use the 3-minute stage script instead: [docs/demo/hackathon-demo.md](docs/demo/hackathon-demo.md). It adds the kit map, one-call start, a written melody and tech house, plus fallback prompts and recovery. It follows the hardware checklist's smoke test, so run that on the unit first.
 
 | Time | Prompt | What happens |
 | --- | --- | --- |

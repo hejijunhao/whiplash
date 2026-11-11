@@ -120,7 +120,7 @@ body.nocables #cables { display: none; }
 .strip { width: 100%; height: 12px; margin-top: 8px; }
 .strip.roll { height: 26px; }   /* a written part: a tiny piano roll, pitch up, length across */
 .rng { margin-top: 2px; }
-/* tracks 9-16 only play written parts: their own row under 1-8, so 1-8 never reflow */
+/* tracks 9-16 (written parts, or generated parts the kit map routed there): their own row under 1-8, so 1-8 never reflow */
 #hiHead { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding-top: 8px; border-top: 2px dashed var(--mid); }
 .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; min-height: 16px; }
 .tag { font-size: 10px; padding: 0 4px; border: 2px solid var(--mid); color: var(--mid2); text-transform: uppercase; white-space: nowrap; line-height: 12px; }
@@ -269,7 +269,7 @@ body.nocables #cables { display: none; }
       </section>
 
       <div id="tracks"></div>
-      <div id="hiHead" class="hidden"><canvas class="px" data-px="TRK 9-16" data-s="2"></canvas><span class="lbl-txt">WRITTEN PARTS · CHECK AUTO / FX CONTROL CH</span></div>
+      <div id="hiHead" class="hidden"><canvas class="px" data-px="TRK 9-16" data-s="2"></canvas><span class="lbl-txt">CHECK AUTO / FX CONTROL CH</span></div>
       <div id="tracksHi" class="hidden"></div>
     </div>
     <footer id="log"><canvas class="px" data-px="LOG" data-s="2"></canvas><span id="logEntries">NO WHIPLASH ACTIONS YET</span></footer>
