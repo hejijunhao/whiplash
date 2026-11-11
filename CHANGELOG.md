@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased: Digitakt II reference (0.4.x patch)
+## 0.5.0
+
+Fixes from the second live session on a Digitakt II (Nov 11 2026): generated basslines no longer repitch samples far below their own pitch, results say where each line sits, and the agent guidance ships with the plugin. 15 tools.
+
+Added
+- **Native-pitch register.** Note 60 (C5, Elektron numbering) plays a sample at its own pitch while TUNE is 64 and the preset OCTAVE is unchanged (reference.md §6.1; manual p. 25, p. 38). `patterns.register()` lifts each generated melodic part by whole octaves at load time until its median is no more than 7 semitones below 60, keeping the intervals. The techno bass moves from 41 to 53 (the -7 that tune +12 fixed by ear), the soul and breaks basslines move up an octave, deep house is unchanged, and drums are never moved. The note tables stay as written in `patterns.RAW`.
+- `whiplash_transpose(track, semitones | octaves)`: absolute, ±48 semitones, from the next bar line, clamped to 16-84 (the manual's documented chromatic range; the track-channel range is undocumented). Carries across pattern switches like mutes; `whiplash_stop` and a fresh start reset it.
+- `transpose` on `whiplash_play_pattern` (`{"6": -12}`): from the first bar of a fresh start, or from the switch bar of a queued one.
+- `pitch` per melodic, transposed or tuned track: low/high notes with Elektron names, `semitones_from_native` (including `tune - 64` when Whiplash sent CC 16), `transpose`, `tune` and `register_shift`.
+- `tracks` in `whiplash_status` and in `whiplash_play_pattern` results: role marked `(assumed)`, last sample `slot` and `tune` Whiplash sent (`null` until sent), `transpose`, `pitch`, mute, `part` and `last_cc`, plus `roles_assumed`, `kit_note` and `pitch_note`. A queued result describes the next pattern with the transposes it will play with.
+- `amp_mode` named param: CC 87, 0 = AHD, 1 = ADSR, a switch (manual B.5 p. 110; midi.guide). `amp_hold` documents 127 = NOTE (manual 11.7 p. 56; midi.guide). 38 named params.
+- Bundled skill `whiplash:digitakt` (`skills/digitakt/SKILL.md`), registered with `ctx.register_skill` when the Hermes build has it; older builds still load the tools. Tool descriptions point to it.
+- README "Updating" section: run `hermes gateway restart` after updating, and delete any stale local `whiplash-digitakt` skill.
+
+- The reference's named-param table gains `amp_mode`, and its §15.1 audit marks items 3, 15 and 22 as handled in v0.5.0. `pitch_note`, the skill and the README now carry the reference's caveats: the preset OCTAVE and an LFO on tune are invisible to Whiplash, SLICE = NOTE picks slices, HOLD = NOTE is the usual default, and Logic calls note 60 C3.
+
+Not in this release (next, v0.5.1): `whiplash_write_part` (notes, rhythm presets, lock-to-kick, note lengths).
+
+### Also in 0.5.0: the Digitakt II device reference (PR #6)
 
 Added
 - `docs/digitakt-ii/reference.md`: a detailed device reference with manual page numbers, cross-checked against midi.guide (CSV of 2026-10-12). It covers:
@@ -29,7 +47,7 @@ Changed
   - Safety says parameter edits stay in the active pattern's kit until reloaded.
   - It links the reference.
 
-## Unreleased: visualiser (`feat/visualiser`, on top of 0.4.0)
+### Also in 0.5.0: the live visualiser (merged from `feat/visualiser`)
 
 Added
 - `whiplash_open_view` / `whiplash_close_view`: a live, read-only web page served on `127.0.0.1` and opened in the default browser. It shows:

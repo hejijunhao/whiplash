@@ -30,6 +30,10 @@ one path is the validated named param. Sample BANK select (CC 24, NRPN 1:9) and 
 "sample" NRPN 1:3 (midi.guide only, absent from the manual) stay blocked, as do NRPN 1:8 raw.
 Machine type (Oneshot/Werp/Stretch/...): neither source lists a CC or NRPN for it (it is only
 reached via the MACHINE menu, [FUNC] + [SRC], Appendix A.1), so Whiplash can't switch machines.
+Amp mode (v0.5): manual B.5 AMP PARAMETERS (p. 110) "Mode" CC 87, NRPN 1:40; midi.guide "Amp: Mode 87
+[0-1] 0: AHD; 1: ADSR". Manual 11.7 AMP PAGE (p. 56): in AHD a fixed HOLD (0-126) ignores Note Off, and
+HOLD = NOTE follows Note On/Off; midi.guide gives amp hold CC 80 value 127 = Note. So a MIDI note length
+only shortens a sound in ADSR mode, or in AHD with HOLD = NOTE.
 FX-channel and global parameters (delay time, reverb decay, ...) live on the FX channel and are
 out of scope for named params; raw cc can still reach them.
 
@@ -111,10 +115,14 @@ _TABLE = (
        aliases=("key_tracking",), nrpn=(1, 69)),
     # amp
     _c("amp_attack", 79, "amp", "Amp envelope attack", aliases=("attack",), nrpn=(1, 30)),
-    _c("amp_hold", 80, "amp", "Amp envelope hold", aliases=("hold",), nrpn=(1, 31)),
+    _c("amp_hold", 80, "amp", "Amp envelope hold (AHD mode): 0-126 fixed hold that ignores note-off; 127 = NOTE "
+       "(the midi.guide default), hold until note-off", aliases=("hold",), nrpn=(1, 31)),
     _c("amp_decay", 81, "amp", "Amp envelope decay: how long each hit rings", aliases=("decay",), nrpn=(1, 32)),
     _c("amp_sustain", 82, "amp", "Amp envelope sustain", aliases=("sustain",), nrpn=(1, 33)),
     _c("amp_release", 83, "amp", "Amp envelope release", aliases=("release",), nrpn=(1, 34)),
+    _c("amp_mode", 87, "amp", "Amp envelope mode: 0 = AHD, 1 = ADSR. Note length (note-off) only shortens a sound "
+       "in ADSR, or in AHD with amp_hold 127 (NOTE)", max=1, discrete=True, aliases=("envelope_mode",),
+       nrpn=(1, 40)),
     _c("amp_volume", 89, "amp", "Amp volume (pre-FX)", aliases=("volume",), nrpn=(1, 39)),
     _c("pan", 90, "amp", "Stereo pan; 64 = centre, 0 = hard left, 127 = hard right", centered=True,
        nrpn=(1, 38)),

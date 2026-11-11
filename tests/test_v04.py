@@ -94,7 +94,7 @@ def test_list_params_shows_sample_slot(tool_engine):
     src = {p["name"]: p for p in out["params"]["src"]}
     assert src["sample_slot"]["cc"] == 19 and src["sample_slot"]["range"] == [0, 127]
     assert src["sample_slot"]["discrete"] and "sample" in src["sample_slot"]["aliases"]
-    assert out["count"] == 37 and "can't list" in out["notes"]
+    assert out["count"] == 38 and "can't list" in out["notes"]
     assert "sample_bank" not in str(out["params"])
 
 
@@ -215,7 +215,8 @@ def test_play_schema_has_send_transport():
     assert "overlap_warning" in schemas.SCHEMAS["whiplash_play_pattern"]["description"]
 
 
-def test_twelve_tools_in_manifest_order():
+def test_tools_in_manifest_order():
     assert list(tools.HANDLERS)[4] == "whiplash_select_sample" == list(schemas.SCHEMAS)[4]
-    # v0.4's 12 tools, then the visualiser's two
-    assert len(tools.HANDLERS) == 14 and list(tools.HANDLERS)[12:] == ["whiplash_open_view", "whiplash_close_view"]
+    assert list(tools.HANDLERS)[5] == "whiplash_transpose" == list(schemas.SCHEMAS)[5]  # v0.5
+    # v0.4's 12 tools, v0.5's transpose, then the visualiser's two
+    assert len(tools.HANDLERS) == 15 and list(tools.HANDLERS)[13:] == ["whiplash_open_view", "whiplash_close_view"]

@@ -95,7 +95,7 @@ def list_params(p):
 def play_pattern(p):
     pattern = patterns.resolve(p.get("genre"), p.get("mood"))
     result = ENGINE.play(pattern, bpm=p.get("bpm"), bars=p.get("bars"), port=p.get("port"),
-                         send_transport=p.get("send_transport"))
+                         send_transport=p.get("send_transport"), transpose=p.get("transpose"))
     transport = {"send_transport": result["send_transport"],
                  "transport_mode": eng.transport_mode(result["send_transport"]),
                  "overlap_warning": overlap_warning(result["send_transport"])}
@@ -104,16 +104,33 @@ def play_pattern(p):
         out = {"mode": "queued", "playing": status["pattern"], "next": pattern.name,
                "switch_at_bar": result["switch_at_bar"], "bar": status["bar"],
                "bpm_at_switch": result_bpm(p, pattern), "swing": pattern.swing,
-               "bars": eng.check_bars(p.get("bars")), "tracks": pattern.roles,
+               "bars": eng.check_bars(p.get("bars")),
+               "tracks": ENGINE.tracks_summary(pattern, transpose=_queued_transpose(status)),
                "muted_carried": status["muted"], "ramps_carried": [r["id"] for r in status["ramps"]],
-               "port": ENGINE.port_name, "virtual": ENGINE.virtual, **transport}
+               "transpose_carried": status["transpose"],
+               "port": ENGINE.port_name, "virtual": ENGINE.virtual, **transport, **TRACK_NOTES}
         if result["replaced_queued"]:
             out["replaced_queued"] = result["replaced_queued"]
         return out
     return {"mode": "started", "playing": pattern.name, "bpm": ENGINE.bpm, "swing": pattern.swing,
-            "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual, "tracks": pattern.roles,
+            "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual,
+            "tracks": ENGINE.tracks_summary(),
             "replaced_playing": result["was_playing"], "mutes_cleared": result["mutes_cleared"],
-            "ramps_cancelled": result["ramps_cancelled"], **transport}
+            "ramps_cancelled": result["ramps_cancelled"], **transport, **TRACK_NOTES}
+
+
+TRACK_NOTES = {"roles_assumed": True, "kit_note": eng.KIT_NOTE, "pitch_note": eng.PITCH_NOTE}
+
+
+def _queued_transpose(status):
+    """The transposes the queued pattern will play with: the carried ones plus the switch's own."""
+    out = {int(t): v for t, v in status["transpose"].items()}
+    for t, v in (status["queued"] or {}).get("transpose", {}).items():
+        if v:
+            out[int(t)] = v
+        else:
+            out.pop(int(t), None)
+    return out
 
 
 def result_bpm(p, pattern):
@@ -131,6 +148,12 @@ def select_sample(p):
     ENGINE.ensure_port()
     out = ENGINE.set_param(p["track"], p["slot"], param="sample_slot")
     return {"track": out["track"], "slot": out["value"], "cc": out["cc"], "note": SAMPLE_NOTE}
+
+
+@_tool
+def transpose(p):
+    out = ENGINE.set_transpose(p["track"], semitones=p.get("semitones"), octaves=p.get("octaves"))
+    return {**out, "pitch_note": eng.PITCH_NOTE}
 
 
 @_tool
@@ -227,5 +250,5 @@ def close_view(p):
 
 
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
-                                             select_sample, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
+                                             select_sample, transpose, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
                                              status, open_view, close_view)}

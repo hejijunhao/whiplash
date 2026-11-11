@@ -276,7 +276,7 @@ What decides the pitch you hear when a note plays a sample:
 - **Modulation:** any LFO on TUNE, and KEY TRACKING destinations.
 - **Repitch** additionally ties speed to tempo, and Werp/Stretch keep the duration tied to BARS.
 
-A sample pitched well below 60 sounds stretched and grainy, because it is slowed down. The v0.4 hardware session hit exactly this, fixed with TUNE +12; see `docs/executing/v05-build-plan.md` item 1 on `feat/v05`.
+A sample pitched well below 60 sounds stretched and grainy, because it is slowed down. The v0.4 hardware session hit exactly this, fixed with TUNE +12; see `docs/executing/v05-build-plan.md` item 1. v0.5.0 lifts generated lines to within 7 semitones below 60 and adds `whiplash_transpose` and a `pitch` block (§15.1 #3).
 
 ### 6.2 KEYBOARD mode ([M] p. 25-26)
 
@@ -394,6 +394,7 @@ This is exactly what `ccmap.py` sends, on the track's channel. `tests/test_refer
 | `amp_decay` | amp | 81 | | 0-127 | |
 | `amp_sustain` | amp | 82 | | 0-127 | |
 | `amp_release` | amp | 83 | | 0-127 | |
+| `amp_mode` | amp | 87 | | 0-1 | |
 | `amp_volume` | amp | 89 | | 0-127 | |
 | `pan` | amp | 90 | | 0-127 | 64 |
 | `delay_send` | fx | 84 | | 0-127 | |
@@ -734,8 +735,8 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | --- | --- | --- | --- |
 | 1 | Track n plays on MIDI channel n, 1-8 (`engine.py` `ch = track - 1`; README setup) | ✅ | The factory default is track n = channel n ([M] p. 25). It is user-changeable in CHANNELS ([M] p. 79). |
 | 2 | Note 60 = the sample's own pitch (`patterns.DRUM = 60`; README) | ⚠️ | [M] p. 25 (C5 = 60), TUNE 0 = unchanged (p. 93), [G] Trig Note default 60. It only holds while TUNE = 64 and the preset OCTAVE is unchanged (p. 38), with no LFO on tune. Grid/Slice with SLICE = NOTE pick slices instead. The per-track-channel range is undocumented (HW). |
-| 3 | Melodic parts several semitones to an octave and a half below 60 (`patterns.py`) | ⚠️ | Musically valid, but every semitone below 60 slows the sample down (§6.1). Being handled on `feat/v05` (item 1: native register, transpose); not changed here. |
-| 4 | Every named param CC number (`ccmap._TABLE`) | ✅ | All 37 CCs and all 6 LFO LSBs match [M] App. B and [G]. `tests/test_reference.py` checks that this file's table and the code agree. |
+| 3 | Melodic parts several semitones to an octave and a half below 60 (`patterns.py`) | 🔧 v0.5.0 | Every semitone below 60 slows the sample down (§6.1). `patterns.register()` now lifts each generated melodic part by whole octaves until its median is at most 7 below 60; `whiplash_transpose` and the `pitch` block let the agent correct the rest. `pitch` can't see the preset OCTAVE or an LFO on tune. |
+| 4 | Every named param CC number (`ccmap._TABLE`) | ✅ | All 38 CCs (37, plus `amp_mode` CC 87 in v0.5.0) and all 6 LFO LSBs match [M] App. B and [G]. `tests/test_reference.py` checks that this file's table and the code agree. |
 | 5 | `loop_pos` range 0-127, "Oneshot only" (`ccmap.py`) | 🔧 | [G] gives 0-120 for Oneshot LOOP, the same as START/LENGTH. The same knob is BARS 0-3 on Werp/Stretch/Repitch and GRID 0-4 on Grid. Now `max=120`, with a machine-dependent description. |
 | 6 | `lfo3_speed` had no documentation NRPN | 🔧 | [M] and [G] agree on 1:58. Added (it is still never sent). |
 | 7 | Named params as CC only, NRPN documented but not sent | ✅ | §8.3 lists 8 NRPN conflicts, three of them inside the manual. |
@@ -746,14 +747,14 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | 12 | Clock-only still drives the unit's tempo | ✅ | CLOCK RECEIVE is separate from TRANSPORT RECEIVE (p. 77). |
 | 13 | Hardware mute = CC 94, 1/0 (`ccmap mute`, `set_mute(hardware=True)`) | ⚠️ | The CC and values are right ([M] p. 109, [G]). Which panel mute mode it drives isn't documented. If it's the global mute, it is project-wide and saved with the project (p. 27), which is why releasing it on stop/exit matters. CC 110 (pattern mute) is unused. |
 | 14 | Parameter changes last "until you reload" (README safety) | ⚠️ | True, but the edit lives in the active pattern's kit. It survives pattern switches, and (interpretation) power cycles, until a reload: [FUNC] + [NO] (p. 49), RELOAD FROM PROJ (p. 77), or [TRK] + [TRIG] + [NO] (p. 53). It is never written to the saved project unless the user saves. README updated to say so. |
-| 15 | Gate lengths shape notes (`engine.GATE`, pattern gates) | ⚠️ | Only with AMP MODE = AHD and HOLD = NOTE (the [G] defaults), or with ADSR. A fixed HOLD ignores note-off (p. 56). See v0.5 item 4a (`amp_mode`). |
+| 15 | Gate lengths shape notes (`engine.GATE`, pattern gates) | ⚠️ | Only with AMP MODE = AHD and HOLD = NOTE (the [G] defaults), or with ADSR. A fixed HOLD ignores note-off (p. 56). v0.5.0 adds `amp_mode` (CC 87) and documents `amp_hold` 127 = NOTE. |
 | 16 | Velocity accents, ghost notes and humanize are audible (`mutate.py`) | ⚠️ | Only if the preset's VELOCITY TO VOL is not OFF, or velocity is mod-routed (p. 38-39). HW: the default isn't documented. |
 | 17 | Stop/panic sends note-offs per sounding note, plus CC 123 on channels 1-8 (`engine._panic`) | ⚠️ | The note-offs are the real guarantee. CC 123 (All Notes Off) is standard MIDI but isn't in [M], so whether the unit honours it is HW. It does no harm. |
 | 18 | Raw `cc` and `nrpn` go to the track's channel (`set_param`) | ⚠️ | Raw CC numbers mean different things on a MIDI-machine track (CC 70-77 = VAL1-8) and on the FX channel. Raw access can't reach the FX channel unless it shares a track's channel, which §7.4 says to avoid. |
 | 19 | Retrig/ratchet and fills are done by sending notes (`mutate.py`) | ✅ | The unit's retrigs and fill mode have no MIDI control (§12). |
 | 20 | Swing and humanize live in Whiplash | ✅ | The unit's swing and micro timing apply only to its own sequencer (§9, §12). |
 | 21 | The visualiser captures "the stereo main mix" over USB (README) | ⚠️ | Needs USB CONFIG = USB AUDIO/MIDI. USB OUT is one pair: MAIN by choice, or selected tracks (p. 81). Check INT TO MAIN (§14). |
-| 22 | The v0.5 plan clamps transpose to 16-84 | ✅ | Conservative: that is the documented chromatic range (AUTO channel, p. 25). The track-channel range is undocumented, and KEYBOARD mode spans C0-G10 (p. 25). |
+| 22 | v0.5.0 clamps transpose to 16-84 (`engine.clamp_note`) | ✅ | Conservative: that is the documented chromatic range (AUTO channel, p. 25). The track-channel range is undocumented, and KEYBOARD mode spans C0-G10 (p. 25). |
 
 ### 15.2 Things Whiplash must keep never doing
 

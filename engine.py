@@ -41,6 +41,18 @@ BPM_MIN, BPM_MAX = 30, 300
 BARS_MAX = 512
 RAMP_BEATS_MAX, RAMP_BARS_MAX = 512, 128
 DROP_BARS_MAX = 32
+TRANSPOSE_MAX = 48  # semitones either way (4 octaves); notes still clamp to the 16-84 chromatic range
+TUNE_CC = ccmap.PARAMS["tune"].cc
+SLOT_CC = ccmap.PARAMS["sample_slot"].cc
+_NOT_PARAMS = {123, 6, 38, 98, 99}  # All Notes Off and NRPN data entry: never shown as a track's last_cc
+KIT_NOTE = ("Track roles are the pattern's assumed layout, not what the unit holds: ask the user what each track "
+            "plays. slot, tune and last_cc are the last values Whiplash sent (it can't read the unit; null = not "
+            "sent yet).")
+PITCH_NOTE = ("pitch: MIDI note 60 plays a sample at its own pitch, if tune is 64 and the preset's OCTAVE (FUNC+FLTR "
+              "> TRACK) is unchanged. semitones_from_native = note - 60 + (tune - 64), using the tune Whiplash last "
+              "sent (null = not sent, counted as 64); Whiplash can't see the OCTAVE setting or an LFO on tune. "
+              "Names use Elektron octaves (0 = C0, C5 = MIDI 60). A line far below native sounds stretched or "
+              "grainy: raise it with whiplash_transpose (or tune) before touching the envelope.")
 SWING_MIN, SWING_MAX = 50, 80
 JOIN_TIMEOUT = 2.0
 HOTPLUG_INTERVAL = 2.0  # seconds between port enumerations while on the virtual port
@@ -122,6 +134,24 @@ def check_track(track, high=16):
     if not 1 <= value <= high or isinstance(track, bool):
         raise WhiplashError(f"track must be 1-{high}, got {track!r}")
     return value
+
+
+def check_transpose(value, what="transpose"):
+    """Semitones for one track: a whole number within +-TRANSPOSE_MAX."""
+    return check_whole(value, -TRANSPOSE_MAX, TRANSPOSE_MAX, what, " semitones")
+
+
+def check_transpose_map(transpose):
+    """{"6": -12, "7": 5} -> {6: -12, 7: 5}. None or {} -> {}."""
+    if transpose in (None, {}):
+        return {}
+    if not isinstance(transpose, dict):
+        raise WhiplashError('transpose must map track to semitones, e.g. {"6": -12, "7": 5}')
+    return {check_track(t): check_transpose(v, f"transpose for track {t}") for t, v in transpose.items()}
+
+
+def clamp_note(note):
+    return min(patterns.NOTE_MAX, max(patterns.NOTE_MIN, note))
 
 
 def check_tracks(tracks, high=8):
@@ -216,6 +246,7 @@ class Engine:
         self.humanize = 0.0
         self._work = {}  # working copy of the pattern (density applied)
         self._drops = {}  # track -> (first bar, end bar exclusive)
+        self._transpose = {}  # track -> semitones, applied to note numbers at the bar line
         self._fills = {}  # bar -> set(tracks)
         self.sent_count = 0
         self.send_transport = None  # transport mode of the current/last run; None = env default
@@ -327,7 +358,7 @@ class Engine:
     def transport_on(self):
         return default_send_transport() if self.send_transport is None else self.send_transport
 
-    def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None):
+    def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None, transpose=None):
         """Start a pattern, or queue a live switch to it at the next bar line.
 
         send_transport: True sends MIDI Start/Stop around the clock, False sends clock only,
@@ -336,10 +367,13 @@ class Engine:
         playing on the same port in the same transport mode (clock keeps running; mutes and ramps
         carry over), else {"mode": "started", "was_playing", "mutes_cleared", "ramps_cancelled"}.
         Both carry "send_transport".
+        transpose ({track: semitones}) applies from the first bar of a fresh start, or from the switch
+        bar of a queued one, merged into the transposes already carried.
         """
         bpm = check_bpm(pattern.bpm if bpm is None else bpm)  # validate before touching the running beat
         bars = check_bars(bars)
         send_transport = check_send_transport(send_transport)
+        transpose = check_transpose_map(transpose)
         with self._transport:
             same_mode = send_transport is None or send_transport == self.send_transport
             if (self.playing() and self._port is not None and (port is None or port == self.port_name)
@@ -347,7 +381,7 @@ class Engine:
                 with self._lock:
                     replaced = self._queued["pattern"].name if self._queued else None
                     at = self.bar + 1
-                    self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at}
+                    self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at, "transpose": transpose}
                 return {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
                         "send_transport": self.send_transport}
             if send_transport is None:
@@ -357,6 +391,7 @@ class Engine:
             with self._lock:
                 self.send_transport = send_transport
                 self._load(pattern, bpm, bars, start_bar=0)
+                self._transpose = {t: v for t, v in transpose.items() if v}
                 self.bar = 0
                 self.last_error = None
                 self._stop, self._done = threading.Event(), threading.Event()
@@ -401,6 +436,7 @@ class Engine:
                     self._ramps.clear()
                     self._queued = None
                     self._drops, self._fills = {}, {}
+                    self._transpose = {}
                     if self.pattern is not None:
                         self._load(self.pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
@@ -471,6 +507,7 @@ class Engine:
         if queued and bar_n >= queued["at"]:
             self._queued = None
             self._load(queued["pattern"], queued["bpm"], queued["bars"], start_bar=bar_n)
+            self._set_transposes(queued.get("transpose") or {})
             log.info("whiplash: switched to %s at bar %d", queued["pattern"].name, bar_n)
         if self.bars_total and bar_n - self.pattern_start >= self.bars_total:
             return None
@@ -490,11 +527,22 @@ class Engine:
             if drop and drop[0] <= bar_n:
                 continue
             hits = mutate.fill(track, bars[idx]) if track in fills else bars[idx]
+            shift = self._transpose.get(track, 0)
             for step, note, vel, gate, offset in hits:
                 if r is not None:
                     vel, offset = mutate.humanize(vel, offset, self.humanize, r)
+                if shift:
+                    note = clamp_note(note + shift)
                 events[step].append((track, note, vel, gate, offset))
         return events
+
+    def _set_transposes(self, transpose):
+        """Merge {track: semitones} into the live transposes (caller holds _lock); 0 removes one."""
+        for track, semitones in transpose.items():
+            if semitones:
+                self._transpose[track] = semitones
+            else:
+                self._transpose.pop(track, None)
 
     def _run(self, send_clock, send_transport, stop, done):
         mido = __import__("mido")
@@ -805,6 +853,86 @@ class Engine:
             self._load(self.pattern, self.bpm, self.bars_total, self.pattern_start)
             return {"reset": True, "swing": round(self.swing * 100), "applies": "next bar"}
 
+    def set_transpose(self, track, semitones=None, octaves=None):
+        """Transpose one track's notes from the next bar line. Absolute: 0 puts it back.
+
+        Carries across live pattern switches like mutes; whiplash_stop and a fresh start reset it.
+        """
+        track = check_track(track)
+        given = [k for k, v in (("semitones", semitones), ("octaves", octaves)) if v not in (None, "")]
+        if len(given) != 1:
+            raise WhiplashError(f"give exactly one of semitones or octaves (got {', '.join(given) or 'none'})")
+        if octaves not in (None, ""):
+            octs = check_whole(octaves, -TRANSPOSE_MAX // 12, TRANSPOSE_MAX // 12, "octaves")
+            value = octs * 12
+        else:
+            value = check_transpose(semitones, "semitones")
+        with self._lock:
+            if not self.playing():
+                raise WhiplashError("nothing is playing: start a pattern first, or pass transpose to "
+                                    'whiplash_play_pattern (e.g. {"6": 12})')
+            previous = self._transpose.get(track, 0)
+            self._set_transposes({track: value})
+            out = {"track": track, "transpose": value, "previous": previous, "applies": "next bar",
+                   "at_bar": self.bar + 1, "all": {str(t): v for t, v in sorted(self._transpose.items())}}
+            pitch = self._pitch(track, self._work.get(track), value, self.pattern)
+            if pitch:
+                out["pitch"] = pitch
+            if self._queued:
+                out["note"] = (f"carries into the queued switch to {self._queued['pattern'].name} at bar "
+                               f"{self._queued['at']}")
+            return out
+
+    def _pitch(self, track, bars, transpose, pattern):
+        """Pitch summary for one track (caller holds _lock), or None for an unpitched drum part."""
+        tune = self._cc_values.get((track - 1, TUNE_CC))
+        if not bars or not any(bars):
+            return None
+        if not (patterns.is_melodic(bars) or transpose or tune is not None):
+            return None
+        raw = [n + transpose for n in patterns.notes_of(bars)]
+        low, high = clamp_note(min(raw)), clamp_note(max(raw))
+        offset = (tune - 64) if tune is not None else 0
+        out = {"low": low, "high": high, "low_name": patterns.note_name(low), "high_name": patterns.note_name(high),
+               "semitones_from_native": [low - patterns.NATIVE + offset, high - patterns.NATIVE + offset],
+               "transpose": transpose, "tune": tune}
+        shift = pattern.shifts.get(track) if pattern is not None else None
+        if shift:
+            out["register_shift"] = shift
+        if min(raw) < patterns.NOTE_MIN or max(raw) > patterns.NOTE_MAX:
+            out["clamped"] = True
+        return out
+
+    def tracks_summary(self, pattern=None, transpose=None):
+        """Per-track summary for status and play results. pattern/transpose default to what is playing."""
+        with self._lock:
+            current = pattern is None
+            pattern = self.pattern if current else pattern
+            work = self._work if current else mutate.working(pattern)
+            transpose = dict(self._transpose) if transpose is None else transpose
+            last = collections.defaultdict(dict)
+            for (ch, control), value in self._cc_values.items():
+                if control not in _NOT_PARAMS:
+                    spec = ccmap.BY_CC.get(control)
+                    last[ch + 1][spec.name if spec else f"cc {control}"] = value
+            roles = pattern.roles if pattern is not None else {}
+            in_use = {t for t, bars in work.items() if any(bars)} | set(last) | set(transpose)
+            in_use |= self.muted | self.hw_muted
+            out = {}
+            for track in sorted(in_use):
+                role = roles.get(track)
+                cc = last.get(track, {})
+                out[str(track)] = {
+                    "role": f"{role} (assumed)" if role else None,
+                    "slot": cc.get("sample_slot"), "tune": cc.get("tune"),
+                    "transpose": transpose.get(track, 0),
+                    "pitch": self._pitch(track, work.get(track), transpose.get(track, 0), pattern),
+                    "muted": track in self.muted or track in self.hw_muted,
+                    "part": "generated" if work.get(track) and any(work[track]) else None,
+                    "last_cc": {k: v for k, v in cc.items() if k not in ("sample_slot", "tune")},
+                }
+            return out
+
     def mutations(self):
         with self._lock:
             return {"density": {str(t): a for t, a in sorted(self._density.items())},
@@ -821,8 +949,12 @@ class Engine:
                 "send_transport": self.transport_on(), "transport_mode": transport_mode(self.transport_on()),
                 "pattern": self.pattern.name if self.pattern else None, "bpm": self.bpm,
                 "bar": self.bar, "pattern_bar": self.bar - self.pattern_start, "bars": self.bars_total,
-                "queued": ({"pattern": queued["pattern"].name, "bpm": queued["bpm"], "switch_at_bar": queued["at"]}
+                "queued": ({"pattern": queued["pattern"].name, "bpm": queued["bpm"], "switch_at_bar": queued["at"],
+                            "transpose": {str(t): v for t, v in sorted((queued.get("transpose") or {}).items())}}
                            if queued else None),
+                "transpose": {str(t): v for t, v in sorted(self._transpose.items())},
+                "tracks": self.tracks_summary(), "roles_assumed": True, "kit_note": KIT_NOTE,
+                "pitch_note": PITCH_NOTE,
                 "muted": sorted(self.muted), "hardware_muted": sorted(self.hw_muted),
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "mutations": self.mutations(),
@@ -846,6 +978,7 @@ class Engine:
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "density": dict(self._density), "humanize": self.humanize, "work": dict(self._work),
                 "drops": dict(self._drops), "fills": {b: set(t) for b, t in self._fills.items()},
+                "transpose": dict(self._transpose),
                 "cc_values": dict(self._cc_values), "messages_sent": self.sent_count,
                 "position": self.position, "bar_hits": self.bar_hits,
                 "transport_mode": transport_mode(self.transport_on()),
