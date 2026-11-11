@@ -1,7 +1,15 @@
 # Whiplash Visualiser: UI design proposal
 
-Status: **proposal, awaiting Phil's feedback.** Nothing in here is implemented yet.
-Branch `feat/visualiser`, based on v0.3.0 (`11eb6dd`).
+Status: **approved by Phil on 2026-11-11**, with the decisions below. Implemented on `feat/visualiser` (based on v0.3.0, `11eb6dd`).
+
+### Approved decisions
+
+1. **Conversation:** a side panel in full-frame windows, switching automatically to lower-third captions when the window is narrower than 1100 px (terminal beside the page).
+2. **Feed:** Hermes plugin hooks, with replies **streaming word by word** through `on_stream_start` / `on_stream_delta` / `on_stream_end`, alongside `pre_llm_call`, `post_llm_call`, `pre_tool_call` and `post_tool_call`. Phil confirmed all of these are in `VALID_HOOKS` on his Air's Hermes v0.23.1. A read-only `state.db` poll is the fallback. Hooks must be non-blocking, never raise, and return `None`.
+3. **Look:** clean neon **plus** a perspective-tilted "runway" step grid. No scanlines and no chromatic aberration. Keep it light on the Air's GPU.
+4. **Grid:** the current bar's 16 steps big, plus a 4-bar minimap.
+
+Sections 1–5 are the original proposal. Where they differ from the decisions above, the decisions win. Section 6 records how each open question was resolved.
 
 ---
 
@@ -125,6 +133,8 @@ While a turn is running, a `HERMES ● thinking…` row shows. Tool calls tick i
 | `pre_llm_call(session_id, user_message, conversation_history, is_first_turn, …)` | Phil's message, plus a **backfill** of earlier turns from `conversation_history` | **must return `None`**: a returned string gets injected into the prompt |
 | `post_tool_call(tool_name, args, result, duration_ms, status, …)` | the live tool-call feed (all tools, not only Whiplash) | fires immediately after each tool |
 | `post_llm_call(session_id, user_message, assistant_response, …)` | Hermes's final reply | only fires on successful turns, so an interrupted turn shows "interrupted" |
+| `on_stream_start` / `on_stream_delta(delta, kind)` / `on_stream_end(final_text, finished, error)` | the reply streaming in word by word (`kind == "text"` only, never reasoning) | added on approval; observers delivered off the token path |
+| `pre_tool_call(tool_name, args, …)` | a running tool row, shown while the tool executes | must return `None` (a dict can block the tool) |
 
 The hooks are registered in `register(ctx)`, alongside the tools, and `plugin.yaml` gains `provides_hooks`. Each callback copies its arguments into a bounded in-memory deque (about 500 entries), truncates large `result` strings, and returns. It does no I/O, takes no lock shared with the engine, and can't raise. Hermes runs these on its own turn thread, which is also time-bounded. When the view isn't open, the only cost is the append, so the text/CLI behaviour stays the same.
 
@@ -228,7 +238,7 @@ The overlay matters most in full-frame shots, where the terminal is off-screen. 
 
 ---
 
-## 6. Open questions and alternatives
+## 6. Open questions (resolved, see "Approved decisions" at the top)
 
 1. **Overlay shape: side panel or lower-third captions?** The proposal is a 480 px collapsible side panel. The alternative is a **lower-third subtitle strip**: only the latest exchange, large (28 px) and centred over the analyser, fading after about 8 s. It reads much better on a phone-sized video and doesn't duplicate a visible terminal, but it loses scrollback. Possible compromise: side panel in full-frame, auto-switch to the lower-third when the window is under 1100 px wide. **Which one should be the default?**
 2. **Hooks or SQLite only?** Hooks are live and in-process, and they backfill history through `conversation_history`. They also mean `register()` registers hooks on every Hermes run, the view-open or not, and `plugin.yaml` gains `provides_hooks`. That touches the catalog surface and the existing "register only wires tools" note. SQLite-only keeps the plugin's footprint exactly as it is but has about 1 s of latency, and it depends on the `state.db` schema, which I haven't verified against Phil's Hermes version. I recommend hooks with SQLite as a fallback. **OK to register hooks?** If yes, I also need confirmation that Phil's Hermes (`requires_hermes >= 0.19`) has `register_hook` and these four hook names. I read them from a Hermes source copy on this host, not his install.
@@ -241,4 +251,15 @@ The overlay matters most in full-frame shots, where the terminal is off-screen. 
 
 ---
 
-*Waiting for Phil's feedback before any UI code. After approval, implementation follows the brief: `whiplash_open_view` / `whiplash_close_view`, stdlib server bound to 127.0.0.1, SSE, read-only snapshot, tests, README, skill text, draft PR.*
+### Resolution
+
+1. **Overlay shape:** side panel in full-frame, lower-third captions under 1100 px wide.
+2. **Hooks or SQLite:** hooks, with streaming replies; `state.db` is only the fallback.
+3. **Look:** clean neon plus the runway tilt. `R` toggles the tilt off, and `prefers-reduced-motion` starts it flat.
+4. **Grid scope:** the current bar's 16 steps, plus the 4-bar minimap.
+
+### Implementation notes (as built)
+
+- **Streaming hooks:** Hermes delivers `on_stream_*` on one worker thread per callback, so start, delta and end can arrive out of order relative to each other and to `post_llm_call`. Streamed text is keyed by `(turn_id, iteration)`, and `post_llm_call`'s final reply supersedes any streamed copy of the same text when the turn is serialised. This guarantees a reply never shows twice.
+- **Tool calls:** `pre_tool_call` adds a running tool row and `post_tool_call` completes it. This is what drives the "thinking… ⚙ whiplash_ramp_param…" line while tools are hidden.
+- **Captions:** in narrow windows they show the latest exchange and fade 8 s after the turn finishes. `C` hides them.
