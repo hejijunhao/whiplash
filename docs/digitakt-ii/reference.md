@@ -301,6 +301,17 @@ A sample pitched well below 60 sounds stretched and grainy, because it is slowed
 
 RETRIGS, SLICES and PRESET POOL work on audio tracks only.
 
+### 6.4 Chords and voices: one voice per audio track (interpretation, added 2026-11-11)
+
+What the manual says:
+- **16 stereo audio voices** for 16 tracks ([M] 4, p. 15: "its 16 stereo audio voices").
+- **Chords are a MIDI-track feature.** "Each MIDI track can trigger a chord of up to four notes" ([M] 5.3.2, p. 17). In GRID and LIVE RECORDING, "On MIDI tracks, you can add up to a four note chord to every trig" ([M] 10.2.2-10.2.3, p. 42-43). The NOT2-NOT4 chord notes are on the MIDI machine's TRIG page only ([M] p. 101-102, §4.3).
+- Nothing in the manual describes an audio track playing more than one note at a time.
+
+Interpretation, which Whiplash uses: **an audio track plays one note at a time.** Several notes sent together on one audio track's channel probably sound as one note (likely the last note-on), not a chord. The manual doesn't state this outright, so it is HW (§15.3 Q12).
+
+What Whiplash does about it (v0.6.0, `harmony.py`): a progression's default `chords` mode sends **one chord tone per hit** on each chord track, and gives each chord track a different starting tone. Two or three chord tracks hitting together then sound the chord across tracks, and a single chord track plays a voice-led line of chord tones. `stack` (every tone on every hit) is opt-in, for a MIDI-machine track driving a polyphonic synth or in case the HW check shows audio tracks layering.
+
 ---
 
 ## 7. MIDI configuration (SETTINGS > MIDI CONFIG, [M] p. 77-79)
@@ -760,6 +771,8 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | 25 | `amp_hold` range 0-126; 127 (HOLD = NOTE) only on request (`ccmap.py`, `engine.set_param`/`ramp`, v0.5.2) | ✅ | [M] p. 56: 0-126 are hold times and NOTE is a separate setting; [G] puts NOTE at CC 80 value 127. So 127 is a mode switch, not the top of a range: clamping or a ramp to 127 would silently change how note-off behaves. Named `amp_hold` clamps to 126, every ramp on CC 80 (named or raw) stops at 126, and `set_param` sends 127 only for `"note"` or exactly 127, with `hold: "NOTE"` in the result. Whether the unit shows NOTE for CC 80 = 127 is HW question 9. |
 | 26 | v0.5.3 kit map: generated parts move onto the tracks the user labelled (`kitmap.route`, `whiplash_label_tracks`) | ⚠️ | Only note routing inside Whiplash changes; nothing is sent when labelling, and the unit is never read (sample names need SysEx, §15.2). Labels are what the user said, so a wrong label routes a part onto the wrong sound. Fills are keyed to tracks 1-5, not to roles: a part moved off tracks 1-5 doesn't get its drum fill, and a drum part moved onto another of 1-5 gets that track's fill style (for example hats on track 2 get the snare roll). Since the v0.5.3 hardware-checklist PR, a melodic line on 1-5 (any note other than 60) is left alone by a fill instead of becoming a roll of its own notes. |
 | 27 | v0.5.3 `play_pattern(tracks=...)` sends CC 19 (slot) then CC 16 (tune) just before MIDI Start, or at the switch bar before its first note | ⚠️ | Same CCs and values as `whiplash_select_sample` / `set_param` ([M] p. 109; [G]). Whether the unit applies a slot change in time for a note that follows within a millisecond, and whether TUNE stays put across a slot change, is HW (§15.3 Q10-11). |
+| 28 | v0.6.0 keys and progressions send only notes (`harmony.py`, `whiplash_set_progression`, `play_pattern(key=...)`) | ✅ | No CC, NRPN, SysEx or program change: a key or chord change rewrites note numbers at the bar line, inside 16-84 (§6.1), with voicings' medians at or above 53 (the v0.5 register floor). The unit's own KB SCALE and ROOT NOTE ([M] p. 26) are not touched, and are stored in the active pattern, so Whiplash never sets them. |
+| 29 | v0.6.0 chord tracks play one chord tone per hit by default (`harmony.apply`, mode `chords`) | ⚠️ | Follows §6.4: 16 voices for 16 tracks, chords only on MIDI tracks ([M] p. 15, p. 17, p. 42-43). `stack` sends 3-4 note-ons on one channel in the same instant; on an audio track that probably sounds one note (HW, §15.3 Q12). |
 
 ### 15.2 Things Whiplash must keep never doing
 
@@ -790,6 +803,8 @@ Check these on the unit, and record the result in this file with a date:
 9. Written-part length (v0.5.1): with AHD and a fixed HOLD, does `length` change nothing? With CC 80 = 127, does the unit show HOLD = NOTE and does `length` shorten the sound? With ADSR (CC 87 = 1), do length and release shape it? (v0.5 plan HW 2.)
 10. Kit setup timing (v0.5.3): with `play_pattern(tracks: {"6": {"slot": 9}})`, does the first note on track 6 already play slot 9, both on a fresh start (CC 19 just before MIDI Start) and on a queued switch (CC 19 at the bar line, right before the bar's first note)?
 11. After CC 19 changes a track's sample, does TUNE (CC 16) keep the value sent before it, or does the new sample bring its own? Whiplash sends slot first, then tune.
+12. Voices per audio track (v0.6.0, §6.4): send a 3-note chord on one audio track's channel (`whiplash_set_progression` with `tracks: {"7": "stack"}`). Do all three notes sound, or only one (which: first or last note-on)? Does a new note on the same track cut the one still ringing?
+13. Chord tones across tracks (v0.6.0): with two or three chord tracks in `chords` mode, does the result sound like the chord at each hit, with each track keeping its own sample and envelope?
 
 ---
 

@@ -1,6 +1,6 @@
 # Whiplash roadmap: v0.6 and beyond
 
-Status: **brainstorm for Phil's review**. Docs only; none of this is implemented. It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
+Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
 
 **How the versions are ordered:**
 
@@ -32,11 +32,13 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 
 ## v0.6: song structure, in key
 
+**Status:** split into three PRs ([v06-build-plan.md](v06-build-plan.md)). **v0.6.0** (feature 1: keys, scales, progressions) is implemented and not yet hardware-tested. v0.6.1 (arrangement, plus fills that follow the kit map) and v0.6.2 (transitions and mix levels) are not started.
+
 **Goal:** go from a looping beat to a short arranged track that follows a key and a chord progression.
 
 **Features:**
 
-1. **Key, scale and progressions** (M).
+1. **Key, scale and progressions** (M). **Implemented in v0.6.0.** Chord tracks play one chord tone per hit by default, because an audio track probably plays one voice ([reference](../digitakt-ii/reference.md) §6.4).
    - `key` and `scale` on `whiplash_play_pattern` and `whiplash_write_part`, so notes can be given as scale degrees.
    - `whiplash_set_progression(chords: ["i", "VI", "III", "VII"], bars_per_chord, voicing)`. Chord tracks voice the progression; bass and lead parts follow the root, or snap to the scale.
    - It is bar-quantized and keeps to the native register from v0.5.

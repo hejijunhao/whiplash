@@ -1,6 +1,6 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
@@ -21,6 +21,23 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 - Results and `whiplash_status` show the label as `tracks[n].role` (without "(assumed)") plus `kit_role`; `roles_assumed` is false once anything is labelled. A selected slot with a label shows `slot_label`, in `whiplash_select_sample`, `whiplash_set_param` sample_slot and the play `setup` echo too.
 - The map lives in memory for the session: it survives `whiplash_stop` and pattern switches. `reset: true` clears it, and so does a gateway restart.
 - Labels are only what the user told you. Whiplash can't read sample names (that would need SysEx, which it never sends).
+
+## Keys and chord progressions
+
+- **Key:** `whiplash_play_pattern(genre: "techno", key: "Am")` (or `key: "A", scale: "minor"`) moves the bass, chords and stabs into that key from the first bar, or from the switch bar when queued. Drums never move. Without a key each genre plays in its home key (deep house, soul, tech house A minor; techno F minor; breaks G minor). Once set, the key stays for later switches until `whiplash_stop`. Results and status show `key`.
+- **Progression:** `whiplash_set_progression(chords: "i VI III VII", bars_per_chord: 2)`. It starts on the next bar line and loops. Chords are Roman numerals in the key (upper case = major, lower = minor; `V7`, `ii°`, `bVII`, `Imaj7`, `sus4`) or names (`"Am F C G"`). `key` changes the key at the same bar. `voicing`: `close` (default, voice-led), `root`, `open`, `power`.
+- **Who follows**, by role (the kit map first, else the pattern's role):
+  - chord, pad and stab tracks → `chords`: one chord tone per hit, and each chord track starts on a different tone, so two or three chord tracks together sound the chord.
+  - bass → `root`: every hit plays the chord root, in the line's own register.
+  - lead → `snap`: notes snap to the scale.
+  - Drums, hats, perc, cymbal and fx tracks never change, and `tracks` overrides on them are refused. Never promise chords on a cymbal.
+- **One note at a time:** the manual gives the Digitakt II 16 audio voices for 16 tracks and documents chords only on MIDI tracks, so an audio track probably plays one note at a time (not yet checked on hardware). That is why `chords` spreads the chord over tracks and hits. `stack` sends every tone on every hit: only for a MIDI track or a polyphonic target, or if the user finds their unit layers notes.
+- **Overrides:** `tracks: {"9": "chords", "6": "off"}` with modes `chords`, `stack`, `root`, `snap`, `off`. A chord track with no line of its own (a labelled pad that got no part) holds one chord tone per bar.
+- **"Pads on track 7":** label it first (`whiplash_label_tracks(tracks: {"7": "pad"})`), or pass `tracks: {"7": "chords"}`.
+- Written parts play as written unless `tracks` names them (the result lists `written_unchanged`). Transpose, mutes, drops, fills and density still apply on top. The progression carries across switches and `whiplash_mutate reset`; `clear: true` or `whiplash_stop` ends it.
+- `whiplash_status` shows `progression.now` (the chord playing and `next_change_at_bar`), every voiced chord with note names, and `tracks[n].progression`. Read the chord names back to the user.
+- A melody in the playing key: `whiplash_write_part(track: 8, rhythm: "8ths", key: "current", notes: "1 3 5 8")`.
+- Typical request, "deep house in A minor, i-VI-III-VII, two bars per chord, pads on track 7", is three calls: `whiplash_label_tracks(tracks: {"7": "pad"})`, `whiplash_play_pattern(genre: "deephouse", key: "Am")`, then `whiplash_set_progression(chords: "i VI III VII", bars_per_chord: 2)`.
 
 ## Writing notes, melodies and rhythms
 
@@ -91,7 +108,9 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | Stretched, grainy, too low | `tracks[n].pitch`, then `whiplash_transpose` up an octave |
 | Plays non-stop, droney | amp hold/decay, and `amp_mode` (see above); then shorter `length` in `whiplash_write_part` |
 | "Wrong rhythm", "make it 4/4", "lock to the kick" | `whiplash_write_part` with `rhythm` or `lock_to`, not density |
-| "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`) |
+| "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`, or `key: "current"`) |
+| "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern`, then `whiplash_set_progression` |
+| Chords sound like one note | expected on an audio track: use two or three chord tracks in `chords` mode |
 | Drums you didn't ask for | the unit's own pattern: empty pattern or clock only |
 | Wrong instrument on a track | ask the user, label it with `whiplash_label_tracks`, then `whiplash_select_sample` or `tracks: {"n": {"slot": ...}}` |
 | Chords on a cymbal, bass on a hat | the pattern's assumed layout: label the tracks with `whiplash_label_tracks` |
