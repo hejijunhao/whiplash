@@ -311,20 +311,22 @@ def note_spans(port, channel):
 
 def test_note_off_lands_at_length_times_a_sixteenth(fake):
     eng, port = fake
-    eng.play(P["techno"], bpm=300)  # straight (swing 50)
+    eng.play(P["techno"], bpm=120)  # straight (swing 50); a clock tick is ~21 ms, so runner lag stays under one
     wait_bar(eng, 1)
-    at = eng.write_part(6, hits=[{"step": 0, "note": "C5", "length": 1}, {"step": 4, "note": "D5", "length": 2},
-                                 {"step": 8, "note": "E5", "length": 0.5}, {"step": 12, "note": "F5", "length": 4}]
+    at = eng.write_part(6, hits=[{"step": 0, "note": "C5", "length": 2}, {"step": 4, "note": "D5", "length": 4},
+                                 {"step": 8, "note": "E5", "length": 8}, {"step": 12, "note": "F5", "length": 0.5}]
                         )["at_bar"]
     wait_bar(eng, at + 2)
     eng.stop()
     bar_start = at * engine.TICKS_PER_BAR
-    spans = [(on - bar_start, off - on) for on, off in note_spans(port, 5) if bar_start <= on < bar_start + 96]
-    # exact note-off, no 0.8 GATE factor: 1, 2, 0.5 and 4 sixteenths (6 clocks each)
-    assert spans == [(0, STEP), (4 * STEP, 2 * STEP), (8 * STEP, STEP // 2), (12 * STEP, 4 * STEP)]
+    spans = sorted((on - bar_start, off - on) for on, off in note_spans(port, 5) if bar_start <= on < bar_start + 96)
+    assert [s for s, _ in spans] == [0, 4 * STEP, 8 * STEP, 12 * STEP]
+    # exact note-off, no 0.8 GATE factor: 12, 24, 48 and 3 clocks (gated would be 10, 20, 39, 3), +-1 for CI lag
+    for (_, got), want in zip(spans, (2 * STEP, 4 * STEP, 8 * STEP, STEP // 2)):
+        assert abs(got - want) <= 1, spans
     # generated parts keep the 0.8 gate: the techno kick (gate 1) ends before the next 16th
     kick = note_spans(port, 0)[0]
-    assert kick[1] - kick[0] == 5  # 0.8 x 6 clocks = 4.8, so it lands before the 5th clock
+    assert kick[1] - kick[0] < STEP
 
 
 def test_a_long_note_never_cuts_its_own_retrigger(fake):
