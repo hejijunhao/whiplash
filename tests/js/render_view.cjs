@@ -4,7 +4,8 @@
 //
 // frames.json is a list of state frames (as /events sends them). Each is delivered as an SSE "state"
 // event, then the page's own requestAnimationFrame loop runs for a few frames, and a summary of the
-// rendered DOM is taken. Prints {"errors": [...], "shots": [...]} as JSON. Used by tests/test_view_harmony.py;
+// rendered DOM is taken. Prints {"errors": [...], "shots": [...]} as JSON. Used by tests/test_view_harmony.py and
+// tests/test_view_timeline.py;
 // needs jsdom (npm install jsdom@24.1.3, found through NODE_PATH). Nothing here touches the network.
 "use strict";
 const fs = require("fs");
@@ -57,6 +58,14 @@ function shot() {
     harm_hidden: harm.classList.contains("hidden"), key: txt(doc.getElementById("keyName")), key_src: txt(doc.getElementById("keySrc")),
     meta: txt(doc.getElementById("progMeta")), follow: txt(doc.getElementById("progFollow")), next_key: txt(doc.getElementById("nextKey")),
     row: txt(doc.getElementById("chordRow")), cells, tracks,
+    // v0.6.1 section timeline and v0.7.0 EAR module
+    tl_hidden: doc.getElementById("tl").classList.contains("hidden"), tl_name: txt(doc.getElementById("tlName")),
+    tl_meta: txt(doc.getElementById("tlMeta")), tl_now: txt(doc.getElementById("tlNow")), tl_next: txt(doc.getElementById("tlNext")),
+    tl_cue: doc.querySelectorAll("#tlNext .led.on").length, tl_events: txt(doc.getElementById("tlEvents")),
+    tl_label: doc.getElementById("tlCv").getAttribute("aria-label"),
+    ear_state: txt(doc.getElementById("earState")), ear_read: txt(doc.getElementById("earRead")), ear_note: txt(doc.getElementById("earNote")),
+    guard: doc.getElementById("guardLed").classList.contains("on"), ear_patched: doc.getElementById("earIn").classList.contains("patched"),
+    ear_stale: doc.getElementById("ear").classList.contains("stale"),
   };
 }
 

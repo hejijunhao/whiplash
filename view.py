@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import ccmap, chat, harmony, patterns
 from . import engine as eng
+from . import listen as _listen
 
 log = logging.getLogger("whiplash")
 
@@ -107,8 +108,152 @@ def record_action(name, params, out):
                         "args": json.dumps(args, separators=(",", ":"), default=str)[:200],
                         "ok": bool(out.get("success", True)), "summary": _summary(name, out),
                         "tracks": _tracks(params or {})})
+        if name == "whiplash_listen":
+            record_listen(out)
     except Exception:
         log.debug("whiplash view: action log failed", exc_info=True)
+
+
+# ---- listening loop (v0.7.0) -------------------------------------------------
+# The engine keeps only a four-number summary of the last whiplash_listen (Engine.last_listen, for the loudness
+# guard). The page wants what was heard in more detail: the four-band balance, onset timing, kick offsets. The
+# tool result already passes through record_action, so the view keeps a compact copy of it here (never audio:
+# the result never holds any). No engine or tool change.
+
+LISTEN = {"last": None, "error": None}  # last good listen (compact) and the error of a failed one after it
+_LISTEN_KEYS = {
+    "loudness": ("lufs_ish", "rms_dbfs", "peak_dbfs", "headroom_db", "clipping", "clipped_samples"),
+    "onsets": ("count", "per_bar", "on_grid_pct", "median_abs_offset_ms", "max_abs_offset_ms", "swing_estimate",
+               "latency_corrected_ms"),
+    "kick": ("sent", "heard", "missed", "median_offset_ms", "spread_ms", "offsets_ms"),
+    "low_end": ("kick_over_rest_db", "masking"),
+}
+_deps = [None]
+
+
+def _pick(d, keys):
+    return {k: d.get(k) for k in keys} if isinstance(d, dict) else None
+
+
+def record_listen(out):
+    """Keep what the page shows of a whiplash_listen result. A failed listen keeps the last good one (dimmed)."""
+    if not out.get("success", True):
+        LISTEN["error"] = {"ts": time.time(), "error": str(out.get("error", ""))[:240]}
+        return
+    bands = out.get("bands")
+    tracks = out.get("tracks") or {}
+    LISTEN["error"] = None
+    LISTEN["last"] = {
+        "ts": time.time(), "bars": out.get("bars"), "bpm": out.get("bpm"), "from_bar": out.get("from_bar"),
+        "seconds": out.get("seconds"), "playing": bool(out.get("playing")), "silent": bool(out.get("silent")),
+        "device": str(out.get("device") or "")[:60],
+        "bands": ([{"band": b, "pct": (bands.get(b) or {}).get("pct"), "db": (bands.get(b) or {}).get("db")}
+                   for b, _lo, _hi in _listen.BANDS] if isinstance(bands, dict) else None),
+        **{k: _pick(out.get(k), keys) for k, keys in _LISTEN_KEYS.items()},
+        "quiet_tracks": sorted(int(t) for t, e in tracks.items() if isinstance(e, dict) and e.get("seems_silent")),
+        "unexpected_audio": bool(out.get("unexpected_audio")),
+        "notes": [str(n)[:160] for n in (out.get("notes") or [])[:3]],
+    }
+
+
+def _listen_deps():
+    """numpy / sounddevice installed? Looked up once (find_spec, no import): installing them needs a restart."""
+    if _deps[0] is None:
+        try:
+            _deps[0] = _listen.available()
+        except Exception:
+            _deps[0] = {}
+    return _deps[0]
+
+
+def _listening(engine):
+    """The EAR module: the last listen, whether one is running, and why there is nothing when there isn't.
+
+    Timestamps, not ages, so an idle frame stays byte-identical and the publisher keeps to its heartbeat."""
+    heard = getattr(engine, "last_listen", None)  # one reference read; record_listen replaces it whole
+    deps = _listen_deps()
+    last = LISTEN["last"]
+    if heard is None:
+        last = None  # whiplash_stop doesn't clear it, but a new engine (tests, restart) has heard nothing
+    elif last is None:  # heard before this view module loaded: the engine's summary is all there is
+        last = {"ts": heard.get("at"), "bars": heard.get("bars"), "silent": heard.get("silent"), "bands": None,
+                "loudness": {"lufs_ish": heard.get("lufs_ish"), "peak_dbfs": heard.get("peak_dbfs"),
+                             "clipping": heard.get("clipping")}, "summary_only": True}
+    error = LISTEN["error"]
+    if error and last and last.get("ts") and last["ts"] > error["ts"]:
+        error = None
+    return {"running": _listen._BUSY.locked(), "last": last, "error": error,
+            "guard": bool(heard and heard.get("clipping")),
+            "installed": bool(deps) and all(deps.values()), "deps": deps}
+
+
+# ---- section timeline (v0.6.1 arrangement) -----------------------------------
+
+TIMELINE_AHEAD = 32  # bars of fills, drops and switches shown ahead of the playhead
+
+
+def _arrangement(engine, bar):
+    """whiplash_arrange's sections laid on absolute bar lines, for the cycle the playhead is in.
+
+    Engine.arrangement_status() is the same read-only summary whiplash_status shows; it expects the engine lock
+    (a dict walk over a handful of sections, like view_state's copy)."""
+    status = getattr(engine, "arrangement_status", None)
+    if status is None:
+        return None
+    with engine._lock:
+        arr = status()
+    if not arr:
+        return None
+    secs = arr["sections"]
+    lengths = [s["bars"] for s in secs]
+    cur = arr.get("current")
+    if cur is not None:  # the cycle start: the current section's first bar minus the sections before it
+        i = cur["index"]
+        cycle = cur["next_at_bar"] - lengths[i] - sum(lengths[:i])
+    else:
+        cycle = arr["starts_at_bar"]
+    out_secs, at = [], cycle
+    for s in secs:
+        out_secs.append({"name": s["name"], "bars": s["bars"], "start": at, "end": at + s["bars"],
+                         "transition": s.get("transition")})
+        at += s["bars"]
+    return {"name": arr["name"], "loop": arr["loop"], "start": arr["starts_at_bar"], "total": arr["total_bars"],
+            "cycle": cycle, "sections": out_secs, "index": cur["index"] if cur else None,
+            "next": cur["next"] if cur else None, "next_at": cur["next_at_bar"] if cur else arr["starts_at_bar"],
+            "stops_at": cur.get("stops_at_bar") if cur else (None if arr["loop"] else arr["starts_at_bar"] + arr["total_bars"]),
+            "ended_at": arr.get("ended_at_bar"), "skipped": len(arr.get("skipped_ramps") or ()),
+            "muted": arr.get("muted_by_arrangement") or []}
+
+
+def _timeline(engine, st, bar):
+    """The SECTIONS module: the arrangement (if any) and what is already scheduled on upcoming bar lines.
+
+    Events come from what view_state copies anyway (fills, drops, the queued switch and its transition). A
+    section's own fill or drop is scheduled when the section starts, so it appears from then on."""
+    events = []
+    for b, ts in sorted(st["fills"].items()):
+        if bar <= b <= bar + TIMELINE_AHEAD and ts:
+            events.append({"kind": "fill", "bar": b, "bars": 1, "tracks": sorted(ts)})
+    drops = {}
+    for t, (start, back) in st["drops"].items():
+        if back > bar and start <= bar + TIMELINE_AHEAD:
+            drops.setdefault((start, back), []).append(t)
+    for (start, back), ts in sorted(drops.items()):
+        events.append({"kind": "drop", "bar": start, "bars": back - start, "tracks": sorted(ts)})
+    queued = st["queued"]
+    if queued:
+        tx = queued.get("transition")
+        if tx:
+            events.append({"kind": "transition", "bar": tx["starts_at_bar"], "bars": tx["bars"],
+                           "transition": tx["kind"], "tracks": []})
+        events.append({"kind": "switch", "bar": queued["at"], "bars": 0, "pattern": queued["pattern"].name,
+                       "tracks": []})
+    try:
+        arr = _arrangement(engine, bar)
+    except Exception:
+        log.debug("whiplash view: arrangement read failed", exc_info=True)
+        arr = None
+    return {"arrangement": arr, "events": events[:24], "ahead": TIMELINE_AHEAD}
 
 
 # ---- snapshot --------------------------------------------------------------
@@ -178,7 +323,8 @@ def snapshot(engine, now=None):
         "port": {"name": st["port"], "virtual": st["virtual"], "fallback": st["fallback"],
                  "lost": st["port_lost"], "error": st["last_error"]},
         "messages_sent": st["messages_sent"], "pos": None, "lanes": [],
-        "transport_mode": st.get("transport_mode"), "harmony": None,
+        "transport_mode": st.get("transport_mode"), "harmony": None, "timeline": None,
+        "listen": _listening(engine),
     }
     position = st["position"]
     if playing and position:
@@ -190,6 +336,7 @@ def snapshot(engine, now=None):
     hm = st["hm"] = st.get("harmony") or (None, None, None, {}, {}, frozenset())
     prog, prog_modes = hm[2], hm[3]
     frame["harmony"] = _harmony(st, bar, pattern)
+    frame["timeline"] = _timeline(engine, st, bar)
     flats = frame["harmony"]["flats"]
 
     work, bar_hits = st["work"], st["bar_hits"]

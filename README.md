@@ -204,6 +204,8 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
 - **Key and chords (v0.6.0):** while a beat plays, a full-width **KEY** module shows the key it plays in (`SET` by `key` or a progression, else the pattern's `HOME` key) and a key queued for the next switch.
   - **Progression:** after `whiplash_set_progression`, one cell per chord with the numeral as you typed it (case kept: `i` minor, `VI` major), the chord name and its voiced notes. The chord playing is lit, with a square per bar of the chord; the next one is dashed and counts down four beats before the change. The highlight follows the playhead, so it moves on the bar line, not when the next frame arrives.
   - **Per track:** a track that follows the progression gets a chord line under its strip: its mode (`CHD` chords, `STK` stack, `ROOT` bass roots, `SNAP` lead) and the notes it plays in this chord, then in the next one. Drum, cymbal and fx modules never get one. The strip itself already shows each upcoming bar in its own chord.
+- **Sections (v0.6.1):** while a beat plays, a **SECTIONS** module lays a `whiplash_arrange` run on its bar lines: the section now and how far in, the next one with a four-beat cue, transitions, and the end. Fills, drops and a queued switch already scheduled show underneath, with or without an arrangement.
+- **EAR (v0.7.0):** what the last `whiplash_listen` heard (four-band balance, loudness, peak, timing, the loudness guard) and how long ago. It is a snapshot of a few bars, not a live feed; with CONNECT AUDIO on, a live spectrum of the browser's own capture runs beside it. Without a listen it says why (none yet, running, failed, or numpy/sounddevice not installed).
 - **Tape transport:** a bitmap BPM readout that rolls to a new tempo, REC LED, bar and 4-bar loop position, pattern and swing, a queued switch with a beat countdown, and the MIDI port. The virtual fallback shows as an inverted `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
 - **Master VU:** the needle follows an envelope derived from the scheduled hits and track levels, labelled `MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO`. The tape reels turn with the BPM and stop with the transport; the hub pulses on each kick and bar downbeat.
   - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The needle then follows the input's RMS, labelled `AUDIO · <device>`.
@@ -354,7 +356,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-723 tests, covering:
+738 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -408,7 +410,8 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - written parts, transpose, the amp envelope, kit and slot labels and tracks 9-16 in the snapshot, and the page handling frames without them
   - the sequencer keeping exact time under a flood of snapshots
   - the key, progression, chord now and next change, and per-track chord lines; the strip's upcoming bars matching what the sequencer plays in each chord
-  - a jsdom render of the page with real frames: chord cells, case-kept numerals, the highlight moving on the bar before a new frame arrives, chord lines, and no script errors (CI installs jsdom; locally it skips without it)
+  - the section timeline against `whiplash_status`'s arrangement (bar lines, a looping cycle, what is scheduled ahead) and the EAR's copy of a listen (compact, clipping as the guard, a failed listen keeping the last numbers)
+  - a jsdom render of the page with real frames: sections flipping on the bar line, the EAR's states, chord cells, case-kept numerals, the highlight moving on the bar before a new frame arrives, chord lines, and no script errors (CI installs jsdom; locally it skips without it)
   - hooks that return `None` and never raise
   - streamed replies that arrive out of order
   - the read-only `state.db` fallback
