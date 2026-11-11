@@ -4,6 +4,7 @@
     uv run python scripts/rehearse_demo.py               # real time, about 30 s
     uv run python scripts/rehearse_demo.py --speed 4     # 4x clock, about 8 s
     uv run python scripts/rehearse_demo.py --v06         # plus the optional v0.6 progression section
+    uv run python scripts/rehearse_demo.py --v061        # plus the optional v0.6.1 fill + short_demo section
 
 It runs the tool calls behind docs/demo/hackathon-demo.md (the hardware checklist's Part A,
 A1-A9) through the real tool handlers and engine, in order, with the music running between
@@ -21,19 +22,30 @@ It writes, into --out (default: <tmp>/whiplash-rehearsal):
   on the unit afterwards ([FUNC] + [NO]) and don't save.
 - report.txt: per step, the calls and key results, which tracks sounded, CCs sent, when each
   change landed relative to the bar line, warnings, and the checks. Then the global checks: no
-  SysEx or program change, no blocked CC, no hanging notes, clock jitter within the bound the
-  test suite uses (tests/test_v051.py: p95 <= max(2 x baseline, baseline + 3 ms)).
+  SysEx or program change, no blocked CC, no hanging notes, and clock timing: each tick's real-time
+  lateness against the engine's own grid. Ticks more than 4 ms late form a stall, which counts against
+  Whiplash unless a separate canary process saw the machine stall at the same moment; a segment may have
+  one such stall, plus one per 10 s of real time, plus one per machine stall the canary saw during it
+  (see docs/testing/clock-jitter.md).
 - results.json: every tool result, as Hermes would see it.
 
 Exit status: 0 if every check passed, 1 on any violation, 2 if the rehearsal itself crashed.
 --speed scales the engine's clock (its perf_counter and sleep), not the tool calls: the beat,
-bar quantize and ramps behave as at 1x. Jitter is measured in real time either way.
+bar quantize and ramps behave as at 1x. Lateness is measured in real time either way.
 
 --v06 adds an optional section after Part A (off by default, so the default run stays the demo):
 "deep house in A minor, i-VI-III-VII, two bars per chord, pads on track 7" (hardware check HW 6.0-1,
 checklist P1, and the demo's optional encore), with the synth (slot 11) on the pad track. It checks that every chord change lands on a bar line, the bass plays the roots,
 drum notes never transpose, the tuned cymbal and the fx track get no chord notes, and the visualiser
 shows the key and the chords.
+
+--v061 adds another optional section (off by default; after --v06's when both are given), in two runs:
+1. "Play techno, and make it a 30-second track" (the demo's optional arrangement beat; hardware check HW 6.1-1,
+   checklist R1): whiplash_arrange short_demo, then "which section are we in?". It checks each section starts
+   on its bar line with only its own tracks sounding, the kick sits out the build's last bar, status names the
+   section, and the run stops by itself on the bar line after the outro, with MIDI Stop and no hanging notes.
+2. "Track 9 is my kick", techno, a fill, stop (HW 6.1-2, checklist R2): the kick plays on track 9 only and
+   sits out the fill bar's last beat.
 
 This is a rehearsal against a recording port. It proves nothing about how the unit sounds or
 responds: that still needs docs/testing/hardware-checklist.md Part A on a real Digitakt II.
@@ -44,6 +56,7 @@ import importlib.util
 import json
 import socket
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -59,7 +72,16 @@ BAR = 96  # MIDI clocks per bar (24 PPQN, 4/4)
 SMF_TPB = 960  # SMF ticks per beat; the tempo map is a fixed 120 BPM, so 1920 ticks per second
 SMF_TEMPO = 500_000
 SMF_TICKS_PER_SEC = SMF_TPB * 1_000_000 / SMF_TEMPO
-JITTER_SLACK = 0.003  # seconds, as in tests/test_v051.py
+# Clock timing (docs/testing/clock-jitter.md). Each tick's lateness is measured against the engine's own absolute
+# grid, in real time. Ticks later than LATE_MS are grouped into stalls (runs of late ticks). A stall counts against
+# Whiplash unless an independent process (the canary) saw the machine stall at the same moment. A segment may have
+# one stall, plus one per STALL_EVERY seconds of real time, plus one per machine stall the canary saw during the
+# segment (a contended machine also preempts the clock thread on its own core, where the canary can't see it).
+# A regression in the engine repeats (every bar, every tool call) on a quiet machine and still fails; one burst of
+# CI-runner noise doesn't.
+LATE_MS = 4.0  # under the ~6 ms timing JND at 16th-note spacing; above the 1 ms USB-MIDI frame
+STALL_EVERY = 10.0  # seconds of real time per extra stall allowed
+CANARY_STALL = 0.002  # the canary sleeps 1 ms at a time; waking more than 2 ms late is a machine stall
 OK_TYPES = {"note_on", "note_off", "control_change", "clock", "start", "stop", "continue"}
 
 
@@ -138,6 +160,101 @@ class RecordingPort:
         self.closed = True
 
 
+CANARY_CODE = r"""
+import json, sys, threading, time
+done = threading.Event()
+threading.Thread(target=lambda: (sys.stdin.read(), done.set()), daemon=True).start()
+limit, stalls, loops = float(sys.argv[1]), [], 0
+print(json.dumps({"t0": time.perf_counter()}), flush=True)
+while not done.is_set():
+    a = time.perf_counter()
+    time.sleep(0.001)
+    b = time.perf_counter()
+    loops += 1
+    if b - a > limit:
+        stalls.append((a, b))
+print(json.dumps({"stalls": stalls, "loops": loops}), flush=True)
+"""
+
+
+class Canary:
+    """A separate Python process that sleeps 1 ms at a time and records every wake-up more than `limit` late.
+    Those are moments the machine (scheduler, VM host, CI runner) stalled, independent of Whiplash: a tick that
+    was late during one is excused. Whiplash's own causes of lateness (work on the clock thread, its lock held by
+    a tool call, a busy Python thread in its process) don't stall another process, so they are never excused.
+    perf_counter is a system-wide monotonic clock on Linux and macOS; the start handshake checks that."""
+
+    def __init__(self, limit=CANARY_STALL):
+        self.limit, self.stalls, self.loops, self.offset, self.proc = limit, [], 0, 0.0, None
+
+    def start(self):
+        try:
+            self.proc = subprocess.Popen([sys.executable, "-I", "-c", CANARY_CODE, str(self.limit)],
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            self.offset = time.perf_counter() - json.loads(self.proc.stdout.readline())["t0"]
+        except Exception:
+            self.proc = None  # no canary: nothing is excused
+        return self
+
+    def stop(self):
+        if self.proc is None:
+            return self
+        try:
+            out, _ = self.proc.communicate("", timeout=10)
+            data = json.loads(out.strip().splitlines()[-1])
+            shift = self.offset if abs(self.offset) > 0.05 else 0.0  # same clock: the offset is just pipe latency
+            self.stalls = [(a + shift, b + shift) for a, b in data["stalls"]]
+            self.loops = data["loops"]
+        except Exception:
+            self.proc.kill()
+            self.stalls = []
+        return self
+
+    def covers(self, start, end, slack=0.0005):
+        return any(a - slack <= end and b + slack >= start for a, b in self.stalls)
+
+    def count(self, start, end):
+        """Machine stalls the canary saw between start and end."""
+        return sum(1 for a, b in self.stalls if a <= end and b >= start)
+
+
+def lateness(clocks, speed):
+    """Real-time lateness (seconds) of each clock in one constant-tempo stretch, against the engine's absolute
+    grid (it schedules next_tick += tick_len, so lateness never accumulates). The period is the median one-bar
+    span / 96 of the engine's own clock, the grid is anchored on the least-late tick: a lower bound, >= 0."""
+    music = [s.music for s in clocks]
+    span = min(BAR, len(music) - 1)
+    period = statistics.median((music[k + span] - music[k]) / span for k in range(len(music) - span))
+    grid = [m - k * period for k, m in enumerate(music)]
+    origin = min(grid)
+    return [(g - origin) / speed for g in grid]
+
+
+def timing(clocks, speed, canary):
+    """Lateness of one stretch of clocks: percentiles (ms), the ticks later than LATE_MS, and those grouped into
+    stalls (late ticks with at most one on-time tick between them). A stall is excused when the canary saw the
+    machine stall during any of its ticks. `allowed` is how many unexcused stalls the segment may have."""
+    late = lateness(clocks, speed)
+    over = [k for k, l in enumerate(late) if l * 1000 > LATE_MS]
+    stalls = []
+    for k in over:
+        if stalls and k - stalls[-1][-1] <= 2:
+            stalls[-1].append(k)
+        else:
+            stalls.append([k])
+    seen = lambda k: canary.covers(clocks[k].real - late[k], clocks[k].real)
+    unexcused = [st for st in stalls if not any(seen(k) for k in st)]
+    ms = sorted(l * 1000 for l in late)
+    pick = lambda p: ms[min(len(ms) - 1, int(len(ms) * p))]
+    seconds = clocks[-1].real - clocks[0].real
+    contended = canary.count(clocks[0].real, clocks[-1].real)
+    return {"ticks": len(late), "p50": pick(0.5), "p99": pick(0.99), "max": ms[-1], "over": len(over),
+            "stalls": len(stalls), "unexcused": len(unexcused), "contended": contended,
+            "allowed": 1 + int(seconds / STALL_EVERY) + contended,
+            "where": [f"{clocks[st[0]].where} ({len(st)} ticks, {max(late[k] for k in st) * 1000:.1f} ms)"
+                      for st in unexcused]}
+
+
 # ---- the demo, step by step -------------------------------------------------------------------
 
 @dataclass
@@ -150,6 +267,7 @@ class Step:
     probe_view: bool = False
     results: list = field(default_factory=list)
     probe: tuple = None  # (HTTP status, /state frame or error) when probe_view
+    wait_stop: bool = False  # after the calls, wait for the run to stop by itself (an arrangement's end)
     call_pos: tuple = None  # (run, clocks, index into sent)
 
 
@@ -205,8 +323,32 @@ def v06_steps():
     ]
 
 
+V061_SECONDS = 30  # short_demo's minimum: 16 bars at techno's 130 BPM (intro, build, drop, outro; 4 bars each)
+V061_SECTIONS = ["intro", "build", "drop", "outro"]
+V061_PROMPT = f"Play techno, and make it a {V061_SECONDS}-second track: intro, build, drop, outro."
+
+
+def v061_steps():
+    """Optional (--v061): whiplash_arrange and fills by role (hardware checklist R1-R2, HW 6.1-1 and 6.1-2).
+    Run 1 is the demo's optional arrangement beat: one start, one arrangement, and it ends the run by itself,
+    so there is no stop call. Run 2 labels a kick on track 9: the routing moves the kick there and the fill
+    follows it (not a demo step: it needs a kick sample on track 9 and channel 9 free on the unit)."""
+    return [
+        Step("V1", V061_PROMPT, [("whiplash_play_pattern", {"genre": "techno"}),
+                                 ("whiplash_arrange", {"preset": "short_demo", "seconds": V061_SECONDS})],
+             new_run=True),
+        Step("V2", "Which section are we in? (then the arrangement stops the run by itself)",
+             [("whiplash_status", {})], at=(6, 10), wait_stop=True),
+        Step("V3", "Track 9 is my kick. Play techno.",
+             [("whiplash_label_tracks", {"tracks": {"9": "kick"}}), ("whiplash_play_pattern", {"genre": "techno"})],
+             new_run=True),
+        Step("V4", "Give me a fill.", [("whiplash_mutate", {"action": "fill"})], at=(1, 40)),
+        Step("V5", "Stop.", [("whiplash_stop", {})], at=(3, 20)),
+    ]
+
+
 class Rehearsal:
-    def __init__(self, speed=1.0, out=None, log=print, v06=False):
+    def __init__(self, speed=1.0, out=None, log=print, v06=False, v061=False):
         self.speed = speed
         self.out = Path(out) if out else Path(tempfile.gettempdir()) / "whiplash-rehearsal"
         self.log = log
@@ -215,9 +357,10 @@ class Rehearsal:
         self.engine_mod, self.tools, self.view = engine, tools, view
         self.clock = ScaledTime(speed)
         self.port = RecordingPort(self.clock)
-        self.v06 = v06
-        self.steps = demo_steps() + (v06_steps() if v06 else [])
+        self.v06, self.v061 = v06, v061
+        self.steps = demo_steps() + (v06_steps() if v06 else []) + (v061_steps() if v061 else [])
         self.violations = []  # (where, text)
+        self.canary = Canary()
         self.view_probe = None
         self.end = None  # len(port.sent) when the run finished
 
@@ -255,6 +398,14 @@ class Rehearsal:
                 raise RuntimeError(f"the clock stalled waiting for bar {bar} tick {tick} (at {self.port.clocks})")
             time.sleep(0.0005)
 
+    def _wait_stopped(self, limit_bars=64):
+        """Wait for the sequencer to stop by itself (an arrangement ending), at most limit_bars."""
+        deadline = time.perf_counter() + limit_bars * 4 * 60.0 / max(self.engine.bpm, 30) / self.speed * 2 + 5
+        while self.engine.playing():
+            if time.perf_counter() > deadline:
+                raise RuntimeError(f"the run didn't stop by itself within {limit_bars} bars")
+            time.sleep(0.005)
+
     def _free_port(self):
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
@@ -262,6 +413,7 @@ class Rehearsal:
 
     def run(self):
         saved = self._patch()
+        self.canary.start()
         try:
             for step in self.steps:
                 if step.at:
@@ -278,8 +430,11 @@ class Rehearsal:
                 if step.probe_view:
                     self._wait_for(1, 48)  # mid bar 1: the beat (and a progression set for bar 1) is running
                     self._probe_view(step)
+                if step.wait_stop:
+                    self._wait_stopped()
             time.sleep(0.05)
         finally:
+            self.canary.stop()
             self._unpatch(saved)
         self.end = len(self.port.sent)
 
@@ -353,7 +508,8 @@ class Rehearsal:
                  "any device), whiplash v" + self._version(),
                  f"{len(self.port.sent)} messages recorded across {self.port.run} run(s)",
                  "Not a hardware test: run docs/testing/hardware-checklist.md Part A on the unit"
-                 + (" (and P1 for the v0.6 section)." if self.v06 else "."), ""]
+                 + (" (and P1 for the v0.6 section)" if self.v06 else "")
+                 + (" (and R1-R2 for the v0.6.1 section)" if self.v061 else "") + ".", ""]
         r = {s.id: s for s in self.steps}
         for i, step in enumerate(self.steps):
             lines.append(f"{step.id}  \"{step.prompt}\"")
@@ -435,6 +591,11 @@ class Rehearsal:
         roles = {t: (v or {}).get("role") for t, v in tracks.items()}
         bad = {t: ro for t, ro in roles.items() if ro and any(w in ro for w in ("chord", "pad", "stab"))}
         self.check("A3", not bad, f"no chord parts anywhere ({bad or 'none'})", lines)
+        routing = res.get("routing") or {}
+        self.check("A3", routing.get("vacated") == {"5": 7} and bool(routing.get("vacated_note"))
+                   and routing.get("silent_until_written") == [8] and bool(routing.get("dropped")),
+                   f"routing: chords dropped {sorted(routing.get('dropped') or {})}, silent_until_written "
+                   f"{routing.get('silent_until_written')}, vacated {routing.get('vacated')} with a note (v0.6.1)", lines)
         if step.probe is not None:
             status, body = step.probe
             ok = status == 200 and isinstance(body, dict) and body.get("playing") is True
@@ -513,6 +674,9 @@ class Rehearsal:
         lines.append(f"  track 6 pitch: {json.dumps(pitch6, separators=(',', ':'))}")
         self.check("A7", pitch6.get("low") == 55 and pitch6.get("high") == 62,
                    "track 6 pitch low 55, high 62 (checklist A7)", lines)
+        routing = res.get("routing") or {}
+        self.check("A7", routing.get("written") == [8] and routing.get("vacated") == {"5": 7},
+                   f"routing: written {routing.get('written')}, vacated {routing.get('vacated')} (v0.6.1)", lines)
         if bar is None:
             return
         events = self.run_events(run)
@@ -640,6 +804,110 @@ class Rehearsal:
         self.check("H2", self.res(step).get("was_playing") is True, "stopped a running beat", lines)
         self.check("H2", not self.hanging(self.run_events(run)), "no hanging notes", lines)
 
+    # -- optional v0.6.1 section (--v061) -------------------------------------------------------
+    def check_v1(self, step, r, lines):
+        run = step.call_pos[0]
+        play, res = self.res(step, 0), self.res(step, 1)
+        self.check("V1", play.get("mode") == "started" and play.get("playing") == "techno", "techno started", lines)
+        self.check("V1", isinstance(play.get("routing"), dict), "the play result carries routing (v0.6.1)", lines)
+        start, total = res.get("starts_at_bar"), res.get("total_bars")
+        plan = res.get("sections") or []
+        names = [sec.get("name") for sec in plan]
+        lines.append(f"  arrangement {res.get('arrangement')}: {total} bars from bar {start}, {res.get('seconds')} s")
+        for sec in plan:
+            lines.append(f"    {sec.get('name')} @{sec.get('starts_at_bar')} x{sec.get('bars')}: plays "
+                         f"{sec.get('plays_now')}" + (f", fill @{sec['fill_at_bar']}" if "fill_at_bar" in sec else "")
+                         + (f", drop {sec['drop_last_bar']} on its last bar" if sec.get("drop_last_bar") else "")
+                         + (f", ramps {sec['ramps']}" if sec.get("ramps") else ""))
+        self.check("V1", res.get("arrangement") == "short_demo" and start == step.call_pos[1] // BAR + 1,
+                   f"short_demo starts on the next bar line (bar {start})", lines)
+        self.check("V1", names == V061_SECTIONS and total == 16, f"sections {names}, {total} bars", lines)
+        if names != V061_SECTIONS or start is None:
+            return
+        events = self.run_events(run)
+        stray = []
+        for sec in plan:
+            allowed = {t - 1 for t in sec.get("plays_now") or []}
+            first = sec["starts_at_bar"]
+            for b in range(first, first + sec["bars"]):
+                extra = {s.msg.channel + 1 for s in events if s.msg.type == "note_on" and s.clocks // BAR == b
+                         and s.msg.channel not in allowed}
+                if extra:
+                    stray.append((sec["name"], b, sorted(extra)))
+        self.check("V1", not stray, "each section sounds only its own tracks, from its first bar line "
+                   f"(stray: {stray or 'none'})", lines)
+        entered = []
+        for prev, sec in zip(plan, plan[1:]):
+            new = set(sec.get("plays_now") or []) - set(prev.get("plays_now") or [])
+            for t in sorted(new):
+                hits = [s for s in events if s.msg.type == "note_on" and s.msg.channel == t - 1
+                        and s.clocks >= sec["starts_at_bar"] * BAR]
+                if hits and hits[0].clocks // BAR != sec["starts_at_bar"]:
+                    entered.append((sec["name"], t, hits[0].where))
+        self.check("V1", not entered, f"tracks coming in start in their section's first bar (late: {entered or 'none'})",
+                   lines)
+        build = plan[1]
+        last = build["starts_at_bar"] + build["bars"] - 1
+        drop = build.get("drop_last_bar") or []
+        silent = all(not self.notes_in_bar(run, last, t - 1) for t in drop)
+        self.check("V1", bool(drop) and silent, f"the kick (track {drop}) sits out the build's last bar (bar {last})",
+                   lines)
+        end = start + total
+        clocks = [s.clocks for s in events if s.msg.type == "clock"]
+        stops = [s for s in events if s.msg.type == "stop"]
+        self.check("V1", bool(clocks) and max(clocks) + 1 == end * BAR,
+                   f"the run ends on the bar line after the outro (bar {end}; clocks sent: "
+                   f"{max(clocks) + 1 if clocks else 0} = bar {(max(clocks) + 1) // BAR if clocks else 0})", lines)
+        if self.engine_send_transport(r):
+            self.check("V1", bool(stops) and stops[-1].clocks == end * BAR, "MIDI Stop at that bar line", lines)
+        late = [s for s in events if s.msg.type == "note_on" and s.msg.velocity and s.clocks >= end * BAR]
+        self.check("V1", not late, f"no note after the end ({len(late)})", lines)
+        self.check("V1", not self.hanging(events), f"no hanging notes ({self.hanging(events) or 'none'})", lines)
+
+    def check_v2(self, step, r, lines):
+        cur = ((self.res(step).get("arrangement") or {}).get("current")) or {}
+        self.check("V2", cur.get("section") == "build" and cur.get("next") == "drop",
+                   f"status: section {cur.get('section')!r}, bars_left {cur.get('bars_left')}, next "
+                   f"{cur.get('next')!r}", lines)
+        self.check("V2", step.call_pos[0] == r["V1"].call_pos[0] and r["V3"].call_pos[0] == step.call_pos[0] + 1,
+                   "the arrangement ended the run by itself (no stop call)", lines)
+
+    KICK9 = 8  # MIDI channel of track 9
+
+    def check_v3(self, step, r, lines):
+        run = step.call_pos[0]
+        label, play = self.res(step, 0), self.res(step, 1)
+        role = ((label.get("kit") or {}).get("tracks", {}).get("9") or {}).get("role")
+        self.check("V3", role == "kick", f"track 9 labelled role {role!r}", lines)
+        self.check("V3", bool(label.get("channel_note")), "the label result carries a channel_note (track 9 plays on "
+                   "channel 9: AUTO / FX CONTROL CH must be elsewhere)", lines)
+        self.check("V3", play.get("mode") == "started" and play.get("playing") == "techno", "techno started", lines)
+        events = self.run_events(run)
+        kick9 = [s for s in events if s.msg.type == "note_on" and s.msg.channel == self.KICK9]
+        kick1 = [s for s in events if s.msg.type == "note_on" and s.msg.channel == 0]
+        self.check("V3", bool(kick9) and not kick1, f"the kick plays on track 9 ({len(kick9)} hits), none on track 1 "
+                   f"({len(kick1)})", lines)
+
+    def check_v4(self, step, r, lines):
+        run = step.call_pos[0]
+        res = self.res(step)
+        fill = res.get("fill_at_bar")
+        self.check("V4", fill == step.call_pos[1] // BAR + 1 and 9 in (res.get("tracks") or []),
+                   f"fill at bar {fill} on tracks {res.get('tracks')} (includes the kick on 9)", lines)
+        if fill is None:
+            return
+        last_beat = lambda b: [s for s in self.notes_in_bar(run, b, self.KICK9) if s.clocks % BAR >= 3 * BAR // 4]
+        self.check("V4", bool(last_beat(fill - 1)) and not last_beat(fill),
+                   f"track 9's kick sits out the fill bar's last beat (bar {fill - 1}: {len(last_beat(fill - 1))} "
+                   f"hits there, bar {fill}: {len(last_beat(fill))})", lines)
+        back = self.notes_in_bar(run, fill + 1, self.KICK9)
+        self.check("V4", bool(back) and back[0].clocks == (fill + 1) * BAR, "the kick is back on the one after", lines)
+
+    def check_v5(self, step, r, lines):
+        run = step.call_pos[0]
+        self.check("V5", self.res(step).get("was_playing") is True, "stopped a running beat", lines)
+        self.check("V5", not self.hanging(self.run_events(run)), "no hanging notes", lines)
+
     def engine_send_transport(self, r):
         return bool(self.res(r["A3"]).get("send_transport"))
 
@@ -662,12 +930,6 @@ class Rehearsal:
         t = {s.clocks: s.music for s in events if s.msg.type == "clock" and s.clocks in (a, b)}
         return 4 * 60.0 * bars / (t[b] - t[a]) if len(t) == 2 else 0.0
 
-    @staticmethod
-    def jitter(times):
-        gaps = [b - a for a, b in zip(times, times[1:])]
-        nominal = statistics.median(gaps)
-        return sorted(abs(g - nominal) for g in gaps)[int(len(gaps) * 0.95)]
-
     def check_global(self, lines):
         from whiplash import ccmap
         sent = self.port.sent
@@ -687,7 +949,7 @@ class Rehearsal:
                    lines)
         self.check("global", self.engine.last_error is None, f"engine last_error {self.engine.last_error}", lines)
         self.check("global", self.port.closed, "the port was closed on shutdown", lines)
-        # jitter: real-time clock gaps per constant-tempo segment, against the first two bars of the demo
+        # clock timing per constant-tempo segment
         r = {s.id: s for s in self.steps}
         switch = self.res(r["A7"]).get("switch_at_bar")
         run1 = [s for s in sent if s.run == 1 and s.msg.type == "clock"]
@@ -698,19 +960,34 @@ class Rehearsal:
         segments["techno (second run)"] = [s for s in sent if s.run == 2 and s.msg.type == "clock"]
         if self.v06:
             segments["deep house in A minor, progression (v0.6)"] = [s for s in sent if s.run == 3 and s.msg.type == "clock"]
-        base_events = segments["deep house (before the A4 call)"]
-        if len(base_events) < 50:
-            self.fail("global", "too few clocks for a jitter baseline")
-            return
-        base = self.jitter([s.real for s in base_events])
-        bound = max(base * 2, base + JITTER_SLACK)
-        lines.append(f"  clock jitter (p95 deviation from the tick period, real time): baseline {base * 1000:.2f} ms,"
-                     f" bound {bound * 1000:.2f} ms")
+        if self.v061:
+            for sid, name in (("V1", "techno short_demo (v0.6.1)"), ("V3", "techno, kick on 9 and a fill (v0.6.1)")):
+                run = r[sid].call_pos[0]
+                segments[name] = [s for s in sent if s.run == run and s.msg.type == "clock"]
+        # a stop sends its run's last clock at once, ahead of the grid: leave each run's last clock out
+        last = {}
+        for s in sent:
+            if s.msg.type == "clock":
+                last[s.run] = s
+        segments = {name: [s for s in events if s is not last.get(s.run)] for name, events in segments.items()}
+        canary = self.canary
+        lines.append(f"  clock timing (real-time lateness vs the engine's own grid; ticks > {LATE_MS:g} ms late form a "
+                     "stall, which counts unless the canary process saw the machine stall then; allowed: 1 + 1 per "
+                     f"{STALL_EVERY:g} s + 1 per machine stall the canary saw in the segment)")
+        lines.append(f"  canary: {len(canary.stalls)} machine stall(s) over {canary.limit * 1000:g} ms in "
+                     f"{canary.loops} 1 ms sleeps" + ("" if canary.proc else " (no canary: nothing excused)")
+                     + (f", longest {max(b - a for a, b in canary.stalls) * 1000:.1f} ms" if canary.stalls else ""))
         for name, events in segments.items():
-            if len(events) < 10:
+            if len(events) < 2 * BAR:
                 continue
-            j = self.jitter([s.real for s in events])
-            self.check("global", j <= bound, f"{name}: {j * 1000:.2f} ms over {len(events)} ticks", lines)
+            t = timing(events, self.speed, canary)
+            self.check("global", t["unexcused"] <= t["allowed"],
+                       f"{name}: {t['ticks']} ticks, lateness p50 {t['p50']:.2f} / p99 {t['p99']:.2f} / max "
+                       f"{t['max']:.2f} ms; {t['over']} tick(s) over {LATE_MS:g} ms in {t['stalls']} stall(s), "
+                       f"{t['unexcused']} not seen by the canary (allowed {t['allowed']}"
+                       + (f", {t['contended']} for machine stalls" if t["contended"] else "") + ")", lines)
+            for where in t["where"]:
+                lines.append(f"    unexcused stall at {where}")
 
     # -- output -------------------------------------------------------------------------------
     def write_midi(self, path):
@@ -769,11 +1046,13 @@ def main(argv=None):
     ap.add_argument("--out", help="output directory (default: <tmp>/whiplash-rehearsal)")
     ap.add_argument("-q", "--quiet", action="store_true", help="print only the result and file paths")
     ap.add_argument("--v06", action="store_true", help="also rehearse the optional v0.6 progression beat (off by default)")
+    ap.add_argument("--v061", action="store_true",
+                    help="also rehearse v0.6.1: a 30 s short_demo arrangement and a fill on a kick on track 9 (off by default)")
     args = ap.parse_args(argv)
     if not 0.25 <= args.speed <= 16:
         ap.error("--speed must be between 0.25 and 16")
     say = (lambda *a: None) if args.quiet else print
-    rehearsal = Rehearsal(speed=args.speed, out=args.out, log=say, v06=args.v06)
+    rehearsal = Rehearsal(speed=args.speed, out=args.out, log=say, v06=args.v06, v061=args.v061)
     try:
         rehearsal.run()
     except Exception:

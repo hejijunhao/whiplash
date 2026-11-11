@@ -635,6 +635,7 @@ Consequences in the code:
 ## 9. Transport, clock, tempo, patterns, songs
 
 - **Clock receive** ([M] p. 77): the unit follows the incoming 24-PPQN clock for tempo. Its delay time, LFO sync and pattern speed then track Whiplash's BPM.
+- **Clock timing on the computer side** (2026-11-11, [docs/testing/clock-jitter.md](../testing/clock-jitter.md); measured on Linux and CI runners, **not** on a unit): Whiplash schedules ticks on an absolute grid, so a late tick never shifts the ones after it; after a stall the overdue ticks go out back to back. The manual doesn't say how the unit smooths an uneven incoming clock (§15.3 Q15).
 - **Transport receive:**
   - **Start** starts the unit's sequencer from the top, playing the selected pattern, song or chain with all its trigs.
   - **Stop** stops it.
@@ -809,6 +810,7 @@ Check these on the unit, and record the result in this file with a date:
 12. Voices per audio track (v0.6.0, §6.4): send a 3-note chord on one audio track's channel (`whiplash_set_progression` with `tracks: {"7": "stack"}`). Do all three notes sound, or only one (which: first or last note-on)? Does a new note on the same track cut the one still ringing?
 13. Chord tones across tracks (v0.6.0): with two or three chord tracks in `chords` mode, does the result sound like the chord at each hit, with each track keeping its own sample and envelope?
 14. Arrangement build (v0.6.1, §15.1 #30): on the default filter machine of a pad or chord preset, does `filter_freq` (CC 74) ramping 20 → 127 over the build sound like a low-pass opening? On which FLTR machines does it not (§4.2)? Does a section's first bar land on the one, with tracks entering exactly there?
+15. Clock following (2026-11-11, §9, [docs/testing/clock-jitter.md](../testing/clock-jitter.md)): does the unit's tempo readout stay steady while Whiplash plays from the Hermes gateway, and is there an audible hiccup or tempo wobble after an occasional late tick (a 5-75 ms stall, then the overdue ticks back to back)? [M] p. 77 doesn't say how CLOCK RECEIVE smooths the incoming clock.
 
 ---
 

@@ -22,19 +22,14 @@ rehearse = _load_script()
 
 
 def _rehearse(out, **kwargs):
-    """Run the rehearsal at 4x. Clock jitter is measured in real time, and a shared CI runner (macOS
-    especially) sometimes stalls every process for a few ms: main's own CI hit this (run 43015115037,
-    "tech house: 5.07 ms"). So a run whose only violations are jitter is run once more, and the second
-    run must pass. A jitter regression in the engine reproduces; one noisy burst on the runner doesn't.
-    Any other violation fails at once."""
+    """Run the rehearsal at 4x. No retry: its clock check excuses machine stalls the canary process saw and allows
+    one stall plus one per 10 s of real time, so CI-runner noise passes and a repeating engine stall fails
+    (test_the_timing_rule_* below; docs/testing/clock-jitter.md)."""
     saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
-    for attempt in (1, 2):
-        r = rehearse.Rehearsal(speed=4, out=out / f"try{attempt}", log=lambda *a: None, **kwargs)
-        r.run()
-        report = r.write()
-        assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved  # nothing left patched
-        if not r.violations or not all(w == "global" and " ms over " in v for w, v in r.violations):
-            break
+    r = rehearse.Rehearsal(speed=4, out=out, log=lambda *a: None, **kwargs)
+    r.run()
+    report = r.write()
+    assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved  # nothing left patched
     return r, report
 
 
@@ -110,7 +105,7 @@ def test_main_runs_the_cli_and_exits_1_on_a_violation(tmp_path, monkeypatch):
 
 def test_the_v06_section_is_off_by_default(rehearsal):
     r, report = rehearsal
-    assert r.v06 is False and [s.id for s in r.steps][-1] == "A9c"
+    assert r.v06 is False and r.v061 is False and [s.id for s in r.steps][-1] == "A9c"
     assert "\nH1  " not in report and "progression (v0.6)" not in report
     assert "--v06" in rehearse.__doc__
 
@@ -163,3 +158,138 @@ def test_main_takes_the_v06_flag(tmp_path, monkeypatch):
     monkeypatch.setattr(rehearse.Rehearsal, "run", fake_run)
     assert rehearse.main(["--v06", "--speed", "16", "--out", str(tmp_path), "-q"]) == 2
     assert seen == {"v06": True}
+
+
+# ---- clock timing: lateness against the engine's grid, stalls, the canary --------------------------------
+
+def _clocks(late_ms, period=0.02, speed=1):
+    """Synthetic clocks: tick k due at k * period (musical = real at speed 1), sent late_ms[k] late."""
+    out = []
+    for k, ms in enumerate(late_ms):
+        t = k * period + ms / 1000
+        out.append(rehearse.Sent(t, t * speed, 1, k, mido.Message("clock")))
+    return out
+
+
+class _Canary:
+    def __init__(self, stalls=()):
+        self.stalls = list(stalls)
+
+    covers = rehearse.Canary.covers
+    count = rehearse.Canary.count
+
+
+def test_lateness_is_measured_against_the_absolute_grid():
+    late = [0.05] * 500
+    late[200], late[201] = 12.0, 0.5  # one tick 12 ms late: its gap shows twice, its lateness once
+    got = rehearse.lateness(_clocks(late), 1)
+    assert max(got) == pytest.approx(0.01195, abs=1e-5) and got.index(max(got)) == 200
+    assert sorted(got)[250] == pytest.approx(0.0, abs=1e-6)  # anchored on the least-late tick
+
+
+def test_the_timing_rule_allows_one_burst_and_fails_a_repeating_stall():
+    quiet = [0.05] * 960  # about 19 s at 1x: allowed 1 + 1
+    burst = list(quiet)
+    burst[300:304] = [60, 40, 20, 5]  # one runner stall: four ticks in one stall
+    t = rehearse.timing(_clocks(burst), 1, _Canary())
+    assert t["stalls"] == 1 and t["unexcused"] == 1 and t["unexcused"] <= t["allowed"] == 2
+    regression = list(quiet)
+    for k in range(0, 960, 96):  # 6 ms of work at every bar line: an engine regression
+        regression[k + 1] = 6.0
+    t = rehearse.timing(_clocks(regression), 1, _Canary())
+    assert t["stalls"] == 10 and t["unexcused"] > t["allowed"] and "bar 0 tick 1" in t["where"][0]
+
+
+def test_the_timing_rule_excuses_only_stalls_the_canary_saw():
+    late = [0.05] * 960
+    for k in (100, 400, 700):
+        late[k] = 30.0
+    clocks = _clocks(late)
+    saw = [(clocks[k].real - 0.025, clocks[k].real - 0.001) for k in (100, 400)]  # the machine froze for two of them
+    t = rehearse.timing(clocks, 1, _Canary(saw))
+    assert t["stalls"] == 3 and t["unexcused"] == 1 and "bar 7 tick 28" in t["where"][0]
+    # a contended machine: each stall the canary saw in the segment allows one more it didn't see
+    assert t["contended"] == 2 and t["allowed"] == 1 + 1 + 2
+    quiet = rehearse.timing(clocks, 1, _Canary())
+    assert quiet["contended"] == 0 and quiet["allowed"] == 2
+
+
+def test_the_canary_records_a_machine_stall():
+    canary = rehearse.Canary(limit=0.002).start()
+    assert canary.proc is not None and abs(canary.offset) < 0.05  # a system-wide clock in both processes
+    canary.stop()
+    assert canary.loops > 0 and isinstance(canary.stalls, list)
+
+
+# ---- optional v0.6.1 section (--v061): off by default ---------------------------------------------------
+
+@pytest.fixture(scope="module")
+def rehearsal_v061(tmp_path_factory):
+    return _rehearse(tmp_path_factory.mktemp("rehearsal_v061"), v061=True)
+
+
+def test_the_v061_section_rehearses_clean(rehearsal_v061):
+    r, report = rehearsal_v061
+    assert r.violations == [], report
+    assert report.rstrip().endswith("RESULT: PASS"), report
+    assert [s.id for s in r.steps][-5:] == ["V1", "V2", "V3", "V4", "V5"]
+    for line in ("short_demo starts on the next bar line (bar 1)", "sections ['intro', 'build', 'drop', 'outro'], 16 bars",
+                 "each section sounds only its own tracks", "sits out the build's last bar",
+                 "the run ends on the bar line after the outro (bar 17", "MIDI Stop at that bar line",
+                 "status: section 'build'", "the arrangement ended the run by itself", "the kick plays on track 9",
+                 "track 9's kick sits out the fill bar's last beat", "techno short_demo (v0.6.1)"):
+        assert line in report, line
+
+
+def test_the_v061_checks_catch_a_muted_track_and_a_note_after_the_end(rehearsal_v061):
+    r, _ = rehearsal_v061
+    sent = list(r.port.sent)
+    try:
+        run = next(s for s in r.steps if s.id == "V1").call_pos[0]
+        last = next(s for s in reversed(sent) if s.run == run and s.msg.type == "clock")
+        # the bass (track 6) is not in the intro; and a note after the outro's last bar line
+        r.port.sent.append(rehearse.Sent(last.real, last.music, run, 2 * rehearse.BAR + 10,
+                                         mido.Message("note_on", channel=5, note=53, velocity=90)))
+        r.port.sent.append(rehearse.Sent(last.real, last.music, run, 17 * rehearse.BAR + 2,
+                                         mido.Message("note_on", channel=0, note=60, velocity=90)))
+        r.port.sent.append(rehearse.Sent(last.real, last.music, run, 17 * rehearse.BAR + 3,
+                                         mido.Message("note_off", channel=0, note=60, velocity=0)))
+        r.analyse()
+        text = " ".join(v for w, v in r.violations if w == "V1")
+        assert "('intro', 2, [6])" in text and "no note after the end (1)" in text
+    finally:
+        r.port.sent[:] = sent
+        r.analyse()
+
+
+def test_main_takes_the_v061_flag(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(self):
+        seen["flags"] = (self.v06, self.v061)
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(rehearse.Rehearsal, "run", fake_run)
+    assert rehearse.main(["--v061", "--speed", "16", "--out", str(tmp_path), "-q"]) == 2
+    assert seen == {"flags": (False, True)}
+    assert "--v061" in rehearse.__doc__
+
+
+# ---- scripts/clock_jitter.py: the measurement behind docs/testing/clock-jitter.md ------------------------
+
+def _load_jitter():
+    spec = importlib.util.spec_from_file_location("clock_jitter", SCRIPT.parent / "clock_jitter.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_clock_jitter_measures_and_sees_a_busy_python_thread():
+    jitter = _load_jitter()
+    saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
+    quiet = jitter.run_once(speed=4, seconds=12, bpm=126)
+    hog = jitter.run_once(speed=1, seconds=8, bpm=126, gil_hog=True)
+    assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved
+    assert quiet["ticks"] > 300 and quiet["period_ms"] == pytest.approx(60000 / 126 / 24 / 4, rel=0.05)
+    # a CPU-bound thread in the same process holds the GIL for its switch interval (5 ms) at a time: every wake-up
+    # of the clock thread waits for it, and the canary (another process) can't see it, so it is never excused
+    assert hog["late_p50"] > 1.0 and hog["unexcused"] > hog["allowed"], hog

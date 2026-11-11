@@ -63,6 +63,18 @@ Only if the slot has time left **and** checklist P1 passed on the unit. Rehearse
 
 Say it: *"The chords are note numbers rewritten at the bar line. Nothing on the unit changes: no scale, no root note, no saves."*
 
+### Optional beat: a 30-second track that ends itself (+35 s, v0.6.1)
+
+Only if the slot has time left **and** checklist R1 passed on the unit. Rehearse it with `uv run python scripts/rehearse_demo.py --v061` (the default rehearsal leaves it out). It starts from stop, after the run above (or after the encore). It is the closer: there is no "Stop" to type.
+
+| Time | Type | Audience hears | Audience sees (visualiser) |
+| --- | --- | --- | --- |
+| +0:00 | *"Play techno, and make it a 30-second track: intro, build, drop, outro."* | Techno at 130 BPM from the next bar, 4 bars per section: **intro**, kick, hats and the tuned cymbal; **build**, rim and clap come in on the one, the kick sitting out the last bar; **drop**, the bass slams in on the one; **outro**, drums only. Each section but the outro ends on a fill. | Modules mute and unmute on each section's bar line. |
+| +0:10 | *"Which section are we in?"* (optional) | The track carries on. | Hermes names the section, the bars left and what's next. |
+| +0:30 | (nothing) | It **stops by itself** on the bar line after the outro: clean silence, no hanging notes. | The reels stop. |
+
+Say it: *"The arrangement is Whiplash muting and unmuting on its own clock. The unit's song mode and patterns are never touched."* On this kit the build sends no filter ramp (there are no music tracks to open), so nothing new needs reloading; [FUNC] + [NO] afterwards as usual.
+
 ---
 
 ## If something misbehaves
