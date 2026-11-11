@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased: visualiser (`feat/visualiser`, still 0.3.0)
+
+Added
+- `whiplash_open_view` / `whiplash_close_view`: a live, read-only web page served on `127.0.0.1` and opened in the default browser. It shows:
+  - **Tracks:** one lane per track in use, with the current bar's notes on a tilted runway grid, a playhead, a 4-bar minimap, mutes, drops, fills, density, param values and animated ramps.
+  - **Transport:** a large BPM readout, the bar, pattern, queued switch and port status.
+  - **Analyser:** spectrum, scope and L/R meters from the Digitakt's USB audio via `getUserMedia`, or an honestly labelled MIDI fallback.
+  - **Conversation:** the live Hermes conversation, streamed word by word, with tool calls behind a toggle.
+  - **Log:** recent Whiplash actions.
+- Hermes conversation hooks: `on_session_start`, `pre_llm_call`, `on_stream_start`/`delta`/`end`, `pre_tool_call`, `post_tool_call` and `post_llm_call`. They keep in-memory observers only and return `None`. Without hook support, the view falls back to a read-only poll of `~/.hermes/state.db`.
+- The engine publishes the playhead (`position`) and the current bar's hits (`bar_hits`) from the clock thread by plain assignment, and `view_state()` gives a lock-short copy of the state for the view.
+- `docs/visualiser-design.md`: the approved design.
+- CI also runs on `feat/visualiser`.
+
 ## 0.3.0
 
 Whiplash goes from playing a beat to performing it: three new tools (11 in all), and pattern changes that land on the bar.

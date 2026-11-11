@@ -32,7 +32,8 @@ SCHEMAS = {
                         "(mode 'queued', with switch_at_bar); mutes, ramps and drops carry over, mutations "
                         "(density/swing/humanize) reset. Passing a different port restarts on that port. Falls back "
                         "to a virtual MIDI port named 'Whiplash' when no Digitakt is connected: the result then "
-                        "carries a 'warning' and the hardware is silent."),
+                        "carries a 'warning' and the hardware is silent. If the user wants to watch the beat, "
+                        "whiplash_open_view shows it live in a local browser page."),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
             "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
