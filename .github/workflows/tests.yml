@@ -27,20 +27,23 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - name: ALSA runtime for python-rtmidi
+      - name: ALSA for python-rtmidi
         if: runner.os == 'Linux'
-        # python-rtmidi's wheel only needs the runtime libasound.so.2. Use the runner image's copy when it has
-        # one; otherwise install it, with a hard timeout per attempt (Nov 11 2026: the apt mirrors hung or failed
-        # for every run for over an hour, and a hung apt ate the whole 10-minute job).
+        # python-rtmidi's wheel only needs the runtime libasound.so.2, but where PyPI has no wheel (py3.13 on
+        # Linux, on a uv cache miss) uv builds it from source, which needs the ALSA headers (alsa.pc). Skip apt
+        # only when the runner has both; otherwise install libasound2-dev with a hard timeout per attempt
+        # (Nov 11 2026: the apt mirrors hung or failed for over an hour, and a hung apt ate the 10-minute job).
         run: |
-          if ldconfig -p | grep -q 'libasound.so.2 '; then echo "libasound.so.2 already on the runner"; exit 0; fi
-          for attempt in 1 2; do
-            if sudo timeout 60 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update && \
-               sudo timeout 60 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install -y libasound2t64 \
-                 || sudo timeout 60 apt-get install -y libasound2; then exit 0; fi
+          if ldconfig -p | grep -q 'libasound.so.2 ' && pkg-config --exists alsa; then
+            echo "libasound.so.2 and the ALSA headers already on the runner"; exit 0
+          fi
+          for attempt in 1 2 3; do
+            if sudo timeout 90 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update && \
+               sudo timeout 90 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install -y libasound2-dev
+            then exit 0; fi
             echo "apt attempt $attempt failed"; sleep 10
           done
-          echo "::error::no libasound.so.2 on the runner and apt unavailable"; exit 1
+          echo "::error::no ALSA headers on the runner and apt unavailable"; exit 1
       - name: Install dependencies from pyproject.toml
         run: uv sync
       - uses: actions/setup-node@v4
