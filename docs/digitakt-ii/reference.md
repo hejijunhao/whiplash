@@ -14,7 +14,7 @@ The canonical reference for how the Digitakt II works, written for agents and hu
 
 ## 0. The short version (read this if nothing else)
 
-1. **Sixteen tracks per pattern.** Each one is either an audio track (a sample-playback machine) or a MIDI track (it sequences external gear) [M] p. 17. Whiplash plays tracks 1-8.
+1. **Sixteen tracks per pattern.** Each one is either an audio track (a sample-playback machine) or a MIDI track (it sequences external gear) [M] p. 17. Whiplash's generated patterns play tracks 1-8; since v0.5.1, parts written with `whiplash_write_part` can use 1-16.
 2. **Each track listens on its own MIDI channel.** The defaults are 1-16 = tracks 1-16 ([M] p. 25, p. 79). Notes on a track's channel play that track's sound. CC/NRPN on that channel change that track's parameters.
 3. **Note 60 (C5) plays the sample at its own pitch**, provided TUNE is 0 (CC 16 = 64) and the preset's OCTAVE setting is untouched ([M] p. 25, p. 38, p. 93; [G] Trig Note default 60). Every semitone away from 60 repitches the sample by a semitone. On Grid/Slice machines with SLICE = NOTE, the note picks a slice instead ([M] p. 98, p. 101).
 4. **Three other channels exist:** AUTO (whichever track is active), FX CONTROL (send FX, compressor, master overdrive) and program change. Many FX-channel CC numbers mean something else on a track channel ([M] p. 79, p. 111-113). Keep AUTO and FX CONTROL off channels 1-8 when Whiplash plays (HW: the factory defaults aren't in the manual).
@@ -747,14 +747,16 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | 12 | Clock-only still drives the unit's tempo | ✅ | CLOCK RECEIVE is separate from TRANSPORT RECEIVE (p. 77). |
 | 13 | Hardware mute = CC 94, 1/0 (`ccmap mute`, `set_mute(hardware=True)`) | ⚠️ | The CC and values are right ([M] p. 109, [G]). Which panel mute mode it drives isn't documented. If it's the global mute, it is project-wide and saved with the project (p. 27), which is why releasing it on stop/exit matters. CC 110 (pattern mute) is unused. |
 | 14 | Parameter changes last "until you reload" (README safety) | ⚠️ | True, but the edit lives in the active pattern's kit. It survives pattern switches, and (interpretation) power cycles, until a reload: [FUNC] + [NO] (p. 49), RELOAD FROM PROJ (p. 77), or [TRK] + [TRIG] + [NO] (p. 53). It is never written to the saved project unless the user saves. README updated to say so. |
-| 15 | Gate lengths shape notes (`engine.GATE`, pattern gates) | ⚠️ | Only with AMP MODE = AHD and HOLD = NOTE (the [G] defaults), or with ADSR. A fixed HOLD ignores note-off (p. 56). v0.5.0 adds `amp_mode` (CC 87) and documents `amp_hold` 127 = NOTE. |
+| 15 | Gate lengths shape notes (`engine.GATE`, pattern gates) | ⚠️ | Only with AMP MODE = AHD and HOLD = NOTE (the [G] defaults), or with ADSR. A fixed HOLD ignores note-off (p. 56). v0.5.0 adds `amp_mode` (CC 87) and documents `amp_hold` 127 = NOTE. v0.5.1 written parts send `length` as the exact note-off, report `length_audible` with this caveat, and send CC 80 = 127 only on `envelope: "note"`. |
 | 16 | Velocity accents, ghost notes and humanize are audible (`mutate.py`) | ⚠️ | Only if the preset's VELOCITY TO VOL is not OFF, or velocity is mod-routed (p. 38-39). HW: the default isn't documented. |
 | 17 | Stop/panic sends note-offs per sounding note, plus CC 123 on channels 1-8 (`engine._panic`) | ⚠️ | The note-offs are the real guarantee. CC 123 (All Notes Off) is standard MIDI but isn't in [M], so whether the unit honours it is HW. It does no harm. |
 | 18 | Raw `cc` and `nrpn` go to the track's channel (`set_param`) | ⚠️ | Raw CC numbers mean different things on a MIDI-machine track (CC 70-77 = VAL1-8) and on the FX channel. Raw access can't reach the FX channel unless it shares a track's channel, which §7.4 says to avoid. |
 | 19 | Retrig/ratchet and fills are done by sending notes (`mutate.py`) | ✅ | The unit's retrigs and fill mode have no MIDI control (§12). |
 | 20 | Swing and humanize live in Whiplash | ✅ | The unit's swing and micro timing apply only to its own sequencer (§9, §12). |
 | 21 | The visualiser captures "the stereo main mix" over USB (README) | ⚠️ | Needs USB CONFIG = USB AUDIO/MIDI. USB OUT is one pair: MAIN by choice, or selected tracks (p. 81). Check INT TO MAIN (§14). |
-| 22 | v0.5.0 clamps transpose to 16-84 (`engine.clamp_note`) | ✅ | Conservative: that is the documented chromatic range (AUTO channel, p. 25). The track-channel range is undocumented, and KEYBOARD mode spans C0-G10 (p. 25). |
+| 22 | v0.5.0 clamps transpose to 16-84 (`engine.clamp_note`) | ✅ | Conservative: that is the documented chromatic range (AUTO channel, p. 25). The track-channel range is undocumented, and KEYBOARD mode spans C0-G10 (p. 25). v0.5.1 written notes are validated against the same 16-84. |
+| 23 | v0.5.1 written parts may play on tracks 9-16 (channels 9-16) (`whiplash_write_part`) | ⚠️ | Track n = channel n holds for 9-16 too ([M] p. 25, p. 79). But AUTO CHANNEL or FX CONTROL CH may sit on one of those channels (§7.3, §7.4; factory values are HW question 1), in which case notes and CCs reach a second target. Results on tracks 9-16 carry a `channel_note` saying so. Panic still sends CC 123 only on channels 1-8; held notes on 9-16 get their own note-offs. |
+| 24 | A retrigger of the same note ends the held one (`engine._run`) | ⚠️ | When a written note is longer than the gap to the next hit of the same note, Whiplash sends that note's note-off just before the new note-on, so the old note-off can't cut the new note. Whether the unit retriggers or layers voices on one track isn't documented here (HW). |
 
 ### 15.2 Things Whiplash must keep never doing
 
@@ -782,6 +784,7 @@ Check these on the unit, and record the result in this file with a date:
 6. The default VELOCITY TO VOL and AMP HOLD on factory and empty presets.
 7. INT TO MAIN = AUTO while the visualiser captures USB audio: do the main outs stay on?
 8. Grid/Slice with SLICE = NOTE: which note plays slice 1 on a track channel?
+9. Written-part length (v0.5.1): with AHD and a fixed HOLD, does `length` change nothing? With CC 80 = 127, does the unit show HOLD = NOTE and does `length` shorten the sound? With ADSR (CC 87 = 1), do length and release shape it? (v0.5 plan HW 2.)
 
 ---
 

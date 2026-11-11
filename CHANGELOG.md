@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased: visualiser pixel-art rack restyle
+## 0.5.1
+
+Written parts: Hermes can now write melodies, basslines and rhythms itself, the three asks from the Nov 11 2026 Digitakt II session that v0.5.0 left open ("play different notes so it's a melody", "4/4 on the bass drum, not 16ths", "plays non-stop"). 16 tools. Nothing here has been tested on a real Digitakt II yet.
+
+Added
+- `whiplash_write_part(track 1-16, ...)` replaces one track's line in the working pattern from the next bar line:
+  - **Placement**, one of: `rhythm` presets (`four_on_floor`, `on_kick`, `offbeat_8ths`, `8ths`, `16ths`, `off_16ths`, `syncopated`, `half_time`), `grid` step masks (16 cells per bar, `X` = accent, up to 4 bars), `steps`, `hits` (`{step, note, length, velocity, bar}`) or `lock_to` (copies another track's hits at call time; `on_kick` = `lock_to: 1`; live follow is P1).
+  - **Notes** cycle over the hits: Elektron names (C5 = 60), MIDI numbers 16-84, `.` rests, or scale degrees with `key`/`scale` (13 scales). The result echoes each bar as a grid with note numbers and names, plus the `pitch` block.
+  - **`length`** in 16th steps (0.25-16, a list cycles) is sent as the exact MIDI note-off, with no 0.8 `GATE` factor. **`velocity`** 1-127, a list, or `accent`. **`bars`** 1, 2 or 4 (default: the shortest that plays every note).
+  - **`length_audible`** in every result: the unit only ends a sound on note-off with AMP MODE = ADSR or HOLD = NOTE (manual 11.7 p. 56, B.5 p. 110; midi.guide; reference §5.2). It says so more confidently when Whiplash itself last sent `amp_hold` 127 or `amp_mode` 1.
+  - **`envelope: "note"`** (opt-in) sends exactly one CC 80 = 127 (HOLD = NOTE) on the track, after validation. The envelope is never changed silently.
+  - Mutes, drops, fills, density, humanize and transpose still apply to a written part. It carries across live pattern switches and `whiplash_mutate reset`; `reset: true` or `whiplash_stop` clears it (the same lifetime as mutes and transposes).
+  - Bad input (track, placement, notes, grid, length, velocity, bars, envelope) raises before anything changes: no part, no CC.
+  - On tracks 9-16 the result warns that the unit's AUTO CHANNEL or FX CONTROL CH may share the channel (reference §7.4).
+- `whiplash_status` gains `parts`, and `tracks[n].part` is `written` for a written part.
+- The bundled `whiplash:digitakt` skill teaches `whiplash_write_part`: that Hermes can write melodies and rhythms, how to place hits, write lines around C5, read `length_audible`, and make length audible with `envelope: "note"` or ADSR.
+
+Changed
+- `whiplash_mutate` `density` and `drop` accept tracks 1-16 (was 1-8). Density on a track with no notes is rejected.
+- The sequencer ends a held note just before the same note retriggers on the same channel, instead of letting the earlier note-off cut the new note short. Generated parts never overlapped this way, so they sound the same.
+- New module `parts.py`: pure parsing and building of written parts, no MIDI.
+
+### Also in 0.5.1: visualiser pixel-art rack restyle (PR #8)
 
 Changed
 - `whiplash_open_view` page (`view.html`) restyled as a flat, strict-grayscale pixel-art hardware rack, per [docs/executing/viz-style-brief.md](docs/executing/viz-style-brief.md). It is still one self-contained file with no new dependencies, fonts or CDNs, and the tool contracts are unchanged.
