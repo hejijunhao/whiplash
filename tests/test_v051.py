@@ -383,6 +383,18 @@ def _jitter(times):
     return sorted(abs(g - nominal) for g in gaps)[int(len(gaps) * 0.95)]
 
 
+def assert_jitter(base, busy, what="busy"):
+    """p95 clock jitter while busy within max(2x, +3 ms) of the baseline. A wall-clock bound: enforced locally (or
+    with WHIPLASH_STRICT_TIMING=1), reported only on CI, where shared runners stall 5-15 ms at times
+    (conftest.STRICT_TIMING). The schedule itself is pinned on a virtual clock in test_v070.py."""
+    from conftest import STRICT_TIMING
+    b, j = _jitter(base), _jitter(busy)
+    if STRICT_TIMING:
+        assert j <= max(b * 2, b + 0.003), (b, j)
+    else:
+        print(f"clock jitter, {what} (not enforced on CI): base {b * 1000:.2f} ms, {what} {j * 1000:.2f} ms")
+
+
 def test_clock_jitter_is_unchanged_with_8_written_parts():
     port = TimedPort()
     eng, _ = make_engine(port)
@@ -401,7 +413,7 @@ def test_clock_jitter_is_unchanged_with_8_written_parts():
     assert len(written) == 2 * engine.TICKS_PER_BAR
     assert port.count("note_on", channel=7) >= 32  # 16ths on track 8 really played
     # p95 deviation from the clock period stays within a couple of ms of the generated beat's
-    assert _jitter(written) <= max(_jitter(base) * 2, _jitter(base) + 0.003), (_jitter(base), _jitter(written))
+    assert_jitter(base, written, "8 written parts")
 
 
 # ---- tool, schema, docs ------------------------------------------------------

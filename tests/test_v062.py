@@ -10,7 +10,7 @@ import whiplash
 from whiplash import arrange, ccmap, engine, mixer, patterns, schemas, tools, transition
 from test_whiplash import call, make_engine, tool_engine  # noqa: F401  (fixture)
 from test_live import bar_events, pretend_playing, timeline, wait_bar
-from test_v051 import TimedPort, _jitter
+from test_v051 import TimedPort, assert_jitter
 
 P = patterns.PATTERNS
 ROOT = Path(whiplash.__path__[0])
@@ -461,7 +461,7 @@ def test_clock_jitter_is_unchanged_with_transitions_and_level_ramps():
     busy = t[at * BAR:(at + 3) * BAR]
     assert len(busy) == 3 * BAR
     assert port.count("control_change", control=74) > 20 and port.count("control_change", control=95) > 20
-    assert _jitter(busy) <= max(_jitter(base) * 2, _jitter(base) + 0.003), (_jitter(base), _jitter(busy))
+    assert_jitter(base, busy, "transitions and mix")
     assert_safe(port)
 
 

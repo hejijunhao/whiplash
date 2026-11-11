@@ -2,6 +2,7 @@
 fake input stream against a running engine. Skips cleanly without numpy. sounddevice is never imported: every
 capture goes through a fake backend, so CI needs no audio device. Nothing here says how the Digitakt II sounds."""
 import json
+import statistics
 import threading
 import time
 
@@ -12,8 +13,7 @@ np = pytest.importorskip("numpy")
 from whiplash import ccmap, engine, listen, patterns, tools  # noqa: E402
 from test_whiplash import FakePort, call, make_engine  # noqa: E402
 from test_live import wait_bar  # noqa: E402
-from test_v051 import _jitter  # noqa: E402
-from conftest import STRICT_TIMING  # noqa: E402
+from test_v051 import assert_jitter  # noqa: E402
 
 SR = 48000
 P = patterns.PATTERNS
@@ -344,7 +344,7 @@ def test_listen_end_to_end_with_a_fake_input(running):
             pos = (at - bars[bar]) / step
             late.append(abs(at - (bars[bar] + round(pos) * step)) * 1000.0)
     assert len(late) == 8
-    expected = sorted(late)[len(late) // 2]
+    expected = statistics.median(late)  # the listen's median of 8 averages the middle two, so must this
     assert out["onsets"]["median_abs_offset_ms"] == pytest.approx(expected, abs=2.5), (late, out["onsets"])
     assert out["tracks"]["1"]["seems_silent"] is not True  # kicks land with other tracks: no solo hits to judge
     assert out["tracks"]["4"]["seems_silent"] is True  # the fake input only plays kicks, so the hats are missing
@@ -370,11 +370,7 @@ def test_listen_does_not_jitter_the_clock(running):
     assert len(busy) >= 2 * BAR  # the capture window and the analysis after it
     # Wall-clock bound: enforced locally, reported on CI (conftest.STRICT_TIMING). Its deterministic halves are
     # test_v070.py's virtual-clock schedule test and test_listen_analysis_yields_the_gil_in_small_batches.
-    if STRICT_TIMING:
-        assert _jitter(busy) <= max(_jitter(base) * 2, _jitter(base) + 0.003), (_jitter(base), _jitter(busy))
-    else:
-        print(f"listen jitter (not enforced on CI): base {_jitter(base) * 1000:.2f} ms, busy "
-              f"{_jitter(busy) * 1000:.2f} ms")
+    assert_jitter(base, busy, "listen")
     for m in port.messages:
         assert m.type in engine.ALLOWED_TYPES
         if m.type == "control_change":
