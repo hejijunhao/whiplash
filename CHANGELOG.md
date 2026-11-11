@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased: Digitakt II reference (0.4.x patch)
+
+Added
+- `docs/digitakt-ii/reference.md`: a detailed device reference with manual page numbers, cross-checked against midi.guide (CSV of 2026-10-12). It covers:
+  - the data model (project, pattern, kit, preset, pool, +Drive),
+  - machines and their knob CCs,
+  - how incoming notes map to pitch,
+  - channels (track, AUTO, FX CONTROL) and their CC collisions,
+  - the full CC/NRPN map with 16 discrepancies listed,
+  - transport and clock, mutes, p-locks, LFOs, and USB audio and Overbridge,
+  - an "Implications for Whiplash" audit of 22 code assumptions.
+
+  It is the canonical device reference.
+- `docs/digitakt-ii/README.md` and `fetch-manual.sh`. They give the link, edition and SHA-256 of the official OS 1.17 manual, and download it locally with a hash check. The PDF isn't committed: its imprint forbids reproduction without written authorization.
+- `CLAUDE.md`: agent notes. They point at the reference and restate the safety rules (no SysEx, no program change, no writes to the unit, blocked CCs stay blocked).
+- `tests/test_reference.py`: checks the reference's named-param table against `ccmap.py`, the `loop_pos` range on the wire, and that the safety blocks are unchanged.
+
+Fixed
+- `loop_pos` (CC 22) range is now 0-120, not 0-127, matching midi.guide's Oneshot Loop Pos and the sibling `sample_start`/`sample_length`. Values above 120 clamp, with `clamped: true`. The description now says the knob is machine dependent (Bars on Werp, Stretch and Repitch; Grid on Grid).
+- `lfo3_speed` documents its NRPN (1:58; the manual and midi.guide agree). It is documentation only and still never sent.
+
+Changed
+- README:
+  - Setup now says to keep AUTO CHANNEL and FX CONTROL CH off channels 1-8.
+  - Note 60 = original pitch now carries its two caveats: TUNE centred and preset OCTAVE unchanged.
+  - Note lengths depend on AMP HOLD = NOTE or ADSR.
+  - Safety says parameter edits stay in the active pattern's kit until reloaded.
+  - It links the reference.
+
 ## Unreleased: visualiser (`feat/visualiser`, on top of 0.4.0)
 
 Added

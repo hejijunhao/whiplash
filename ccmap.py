@@ -32,6 +32,10 @@ Machine type (Oneshot/Werp/Stretch/...): neither source lists a CC or NRPN for i
 reached via the MACHINE menu, [FUNC] + [SRC], Appendix A.1), so Whiplash can't switch machines.
 FX-channel and global parameters (delay time, reverb decay, ...) live on the FX channel and are
 out of scope for named params; raw cc can still reach them.
+
+Full device reference (data model, machines, note mapping, channels, the whole CC/NRPN map with
+every manual vs midi.guide discrepancy): docs/digitakt-ii/reference.md. Check it before changing
+anything here.
 """
 import difflib
 from dataclasses import dataclass, field
@@ -85,7 +89,8 @@ _TABLE = (
        nrpn=(1, 4)),
     _c("sample_length", 21, "src", "SRC knob F: sample length on Oneshot/Repitch/Stretch (0-120); "
        "machine dependent", max=120, aliases=("length",), nrpn=(1, 5)),
-    _c("loop_pos", 22, "src", "Loop position (Oneshot machine only)", aliases=("loop_position",), nrpn=(1, 6)),
+    _c("loop_pos", 22, "src", "SRC knob G: loop position on Oneshot (0-120); Bars on Werp/Stretch/Repitch, "
+       "slice grid on Grid (machine dependent)", max=120, aliases=("loop_position",), nrpn=(1, 6)),
     _c("sample_slot", 19, "src", "Sample slot (0-127) within the RAM bank selected on the unit; picks a sample "
        "already loaded in the project pool. Can't list, preview or load samples; the SMP list starts with "
        "OFF (no sound)", discrete=True, aliases=("sample", "sample_select", "smp", "slot"), nrpn=(1, 8)),
@@ -127,7 +132,7 @@ _TABLE = (
        nrpn=(1, 49)),
     _c("lfo2_speed", 112, "lfo", "LFO 2 speed; 64 = stopped", centered=True, lsb_cc=60, nrpn=(1, 50)),
     _c("lfo2_depth", 119, "lfo", "LFO 2 depth; 64 = none", centered=True, lsb_cc=61, nrpn=(1, 57)),
-    _c("lfo3_speed", 78, "lfo", "LFO 3 speed; 64 = stopped", centered=True, lsb_cc=62),
+    _c("lfo3_speed", 78, "lfo", "LFO 3 speed; 64 = stopped", centered=True, lsb_cc=62, nrpn=(1, 58)),
     _c("lfo3_depth", 86, "lfo", "LFO 3 depth; 64 = none", centered=True, lsb_cc=63, nrpn=(1, 72)),
 )
 
