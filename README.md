@@ -166,7 +166,7 @@ On the unit: **SETTINGS > MIDI CONFIG**
 - **SYNC**: **CLOCK RECEIVE** and **TRANSPORT RECEIVE** on if the Digitakt's sequencer/FX should follow Whiplash.
 - **CHANNELS**: TRACK 1-8 CHANNEL = 1-8 (the default). Keep **AUTO CHANNEL** and **FX CONTROL CH** off channels 1-8 (or OFF). Otherwise Whiplash's notes and CCs also reach the active track or the send FX, because the same CC numbers mean different things there.
 
-Notes trigger each track's sample. Note 60 is the original pitch (see [Pitch and register](#pitch-and-register)), as long as TUNE is centred and the preset's OCTAVE (FUNC+FLTR > TRACK) is unchanged. Note lengths only shape the sound when AMP HOLD is set to NOTE (the usual default) or the AMP mode is ADSR. See [docs/digitakt-ii/reference.md](docs/digitakt-ii/reference.md) §5-§7 for the details.
+Notes trigger each track's sample. Note 60 is the original pitch (see [Pitch and register](#pitch-and-register)), as long as TUNE is centred and the preset's OCTAVE (FUNC+FLTR > TRACK) is unchanged. Note lengths only shape the sound when AMP HOLD is set to NOTE (the midi.guide default; a given preset may differ) or the AMP mode is ADSR. See [docs/digitakt-ii/reference.md](docs/digitakt-ii/reference.md) §5-§7 for the details.
 
 ### Transport and the unit's own pattern
 
@@ -220,7 +220,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 
 One test does a real virtual-port loopback through rtmidi; it skips where the machine has no MIDI system. CI runs the suite on Linux and macOS (`.github/workflows/tests.yml`).
 
-All of this runs against fake or virtual ports. Behaviour on a real Digitakt II is not covered by the test suite.
+All of this runs against fake or virtual ports. Behaviour on a real Digitakt II is not covered by the test suite; the ordered hardware session for that, with a 10-minute smoke test first, is [docs/testing/hardware-checklist.md](docs/testing/hardware-checklist.md).
 
 ## 90-second demo: a build and drop
 

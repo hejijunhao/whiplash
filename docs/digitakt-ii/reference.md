@@ -471,7 +471,7 @@ This is exactly what `ccmap.py` sends, on the track's channel. `tests/test_refer
 | Sustain | 82 | 1:33 | / 127 | `amp_sustain` |
 | Release | 83 | 1:34 | / 32 (127 = inf) | `amp_release` |
 | Env reset | 88 | 1:41 | 0-1 / 1 | (none) |
-| Mode | 87 | 1:40 | 0 AHD, 1 ADSR / 0 | (none) (planned `amp_mode` in v0.5) |
+| Mode | 87 | 1:40 | 0 AHD, 1 ADSR / 0 | `amp_mode` (v0.5.0) |
 | Pan | 90 | 1:38 | / 64 | `pan` |
 | Volume | 89 | 1:39 | / 110 | `amp_volume` |
 
