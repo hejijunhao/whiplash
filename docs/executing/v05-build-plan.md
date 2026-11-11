@@ -1,6 +1,6 @@
 # Whiplash v0.5 build plan
 
-Status: **P0a shipped in v0.5.0** (items 1, 4a, 5, 6; PR #7). P0b (`whiplash_write_part`) is in progress as v0.5.1 on `feat/v051-write-part`. P1/P2 are not started. As built, item 1 lifts parts until the median is at most 7 semitones *below* 60 (not within ±6), and leaves parts above 60 alone. The HW checks below are collected, in order, in [docs/testing/hardware-checklist.md](../testing/hardware-checklist.md).
+Status: **P0a shipped in v0.5.0** (items 1, 4a, 5, 6; PR #7). P0b (`whiplash_write_part`) shipped in v0.5.1 (PR #9). Review follow-ups (transpose on tracks 9-16, All Notes Off on 1-16, `amp_hold` NOTE only when explicit) are v0.5.2. P1/P2 are not started. As built, item 1 lifts parts until the median is at most 7 semitones *below* 60 (not within ±6), and leaves parts above 60 alone. The HW checks below are collected, in order, in [docs/testing/hardware-checklist.md](../testing/hardware-checklist.md).
 
 - **Branch:** `feat/v05`, cut from `main` at `aab2687` (v0.4 merged).
 - **Input:** Phil's live Hermes test on the Air, Nov 11 2026, about 00:05-00:20 PT, and the queued kit-map note of Nov 10 23:51 PT.

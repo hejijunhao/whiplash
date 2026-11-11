@@ -37,16 +37,17 @@ Added
 - Tests: the page has no external URLs, its palette is strict grayscale, every state field the page reads exists in a real frame, and param `max` follows `ccmap`.
 - `docs/executing/viz-style-brief.md` (the design brief) and a roadmap entry under visualiser evolution.
 
-## Unreleased: hardware test plan and v0.5.0 review
+### Also in 0.5.1: hardware test plan and v0.5.0 review (PR #10)
 
 Added
-- `docs/testing/hardware-checklist.md`: one ordered hardware session for a real Digitakt II. It starts with a 10-minute smoke test, which covers the demo. Then it covers:
+- `docs/testing/hardware-checklist.md`: one ordered hardware session for a real Digitakt II. It starts with a 10-minute smoke test, which covers the demo plus one written melody. Then it covers:
   - the v0.5.0 pitch register, status, skill and `amp_mode`,
   - v0.4 sample select and transport modes,
   - v0.3 live control,
   - the reference fixes,
   - the visualiser restyle,
-  - a placeholder for v0.5.1 `whiplash_write_part`,
+  - v0.5.1 `whiplash_write_part` (melody, rhythm presets, lock to kick, length vs HOLD/MODE, retrigger, tracks 9-16),
+  - a placeholder for the v0.5.2 fixes from the review (transpose on 9-16, All Notes Off on 1-16, `amp_hold` NOTE only when explicit),
   - and hot-plug.
 
   Each check has the setup, the prompt to type, what to expect, and pass/fail boxes. The checks map to the reference's open hardware questions (§15.3). It is linked from README and CLAUDE.md.
@@ -54,7 +55,7 @@ Added
 Fixed (docs)
 - Reference §8.1 Amp table: `amp_mode` is shipped (it said "planned").
 - README setup: HOLD = NOTE is the midi.guide default, not a known factory default (reference §15.3 Q6).
-- v0.5 build plan status: P0a shipped, and P0b is in progress as v0.5.1.
+- v0.5 build plan status: P0a shipped in v0.5.0, and P0b shipped in v0.5.1.
 
 ## 0.5.0
 
