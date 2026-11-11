@@ -261,7 +261,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-530 tests, covering:
+523 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -282,6 +282,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - fills by role (a kick labelled on track 9, default fill tracks, melodic refusals, cymbal and perc only when named, and the demo's drop with fill unchanged)
   - the review follow-ups: written parts in routing, transpose and density following a relabel, queued results with their own setup, the 9-16 channel note, `routing` on play results, and vacated default tracks
 - input validation, single panic per stop, exit hook, SysEx refusal
+- the offline demo rehearsal (`scripts/rehearse_demo.py`, below) at 4x clock: every Part A check passes, the MIDI file holds exactly what was sent, and its checks catch SysEx, program change, blocked CCs and hanging notes
 - the visualiser:
   - the state snapshot and which lanes appear
   - written parts, transpose, the amp envelope, kit and slot labels and tracks 9-16 in the snapshot, and the page handling frames without them
@@ -292,6 +293,20 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - server start/stop, the localhost Host check, SSE frames, and the open/close tools
 
 One test does a real virtual-port loopback through rtmidi; it skips where the machine has no MIDI system. CI runs the suite on Linux and macOS (`.github/workflows/tests.yml`).
+
+### Rehearse the demo offline
+
+```bash
+uv run python scripts/rehearse_demo.py             # real time, about 30 s
+uv run python scripts/rehearse_demo.py --speed 4   # 4x clock, about 8 s (what CI runs)
+```
+
+No Digitakt, no rtmidi and no MIDI system needed. It runs the tool calls behind the [hackathon demo](docs/demo/hackathon-demo.md) (hardware checklist Part A, A1-A9) through the real tool handlers and engine, with the beat running between calls and each call landing mid-bar. Output goes to a recording port named like the unit. It writes to `<tmp>/whiplash-rehearsal/` (or `--out DIR`):
+- `demo.mid`: everything sent, one track per MIDI channel, with markers for each step, MIDI Start/Stop and every bar. An SMF can't hold real-time bytes, so the clock is kept as timing: events sit at the engine's own musical time and the file plays back at the speed of the demo.
+- `report.txt`: per step, the calls, which tracks sounded, the CCs sent, where each change landed against the bar line, warnings and the checks. Then global checks: no SysEx or program change, no blocked CC, no hanging notes, and clock jitter within the bound `tests/test_v051.py` uses.
+- `results.json`: every tool result, as Hermes would see it.
+
+It exits 1 on any violation and 2 if the run crashed. `--speed` scales the engine's clock, not the order or bar timing of the calls. A pass says the plugin does what the demo needs; it says nothing about the unit. That still takes Part A on a real Digitakt II.
 
 All of this runs against fake or virtual ports. Behaviour on a real Digitakt II is not covered by the test suite; the ordered hardware session for that, with a 10-minute smoke test first, is [docs/testing/hardware-checklist.md](docs/testing/hardware-checklist.md).
 
