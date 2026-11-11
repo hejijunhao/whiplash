@@ -391,7 +391,7 @@ def _descriptions(node):
 def test_description_size_budget():
     # v0.5.2: 7302 characters of tool descriptions over 16 tools, 11357 counting params, 18108 bytes of JSON.
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
-    assert sum(tool_text.values()) <= 3500, tool_text  # v0.7.0: 3000 -> 3300 for whiplash_listen; v0.7.1: 3500
+    assert sum(tool_text.values()) <= 4100, tool_text  # v0.7.0: 3300 (listen); v0.7.1: 3500; v0.8.0: 4100
     assert max(tool_text.values()) <= 400, tool_text
     # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params.
     # v0.6.1 adds whiplash_arrange (its section schema) and trims other tool descriptions to stay under 3000.
@@ -401,8 +401,10 @@ def test_description_size_budget():
     # rises to 3300 (above), params to 8400 characters and the JSON to 20100 bytes.
     # v0.7.1 adds whiplash_scan_kit (one param) and trims whiplash_listen's description: the tool total rises to
     # 3500, params to 8550 characters and the JSON to 20400 bytes.
-    assert _descriptions(schemas.SCHEMAS) <= 8550
-    assert len(json.dumps(schemas.SCHEMAS)) <= 20400
+    # v0.8.0 adds whiplash_play_along, whiplash_follow and whiplash_undo: the tool total rises to 4100, params to
+    # 9300 characters and the JSON to 22000 bytes (docs/executing/v08-build-plan.md §5.9).
+    assert _descriptions(schemas.SCHEMAS) <= 9300
+    assert len(json.dumps(schemas.SCHEMAS)) <= 22000
 
 
 def test_short_descriptions_keep_the_safety_caveats():

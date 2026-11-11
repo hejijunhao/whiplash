@@ -12,6 +12,53 @@ Added
 - **Hardware checklist:** E8 (the KEY module and chord lines) and a new Part P (P1-P5: plan HW 6.0-1 to 6.0-5, §15.3 Q12-13), plus the v0.6.1 / 19-tool gateway check. **Demo:** an optional 30-second progression encore after the run, gated on P1. None of this is hardware-verified.
 - **Offline demo rehearsal** (`scripts/rehearse_demo.py`). Runs the hackathon demo's tool calls (checklist Part A, A1-A9) through the real handlers and engine against a recording port, at real or accelerated clock, with no Digitakt or rtmidi. Writes a Standard MIDI File of everything sent (one track per channel, markers for steps, Start/Stop and bars), a per-step report (tracks sounded, CCs, bar landing, warnings) and every tool result. It fails (exit 1) on SysEx, program change, a blocked CC, a hanging note, clock jitter past the test suite's bound, or any Part A expectation the MIDI can show. `tests/test_rehearsal.py` runs it at 4x in CI. Linked from README and the demo script. Not a hardware test.
 
+## 0.8.0
+
+The first v0.8 PR: play along ([docs/executing/v08-build-plan.md](docs/executing/v08-build-plan.md) items 1, 2, 4 and 5; roadmap v0.8 features 1, 2, 4, and the in-memory half of 3). 25 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, the plugin imports and runs with no optional dependency installed, and nothing new runs unless one of the new tools is called.
+
+**v0.8.0 writes no files.** Export to a standard MIDI file (`whiplash_export`) is deferred to v0.8.1, because file writes need Phil's OK (plan §5.1).
+
+Added
+- **`whiplash_play_along(on)`** (`jam.py`, `Engine.open_input`). Opens the Digitakt's MIDI input (the first input named "Digitakt", never another device and never the virtual "Whiplash" port) on a daemon reader thread.
+  - **Clock safety.** The reader never takes the engine lock and never sends anything. It handles at most 64 messages per batch, then sleeps 0.2 ms, so a flood of input gives the GIL back.
+  - **Decoding.** CC and NRPN from the unit become named moves through `ccmap`: track = MIDI channel, plus param and value. Consecutive moves of one knob merge into one gesture ("track 6 filter_freq 40 -> 90"). NRPN addresses come from midi.guide, and the ones the manual disputes are marked `unsure`.
+  - **Ignored.** SysEx, program change, clock, transport, pitch bend and aftertouch from the unit are ignored and counted. They are never re-sent and never recorded.
+  - **Echo filter.** A CC or note equal to one Whiplash sent less than 60 ms earlier is treated as its own echo, not the user.
+  - **Errors.** With no Digitakt input it returns a clean error that names the inputs it saw and gives the SETTINGS > MIDI CONFIG > PORT CONFIG send settings. With the input open and nothing heard for 10 s, status carries the same hint. A lost input shows as `play_along.lost`, and the beat is untouched.
+  - **`on: false`** closes the input and ends any follow. The recording stays in memory.
+- **Ramps yield to the user.** A knob move on a track and param where a Whiplash ramp runs is handed to the sequencer through a lock-free deque. At its next clock tick the sequencer cancels that ramp, and any filter_swap reopen pending on that knob. The next tool result carries `yielded_to_user` with a note telling Hermes to tell the user, and `whiplash_status` lists it.
+- **`whiplash_status.play_along`** shows the input port and whether it is open, the last 8 user moves (`said`, `age_s`), notes heard per track, echoes ignored, recent yields, the follow, and the recording's counts. `whiplash_status.undo` lists what can be undone. `last_cc` stays the last value *Whiplash* sent (plan §5.4).
+- **`whiplash_follow(track, answer_track, mode, stop)`**: call and response. Notes the user plays on `track`'s channel (KEYBOARD mode, OUTPUT CH = track channel) are quantized to the 16th grid at the next bar line, against that bar's start time from the sequencer clock. That bar then plays a reply on `answer_track`, replacing the track's own line for one bar.
+  - **Modes:** `echo` (the phrase in key), `answer` (default: the contour mirrored by scale degree, ending on the nearest tonic) and `harmonize` (a diatonic third up).
+  - **Pitch:** in the key playing, moved by whole octaves into the native register (median 53-72), notes kept in 16-84.
+  - **Size:** one note per step, at most 16, one step long, at the user's velocity.
+  - **Refused before anything changes:** a drum, cymbal or fx answer track, the same track twice, and nothing playing. `stop: true`, `whiplash_play_along(on: false)` and `whiplash_stop` end it.
+- **`whiplash_undo`.** Reverts the newest written part (`whiplash_write_part`, or its `reset`), mix (`whiplash_mix` level/pan changes) or arrangement change (`whiplash_arrange`, or `clear`), on the next bar line.
+  - **Part:** the previous part comes back, or the generated line.
+  - **Mix:** the previous values go out. A track Whiplash had never sent that value to is listed in `cannot_revert`.
+  - **Arrangement:** the previous one resumes in the section that bar falls in. With none before, it clears and lifts the arrangement's mutes. An arrangement that would already have ended is refused, because restoring it would stop the beat.
+  - At most 16 entries; `whiplash_stop` and a fresh start clear them.
+- **In-memory session recording** (`jam.Recording`, `Engine.recording_snapshot()`). A ring buffer of at most 65,536 events, while play-along is on:
+  - every note and CC Whiplash sends, never clock
+  - every note and CC heard from the unit
+  - markers for pattern switches, sections and tempo changes
+  - Each event carries a clock-tick timestamp. It is ready for v0.8.1's export and is never written to disk.
+
+Changed
+- **Sequencer:**
+  - It publishes `clock_ref` once per tick (one tuple assignment).
+  - `_bar_boundary` takes the bar's start time and answers a follow there.
+  - `_advance_ramps` first drains the user's grabs (an empty-deque check otherwise).
+  - `_run_timed` runs undo's bar-line restores (kind `call`).
+  - While play-along is on, `Engine.send` also notes each note and CC for the echo filter and the recording.
+  - With play-along off, none of this does anything.
+- `_enter_section` takes an optional section start, so undo can resume an arrangement part-way through a section.
+- Version 0.8.0 in `pyproject.toml`, `plugin.yaml`, `docs/catalog-entry.yaml` and `__init__.py`. The three tools sit in `provides_tools` after `whiplash_scan_kit`, and the manifest and catalog descriptions disclose the MIDI input and the in-memory recording.
+- The tool-description budget rises from 3,500 to 4,100 characters (per-tool cap 400 unchanged), params from 8,550 to 9,300 characters, and the JSON from 20,400 to 22,000 bytes.
+- Skill, README, roadmap (v0.8 status) and the device reference (§15.1 #37, §15.3 Q25-30) updated.
+
+Not touched: `docs/testing/hardware-checklist.md`, `docs/demo/`, `scripts/`, `view.py`, `view.html` (owned by the visualiser agent). The PR lists the new hardware checks.
+
 ## 0.7.1
 
 The second v0.7 PR: the kit scan ([docs/executing/v07-build-plan.md](docs/executing/v07-build-plan.md) item 3, roadmap v0.7 feature 3). 22 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, and the plugin imports and runs with no optional dependency installed.

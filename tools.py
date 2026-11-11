@@ -66,6 +66,11 @@ def _tool(fn):
                     out["notice"] = device_notice(device)
         if ENGINE.port_lost and not out.get("port"):
             out["port_lost"] = ENGINE.port_lost
+        yielded = ENGINE.take_yields()  # v0.8.0: empty unless play-along is on and the user grabbed a ramped knob
+        if yielded:
+            out["yielded_to_user"] = yielded
+            out["yield_note"] = ("The user grabbed a knob Whiplash was ramping, so that ramp stopped and their value "
+                                 "stands. Tell them you yielded; don't restart it unless they ask.")
         view.record_action(PREFIX + fn.__name__, params or {}, out)
         return json.dumps(out)
     return wrapper
@@ -325,6 +330,25 @@ def scan_kit(p):
 
 
 @_tool
+def play_along(p):
+    """v0.8.0: open the Digitakt's MIDI input (user moves, ramps yield, in-memory recording). on: false closes it."""
+    return ENGINE.play_along(on=p.get("on", True))
+
+
+@_tool
+def follow(p):
+    """v0.8.0: call and response. The user plays on track; Whiplash answers on answer_track on the next bar."""
+    return ENGINE.follow(track=p.get("track"), answer_track=p.get("answer_track"), mode=p.get("mode"),
+                         stop=p.get("stop"))
+
+
+@_tool
+def undo(p):
+    """v0.8.0: revert the last written part, mix or arrangement change on the next bar line."""
+    return ENGINE.undo()
+
+
+@_tool
 def open_view(p):
     port = p.get("port")
     if port not in (None, ""):
@@ -346,4 +370,5 @@ def close_view(p):
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
                                              select_sample, label_tracks, transpose, write_part, set_progression, arrange,
                                              mix, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
-                                             status, listen, scan_kit, open_view, close_view)}
+                                             status, listen, scan_kit, play_along, follow, undo,
+                                             open_view, close_view)}

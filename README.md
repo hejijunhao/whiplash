@@ -1,6 +1,6 @@
 # Whiplash 🥁
 
-A [Hermes Agent](https://hermes-agent.nousresearch.com) plugin that lets your agent **jam live on an Elektron Digitakt II** over USB MIDI. Ask for "something groovy at 122", "slowly open the filter on the bass", "drop the kick for two bars with a fill", "switch to techno on the next bar", and Hermes plays it on the hardware: beats with MIDI clock and transport, routed onto what your tracks hold, bar-quantized pattern switches, named sound parameters, clock-synced sweeps, live fills, drops, density, swing and humanize, **written melodies and rhythms** ("four on the floor on the bass", "lock the bass to the kick", "play A, C, E, G on track 7"), **keys and chord progressions** ("techno in A minor, i-VI-III-VII, two bars each"), **whole tracks in sections** ("make it a 90-second track: intro, build, drop, outro"), **listening to what the unit actually sounds like** ("is it clipping?", "does the bass clash with the kick?", "is it in time?"), **a kit scan that proposes what each track holds** ("scan my kit"), switching a track to another sample already in the project, mutes, and tempo.
+A [Hermes Agent](https://hermes-agent.nousresearch.com) plugin that lets your agent **jam live on an Elektron Digitakt II** over USB MIDI. Ask for "something groovy at 122", "slowly open the filter on the bass", "drop the kick for two bars with a fill", "switch to techno on the next bar", and Hermes plays it on the hardware: beats with MIDI clock and transport, routed onto what your tracks hold, bar-quantized pattern switches, named sound parameters, clock-synced sweeps, live fills, drops, density, swing and humanize, **written melodies and rhythms** ("four on the floor on the bass", "lock the bass to the kick", "play A, C, E, G on track 7"), **keys and chord progressions** ("techno in A minor, i-VI-III-VII, two bars each"), **whole tracks in sections** ("make it a 90-second track: intro, build, drop, outro"), **listening to what the unit actually sounds like** ("is it clipping?", "does the bass clash with the kick?", "is it in time?"), **a kit scan that proposes what each track holds** ("scan my kit"), **playing along with you** ("what did I just change?", "answer whatever I play on track 7, on track 8", "undo that"), switching a track to another sample already in the project, mutes, and tempo.
 
 The timing lives in the plugin, not the model. Hermes makes one validated tool call ("ramp the cutoff over 8 bars"); Whiplash's sequencer does the musical part on its own MIDI clock, so sweeps stay smooth and switches land on the one however long the model takes to answer.
 
@@ -28,9 +28,12 @@ Every tool is prefixed `whiplash_` so it can't collide with another plugin's too
 | `whiplash_mute_track` / `whiplash_unmute_track` | Live mute. `hardware: true` also flips the unit's own track mute (CC 94). |
 | `whiplash_set_tempo` | Live tempo change (30-300 BPM); the clock follows so the Digitakt's delay/LFOs stay in sync. |
 | `whiplash_stop` | Note-offs, All Notes Off on channels 1-8 plus any channel 9-16 that played a written part, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations, transposes, written parts, the progression, the arrangement, any queued switch and its transition (a cutoff a `filter_swap` closed goes back with one CC, `cutoff_restored`); keeps the kit map and saved mixes. Works as a panic button when nothing is playing. |
-| `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `key` and `progression` (the chord playing now and when it changes), `arrangement` (the section playing, bars left, the next one), `mix` (levels and pan last sent, saved mixes), `queued.transition` and `routing`. `tracks` gives each track in use: role (the user's label, or the pattern's marked `(assumed)`), the last sample `slot` (with its `slot_label`) and `tune` Whiplash sent, `transpose`, `pitch`, mute state, `part` (`generated` or `written`) and last CCs; `parts` lists the written parts. `listen` holds the last listen's loudness, peak and clipping, and `safety` the [rails](#safety-rails) (caps, counters, whether the loudness guard is on). |
+| `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `key` and `progression` (the chord playing now and when it changes), `arrangement` (the section playing, bars left, the next one), `mix` (levels and pan last sent, saved mixes), `queued.transition` and `routing`. `tracks` gives each track in use: role (the user's label, or the pattern's marked `(assumed)`), the last sample `slot` (with its `slot_label`) and `tune` Whiplash sent, `transpose`, `pitch`, mute state, `part` (`generated` or `written`) and last CCs; `parts` lists the written parts. `listen` holds the last listen's loudness, peak and clipping, and `safety` the [rails](#safety-rails) (caps, counters, whether the loudness guard is on). `play_along` (once opened) holds your last moves, yields, the follow and the recording's counts; `undo` lists what can be undone. |
 | `whiplash_listen` | Captures the unit's USB audio for `bars` (1-8, default 2, at most 24 s) from the next bar line and returns compact features, never audio: loudness (`lufs_ish`), peak and clipping, a four-band balance, onsets against Whiplash's grid (with a swing estimate), kick offsets against the kicks Whiplash sent, a bass-masking hint, per-track "seems silent" hints and a silence flag. Optional `device` (input name or index). Needs USB CONFIG = USB AUDIO/MIDI and the optional `[listen]` extra; see [Listening](#listening). |
 | `whiplash_scan_kit` | With the beat stopped, plays one note on each track (all 16, or `tracks`) alone, hears each over USB audio and **proposes** kit-map labels (kick, snare/clap, hat, perc, bass, pad/chord, lead/stab, fx, silent, unknown) with a confidence and the numbers behind them. **Never applies them**: it returns `apply_with`, and Hermes calls `whiplash_label_tracks` only after you say yes. Same setup as `whiplash_listen`; see [Kit scan](#kit-scan). |
+| `whiplash_play_along` | Opens the Digitakt's **MIDI input** so Whiplash hears what you do on the unit: your knob moves (named track and param, in `whiplash_status`), and a Whiplash ramp on a knob you grab stops at once (`yielded_to_user`). Everything sent and heard is recorded **in memory**. `on: false` closes it. Needs the unit's send settings; see [Play along](#play-along). |
+| `whiplash_follow` | Call and response: you play a phrase on `track` (KEYBOARD mode), and on the next bar line Whiplash answers on `answer_track` in key, on the grid, in the native register. `mode`: `echo`, `answer` (default) or `harmonize`. `stop: true` ends it. |
+| `whiplash_undo` | Reverts the last written part, mix or arrangement change on the next bar line. |
 | `whiplash_open_view` | Opens the **live visualiser**, a local web page (`http://127.0.0.1:7341`, or a free port) in the default browser. It shows the beat and the conversation while you keep chatting in the terminal. Optional `port`, and `open_browser: false` to only get the URL. Read-only. |
 | `whiplash_close_view` | Stops the visualiser's local server. The beat keeps playing. |
 
@@ -128,6 +131,33 @@ A queued switch (`whiplash_play_pattern` while something plays) or an arrangemen
 - **What comes back.** `proposed` (per track: `label`, the kit-map `role` when it differs, `confidence`, or `guess` for an `unknown`), `features` (centroid, decay, hold, pitchedness, low-end share, peak, keyed by `features_keys`), `flags` (`sound_before`, `other_hits`: sound the scan note didn't make; `tail_overlap`), `unexpected_audio` with a note when that points at the unit's own pattern, `current_labels` for tracks you already labelled, `apply_with` (the exact `whiplash_label_tracks` arguments, without silent and unknown tracks) and `applied: false`.
 - **Confirmation.** Labels are guesses from one hit on the USB OUT pair. A retuned, filtered or LFO'd preset can fool them. Hermes shows you the proposal; you correct it or say yes, and only then does it call `whiplash_label_tracks`.
 - Unplugging the audio input or the USB cable mid-scan ends it with a clean error and no note left hanging. Same clock safety as a listen: the sequencer is stopped, and analysis runs in the tool call's thread.
+
+### Play along
+
+`whiplash_play_along`, `whiplash_follow` and `whiplash_undo` (v0.8.0) let Whiplash react to what you do on the unit: "I play the Digitakt, Hermes plays along".
+
+- **Setup on the unit:** SETTINGS > MIDI CONFIG > PORT CONFIG (manual 14.4, p. 77-79; the exact names aren't confirmed on hardware yet):
+  - **OUTPUT TO** = USB (or MIDI+USB)
+  - **ENCODER DEST** and **TRIG KEY DEST** = INT+EXT
+  - **OUTPUT CH** = the track channel, so a move names its track. With AUTO, moves arrive on the AUTO channel's number.
+  - **PARAM OUTPUT** = CC
+  - Keep INPUT FROM = USB and RECEIVE NOTES / RECEIVE CC/NRPN on for Whiplash's own beat.
+- **Opening the input.** It opens only when you call `whiplash_play_along` or `whiplash_follow`; nothing else opens it, and Part A of the demo never does.
+  - **Which port:** the first MIDI input named "Digitakt", never another device and never the virtual "Whiplash" port. Without one, the call fails with that setup.
+  - **The reader thread:** a daemon thread that only reads. It never takes the sequencer's lock and handles input in small batches, so a flood of notes can't stall the clock (a test measures that).
+- **Your moves.** CC (or NRPN) moves become named moves: "track 6 filter_freq 40 -> 90". `whiplash_status.play_along.user_moves` keeps the last 8.
+  - Whiplash's own messages echoed back by the unit, within 60 ms, are filtered out.
+  - SysEx, program change, clock and transport from the unit are ignored, never sent back and never recorded.
+  - `tracks[n].last_cc` still shows what *Whiplash* sent.
+- **Ramps yield.** Grab a knob Whiplash is ramping, on the same track and param, and the ramp stops within one clock tick. Your value stands. The next tool result carries `yielded_to_user` so Hermes tells you.
+- **Call and response.** `whiplash_follow(track: 7, answer_track: 8, mode: "answer")`, then play in KEYBOARD mode on track 7. Each bar you play in is quantized to the 16th grid and answered on the next bar line on track 8. That bar replaces track 8's own line.
+  - **Modes:** `answer` mirrors your contour and ends on the tonic, `echo` plays it back in key, and `harmonize` plays it a diatonic third up.
+  - **Pitch:** always in the key playing, at most 16 notes, moved into the native register (median 53-72, notes in 16-84).
+  - **Refused:** drum, cymbal and fx answer tracks.
+- **Undo.** `whiplash_undo` reverts the newest written part, mix (level/pan) or arrangement change on the next bar line. It keeps up to 16, and `whiplash_stop` clears them.
+  - A mix value Whiplash had never sent can't be reverted (`cannot_revert`).
+  - An arrangement comes back in the section the bar falls in. One that would already have ended is refused, because that would stop the beat.
+- **Recording, in memory only.** While play-along is on, every note and CC sent and heard is kept with clock-tick times, plus pattern, section and tempo markers. That is at most 65,536 events, and the oldest drop first. **v0.8.0 writes no files.** Export to a `.mid` file is planned for v0.8.1, once file writes are approved.
 
 ### Safety rails
 
@@ -314,6 +344,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 - **Reads the conversation.** In-memory observer hooks pass the conversation to the view; nothing is stored. Without hooks, the view reads `~/.hermes/state.db` read-only, and only while the page is open. The page puts the conversation on screen, so mind what's visible when recording. `B` blurs it.
 - **Kit labels stay in memory.** `whiplash_label_tracks` keeps what you tell it in the Hermes process only. It writes no file and sends nothing to the unit.
 - **Listens only when asked.** `whiplash_listen` opens the chosen audio input (the Digitakt's USB audio by default) for the length of one call, at most 24 s, through the optional `sounddevice`/PortAudio extra, and closes it again. On macOS that needs microphone permission. The audio is analysed in memory and dropped; only a few numbers go back to the agent. Nothing is recorded, written or sent.
+- **Reads the unit's MIDI input, only when asked.** `whiplash_play_along` and `whiplash_follow` open the Digitakt's MIDI input (never another device) on a daemon reader thread (`whiplash-in`) that only reads. What it hears is never sent back to the unit. The session recording (notes and CCs sent and heard) lives in memory, at most 65,536 events, and is never written to disk. `whiplash_play_along(on: false)` and Hermes exit close the input.
 - **Kit scan plays notes, only when asked.** `whiplash_scan_kit` runs only with the beat stopped. It sends one note-on and note-off per scanned track and nothing else, records like a listen (at most about 35 s), and never applies its labels by itself.
 - No shell, credentials, or secrets, and no network beyond the localhost page. The only environment variables read are the optional `WHIPLASH_SEND_TRANSPORT` and `WHIPLASH_AUDIO_INPUT` (plus `HERMES_HOME` to find `state.db` in fallback mode).
 
@@ -323,7 +354,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-673 tests, covering:
+713 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -358,6 +389,17 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - end to end through a fake input that plays a sound per MIDI channel: one note 60 per track, alone, in order and spaced, notes only, and the kit map untouched until an explicit `whiplash_label_tracks`
   - refusals: while a beat plays (both transport modes, the beat untouched), the unit already sounding, no Digitakt on MIDI or audio, without numpy
   - clean errors with no hanging note on an audio unplug, a MIDI unplug or `whiplash_stop` mid-scan; muted tracks skipped
+- v0.8.0 play along, with fake MIDI input ports:
+  - decoding: CC and NRPN into named moves, with disputed NRPN addresses flagged, and SysEx, program change, clock and transport ignored
+  - user moves merged into gestures and bounded in status
+  - a ramp yielding to a grab on the same knob only, the yield reported once, and a filter_swap reopen dropped
+  - Whiplash's own echo never counted as the user
+  - the input lost mid-beat, the send-settings hint, and no fallback to another input
+  - follow: every mode in key and register, quantizing to one note per step, the reply replacing the answer track's line for one bar, refusals before anything opens, the stop paths, and end to end on the bar after the phrase
+  - undo of parts, mixes (with `cannot_revert`) and arrangements (lifting mutes, resuming the previous one, refusing one that would have ended), plus stop clearing it
+  - the recording ring buffer's bounds, and sent and heard events on Whiplash's clock with tempo markers
+  - no file writes, received messages never re-sent, and no SysEx, program change or blocked CC
+  - the reader never taking the engine lock, and clock jitter under a flood of input
 - input validation, single panic per stop, exit hook, SysEx refusal
 - the offline demo rehearsal (`scripts/rehearse_demo.py`, below) at 4x clock: every Part A check passes, the MIDI file holds exactly what was sent, and its checks catch SysEx, program change, blocked CCs and hanging notes; with `--v06`, the progression beat (chord changes on the bar, roots on the bass, drums never transposed, nothing on cymbal or fx tracks) passes too, and its checks catch a chord tone on the cymbal or a change a bar early
 - the visualiser:
