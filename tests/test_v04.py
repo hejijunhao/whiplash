@@ -227,4 +227,6 @@ def test_tools_in_manifest_order():
     assert list(tools.HANDLERS)[10] == "whiplash_mix" == list(schemas.SCHEMAS)[10]  # v0.6.2
     assert list(tools.HANDLERS)[18] == "whiplash_listen" == list(schemas.SCHEMAS)[18]  # v0.7.0
     assert list(tools.HANDLERS)[19] == "whiplash_scan_kit" == list(schemas.SCHEMAS)[19]  # v0.7.1
-    assert len(tools.HANDLERS) == 22 and list(tools.HANDLERS)[20:] == ["whiplash_open_view", "whiplash_close_view"]
+    # v0.8.0's play_along, follow and undo come after scan_kit, before the visualiser's two
+    assert list(tools.HANDLERS)[20:23] == ["whiplash_play_along", "whiplash_follow", "whiplash_undo"]
+    assert len(tools.HANDLERS) == 25 and list(tools.HANDLERS)[23:] == ["whiplash_open_view", "whiplash_close_view"]

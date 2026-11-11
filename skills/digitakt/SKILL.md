@@ -1,11 +1,11 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, playing along with the user (their knob moves, ramps that yield, call and response, undo), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
 
-Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI channel per track (track N = channel N). It can't read anything back from the unit. This skill ships with the plugin and is updated with it, so trust it over any older notes of your own. The tool descriptions are kept short on purpose; the detail is here.
+Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI channel per track (track N = channel N). It can't read the unit's state; with `whiplash_play_along` on it hears what the unit sends (knob moves, notes). This skill ships with the plugin and is updated with it, so trust it over any older notes of your own. The tool descriptions are kept short on purpose; the detail is here.
 
 ## Fast path: label, then start in one call
 
@@ -101,6 +101,27 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 - **Loudness guard:** once a listen hears clipping, raising `track_level`, `amp_volume` or `overdrive` (with `whiplash_set_param`, `whiplash_ramp_param` or `whiplash_mix`) is refused until a later listen shows none. A track Whiplash never sent a level to counts as a raise. Lowering is always fine. Pass `force: true` only when the user insists after you told them it clips; the result then carries `guard`.
 - At most 48 ramps run at once, and ramp CCs are capped at 1,000 a second (16 per clock tick); a ramp over the cap sends its value a tick later and still ends exactly. `status.safety` shows the caps, the counters and whether the guard is on; `status.listen` the last listen.
 - `whiplash_stop` is still the panic button, unchanged.
+
+## Playing along: the user plays, Whiplash reacts (`whiplash_play_along`, `whiplash_follow`, `whiplash_undo`)
+
+- **Turn it on** when the user wants to jam on the unit with you ("play along with me", "watch what I do", "answer me"): `whiplash_play_along`. It opens the Digitakt's MIDI input; nothing else changes. `whiplash_follow` opens it too.
+- **The unit only sends if it is set to.** If the result or `status.play_along.hint` says nothing was heard, read them `setup`: SETTINGS > MIDI CONFIG > PORT CONFIG, OUTPUT TO = USB, ENCODER DEST and TRIG KEY DEST = INT+EXT, OUTPUT CH = the track channel (not AUTO), PARAM OUTPUT = CC (manual 14.4, p. 77-79; the names aren't confirmed on hardware yet). With OUTPUT CH = AUTO, moves arrive on the AUTO channel's number, not their track.
+- **"What did I just change?"** → `whiplash_status`, `play_along.user_moves` (newest first): read the `said` lines in plain words ("you opened track 6's filter from 40 to 90"). `unsure` means the move came as an NRPN whose address the sources disagree on. `tracks[n].last_cc` stays what *Whiplash* sent; the user's values are only in `user_moves`.
+- **Ramps yield.** If the user grabs a knob Whiplash is ramping (same track and param), the ramp stops within a clock tick and their value stands. The next tool result carries `yielded_to_user`: tell them you backed off ("you grabbed the filter, so I stopped my sweep"). Don't restart that ramp unless they ask.
+- **Call and response:** "answer whatever I play on track 7, on track 8" → `whiplash_follow(track: 7, answer_track: 8, mode: "answer")`. Ask them to put the unit in KEYBOARD mode on track 7. Each bar they play in is answered on the next bar line on track 8 (that bar replaces track 8's own line):
+  - `answer` mirrors their contour and ends on the tonic.
+  - `echo` plays it back in key.
+  - `harmonize` plays it a diatonic third up.
+
+  Every reply is in the key playing, on the 16th grid, in the native register, at most 16 notes, one per step. The answer track must be melodic: drums, cymbal and fx are refused. `status.play_along.follow.last` shows what was heard and played. `stop: true` ends it, and so do `whiplash_play_along(on: false)` and `whiplash_stop`.
+- **"Undo that"** → `whiplash_undo`. It reverts the newest written part, mix, or arrangement change on the next bar line, and `status.undo` lists what can be undone. Undo can't revert:
+  - a mix value Whiplash never sent before (`cannot_revert`)
+  - a saved mix
+  - an `envelope: "note"` CC
+  - an arrangement that would already have ended (refused, because it would stop the beat)
+  - progressions, mutations, transposes, or anything from before the last stop
+- **Recording.** While play-along is on, everything Whiplash sends and hears is kept **in memory** with clock-tick times (`status.play_along.recording`). Export to a `.mid` file is not available yet (v0.8.1, waiting for Phil's OK on file writes). Say so if asked to export.
+- Never forward anything heard to the unit. Whiplash only reads the input, and SysEx and program changes from the unit are ignored.
 
 ## Writing notes, melodies and rhythms
 

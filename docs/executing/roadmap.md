@@ -1,6 +1,6 @@
 # Whiplash roadmap: v0.6 and beyond
 
-Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups", and **v0.6.2 (transitions, mix levels)** in PR "Whiplash v0.6.2: transitions + mix levels"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). **v0.7.0 (audio capture, `whiplash_listen`, safety rails)** is implemented in PR "Whiplash v0.7.0: listening loop (capture + listen + safety rails)"; the v0.7 split is in [v07-build-plan.md](v07-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
+Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups", and **v0.6.2 (transitions, mix levels)** in PR "Whiplash v0.6.2: transitions + mix levels"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). **v0.7.0 (audio capture, `whiplash_listen`, safety rails)** is implemented in PR "Whiplash v0.7.0: listening loop (capture + listen + safety rails)"; the v0.7 split is in [v07-build-plan.md](v07-build-plan.md). **v0.8.0 (MIDI input, ramps yield, `whiplash_follow`, `whiplash_undo`, in-memory recording)** is implemented in PR "Whiplash v0.8.0: play along (MIDI input, follow, undo)"; **v0.8.1** (`whiplash_export`, a MIDI file) waits for Phil's OK on file writes. The v0.8 split is in [v08-build-plan.md](v08-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
 
 **How the versions are ordered:**
 
@@ -131,6 +131,11 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 ---
 
 ## v0.8: playing with Phil
+
+**Status:** split into two PRs ([v08-build-plan.md](v08-build-plan.md)).
+- **v0.8.0** (features 1, 2 and 4, plus the in-memory half of 3) is implemented: `whiplash_play_along`, `whiplash_follow`, `whiplash_undo`, and a bounded recording with clock-tick timestamps. It writes no files.
+- **v0.8.1** (the export half of feature 3, `whiplash_export`) waits for Phil's OK on file writes. Deferring it was decided on Phil's behalf, reversibly.
+- None of v0.8 has been tested on hardware yet.
 
 **Goal:** Whiplash reacts to what Phil does on the unit, and every jam can be kept.
 

@@ -44,8 +44,8 @@ def ccs(port, control=None):
 
 # ---- version, manifests, packaging --------------------------------------------------------------
 
-def test_version_is_0_7_x():  # v0.7.1 pins the exact version number in test_v071.py
-    assert whiplash.__version__.startswith("0.7.")
+def test_version_is_0_7_or_later():  # v0.8.0 pins the exact version number in test_v080.py
+    assert tuple(int(x) for x in whiplash.__version__.split(".")[:2]) >= (0, 7)
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
     assert any(r.startswith("0.7.0") for r in releases)
 
