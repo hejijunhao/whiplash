@@ -85,12 +85,12 @@ Without `whiplash_open_view`, nothing starts. The text/CLI session behaves exact
 
 ### Parameter map
 
-37 per-track parameters sent as CC on the track's channel. Source: *Elektron Digitakt II User Manual*, Appendix B: MIDI (OS 1.15A, pp. 109-113; the OS 1.17 manual keeps the same values), cross-checked with [midi.guide](https://midi.guide/d/elektron/digitakt-ii/). The CC numbers agree between the two sources.
+37 per-track parameters sent as CC on the track's channel. Source: *Elektron Digitakt II User Manual*, Appendix B: MIDI (OS 1.15A, pp. 109-113; the OS 1.17 manual keeps the same values), cross-checked with [midi.guide](https://midi.guide/d/elektron/digitakt-ii/). The CC numbers agree between the two sources. The full CC/NRPN map, every discrepancy and how the unit treats incoming MIDI are in the device reference, [docs/digitakt-ii/reference.md](docs/digitakt-ii/reference.md).
 
 | Group | Params (CC) |
 | --- | --- |
 | track | `mute` 94 (0/1), `track_level` 95 |
-| src | `tune` 16 (4-124, centre 64), `play_mode` 17 (0-3), `sample_slot` 19 (0-127, see below), `sample_start` 20 (0-120), `sample_length` 21 (0-120), `loop_pos` 22, `sample_level` 23 |
+| src | `tune` 16 (4-124, centre 64), `play_mode` 17 (0-3), `sample_slot` 19 (0-127, see below), `sample_start` 20 (0-120), `sample_length` 21 (0-120), `loop_pos` 22 (0-120), `sample_level` 23 |
 | filter | `filter_freq` 74, `filter_reso` 75, `filter_env_depth` 77 (centre 64), `filter_attack` 70, `filter_decay` 71, `filter_sustain` 72, `filter_release` 73, `filter_env_delay` 91, `filter_key_tracking` 92 (0-100) |
 | amp | `amp_attack` 79, `amp_hold` 80, `amp_decay` 81, `amp_sustain` 82, `amp_release` 83, `amp_volume` 89, `pan` 90 (centre 64) |
 | fx | `delay_send` 84, `reverb_send` 85, `chorus_send` 12, `overdrive` 57, `bit_reduction` 54, `sample_rate_reduction` 55 |
@@ -99,7 +99,7 @@ Without `whiplash_open_view`, nothing starts. The text/CLI session behaves exact
 Common aliases work (`cutoff`, `resonance`, `decay`, `volume`, `level`, `srr`, `reverb`, ...), and an unknown name gets close-match suggestions.
 
 Some notes on the map:
-- **Machine dependent.** `sample_start` and `sample_length` (SRC knobs E/F) are start/length on Oneshot, Repitch and Stretch and other things on other machines. `filter_reso` (knob F) is feedback on Comb and gain on EQ.
+- **Machine dependent.** `sample_start`, `sample_length` and `loop_pos` (SRC knobs E/F/G) are start/length/loop on Oneshot, and other things on other machines (for example Bars on Werp, Stretch and Repitch). `filter_reso` (knob F) is feedback on Comb and gain on EQ. The per-machine table is in [the reference](docs/digitakt-ii/reference.md#4-machines).
 - **High-res LFOs.** The LFO params have an LSB CC (58-63). Whiplash sends the MSB only, as a plain 7-bit value.
 - **CC only, never NRPN.** Several NRPN addresses disagree between the manual and midi.guide (mute 1:101 vs 1:108, track level 1:100 vs 1:110, filter env depth 1:23 vs 1:26, filter base/width 1:51/1:52 vs 1:24/1:25). Raw `nrpn` is still available on `whiplash_set_param`.
 - **No machine switching.** Neither source documents a CC or NRPN for the SRC machine type (Oneshot, Werp, Stretch, ...); it is only reachable from the unit's MACHINE menu, so Whiplash can't change it.
@@ -140,9 +140,9 @@ Whiplash's `register()` only registers schemas and the visualiser's in-memory co
 On the unit: **SETTINGS > MIDI CONFIG**
 - **PORT CONFIG**: INPUT FROM = USB (or MIDI+USB). Turn **RECEIVE NOTES** and **RECEIVE CC/NRPN** on.
 - **SYNC**: **CLOCK RECEIVE** and **TRANSPORT RECEIVE** on if the Digitakt's sequencer/FX should follow Whiplash.
-- **CHANNELS**: TRACK 1-8 CHANNEL = 1-8 (the default).
+- **CHANNELS**: TRACK 1-8 CHANNEL = 1-8 (the default). Keep **AUTO CHANNEL** and **FX CONTROL CH** off channels 1-8 (or OFF). Otherwise Whiplash's notes and CCs also reach the active track or the send FX, because the same CC numbers mean different things there.
 
-Notes trigger each track's sample (note 60 = original pitch).
+Notes trigger each track's sample. Note 60 is the original pitch, as long as TUNE is centred and the preset's OCTAVE (FUNC+FLTR > TRACK) is unchanged. Note lengths only shape the sound when AMP HOLD is set to NOTE (the usual default) or the AMP mode is ADSR. See [docs/digitakt-ii/reference.md](docs/digitakt-ii/reference.md) §5-§7 for the details.
 
 ### Transport and the unit's own pattern
 
@@ -156,7 +156,9 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 
 ## Safety and disclosures
 
-- **Controls hardware.** Whiplash sends live MIDI to whatever port it opens: notes, clock, transport Start/Stop (unless clock only), and CC/NRPN parameter changes. Parameter changes alter the sound of the pattern loaded on the unit until you reload it; Whiplash saves nothing to the unit.
+- **Controls hardware.** Whiplash sends live MIDI to whatever port it opens: notes, clock, transport Start/Stop (unless clock only), and CC/NRPN parameter changes.
+  - **Changes stick until you reload.** A parameter change is an edit to the active pattern's kit on the unit, just like turning a knob. It stays there, even across pattern switches, until you reload: `FUNC`+`NO` reloads the pattern, and `TRK`+`TRIG`+`NO` reloads one track's preset.
+  - **Nothing is saved.** Whiplash never saves anything to the unit, and nothing reaches the saved project unless you save it.
 - **Never sends SysEx or program changes.** `Engine.send()` only allows note on/off, control change, clock, start/stop/continue. Anything else raises.
 - **Can switch a track between samples already in the project, nothing more.** Sample Slot Select (CC 19) is sent only through `sample_slot` / `whiplash_select_sample`. It changes which already-loaded pool sample a track plays, until the pattern/kit is reloaded. Sample bank select (CC 24), the sample NRPNs (1:3, 1:8, 1:9), and the bank-select/NRPN-data CCs stay blocked. No SysEx, no file transfer onto the unit, no project, pattern or slot writes, no +Drive access, no program change.
 - **Runs a background thread.** The sequencer runs as a daemon thread inside the Hermes process while a pattern plays, and is stopped by `whiplash_stop`. Port enumeration for the Digitakt check happens on tool calls only, at most every 2 s, never in the clock thread.
@@ -171,9 +173,10 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-151 tests, covering:
+157 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
+- the device reference's named-param table against `ccmap.py`, so the docs can't drift
 - clock-synced ramps: no duplicate sends, replace, cancel, concurrency
 - bar-quantized switches: no Stop/Start, mutes and ramps carried
 - every mutate action, including drop auto-return and seeded determinism
@@ -210,7 +213,7 @@ Digitakt II on screen, USB to the laptop, Hermes in a terminal beside it. Each l
 | 1:15 | *"What's playing?"* | `whiplash_status`: techno, bar, active ramps with progress. |
 | 1:22 | *"Stop."* | `whiplash_stop`: clean stop, no hanging notes. |
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed between versions, and [docs/](docs/) for the draft Hermes plugin catalog entry and PR text.
+See [CHANGELOG.md](CHANGELOG.md) for what changed between versions, [docs/digitakt-ii/reference.md](docs/digitakt-ii/reference.md) for how the Digitakt II works (with manual page references), and [docs/](docs/) for the draft Hermes plugin catalog entry and PR text.
 
 ## License
 
