@@ -4,10 +4,12 @@
 
 Added
 - **Clock timing investigation** ([docs/testing/clock-jitter.md](docs/testing/clock-jitter.md)): is the macOS CI flake in the rehearsal's jitter check runner noise or a real clock problem?
-  - **Verdict:** it was test sensitivity. The engine's own work adds no measurable lateness: tool calls, bar boundaries, switches, progressions and arrangements. At 1x, ticks go out 0.05 ms late (median) and under 0.4 ms (p99). The real 1x risk comes from the host process: a busy Python thread in the Hermes gateway costs about 5 ms per tick (the GIL switch interval), and a full GC of a large heap stalls the clock for 16-78 ms.
+  - **Verdict:** it was test sensitivity. The engine's own work adds no measurable lateness: tool calls, bar boundaries, switches, progressions and arrangements. On Linux at 1x, ticks go out 0.05 ms late (median) and under 0.4 ms (p99).
+  - **The clock is only as precise as the machine's sleep.** On the macOS CI runner VMs, a 1 ms sleep takes 7-10 ms, so ticks run 7-10 ms late (p50) and about 24 ms (p99). macOS user-interactive QoS doesn't help; busy-waiting the last 1 ms halves it. Whether the Air's timers are like the VM's is unmeasured: checklist §0.2 measures it.
+  - **Host-process risks:** a busy Python thread in the Hermes gateway costs about 5 ms per tick (the GIL switch interval), and a full GC of a large heap stalls the clock for 16-78 ms.
   - **Tolerances,** with sources: USB-MIDI's 1 ms frame, MIDI's 320 µs byte, and the ~6 ms timing JND at 16th-note spacing (Friberg & Sundberg 1995).
-  - **Proposed engine change for the v0.6.2 agent** (`engine.py` not touched here): report clock lateness in `whiplash_status`. Then, only if the gateway numbers call for it, use `sys.setswitchinterval(0.001)` while playing or `gc.freeze()`.
-- **`scripts/clock_jitter.py`** measures clock lateness through the real engine. Options: 1x or faster, busy processes, tool calls, a busy Python thread in the process, or full GCs of a large heap. CI prints it on every runner (informational, can't fail the job).
+  - **Proposed engine change for the v0.6.2 agent** (`engine.py` not touched here): report clock lateness in `whiplash_status`. If the Air's sleeps are coarse, sleep only until a margin before each event and busy-wait the rest. Only if the gateway numbers call for them: `sys.setswitchinterval(0.001)` while playing, or `gc.freeze()`.
+- **`scripts/clock_jitter.py`** measures clock lateness through the real engine, and how long a 1 ms sleep takes on the machine. Options: 1x or faster, busy processes, tool calls, a busy Python thread in the process, full GCs of a large heap, and two candidate fixes applied from outside the engine (`--qos`, `--spin`). CI prints it on every runner (informational, can't fail the job).
 - **Rehearsal `--v061`** (off by default):
   - **The demo's optional arrangement beat:** techno with `whiplash_arrange short_demo` for 30 s. Checks: sections on their bar lines, each sounding only its own tracks; the kick out for the build's last bar; status naming the section; and the run stopping by itself with MIDI Stop and no hanging notes.
   - **A kick labelled on track 9 and a fill:** the kick plays on 9 only and sits out the fill bar's last beat.
@@ -30,7 +32,7 @@ Added
 Changed
 - **The rehearsal's clock check is principled instead of retry-based.**
   - **Before:** it took the p95 of gap deviation against a 2-bar baseline plus 3 ms, and the test reran once on a jitter-only failure.
-  - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks more than 4 ms late form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
+  - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed.
 
 ## 0.6.2

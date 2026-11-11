@@ -3,14 +3,16 @@
 **Question:** main's CI failed on macOS in the rehearsal's clock-jitter check after PR #16, and PR #18 added a single rerun. Is that CI-runner noise, or a real engine or clock problem that could bite on Phil's MacBook Air?
 
 **Verdict:**
-- **The CI failures came from an over-sensitive test, not from the engine.** The engine's own work adds no lateness that we can measure: tool calls, bar boundaries, queued switches, progressions and arrangements. At 1x on an idle machine, ticks go out 0.05 ms late (median) and 0.2-0.4 ms late (p99), against a tick period of about 20 ms. The old check failed whenever a macOS runner stalled for about one tick period, which is 5 ms at 4x.
-- **No change to `engine.py` is needed for the demo.** Nothing here is hardware-verified.
-- **There is one real 1x risk, and it comes from the host process rather than the engine.** The plugin runs inside the Hermes gateway's Python process and shares its interpreter lock (the GIL) and its garbage collector:
-  - A busy Python thread in the gateway makes every tick about 5 ms late.
+- **The CI failures came from an over-sensitive test, not from engine work.** The engine's own work adds no lateness that we can measure: tool calls, bar boundaries, queued switches, progressions and arrangements. On Linux at 1x, idle, ticks go out 0.05 ms late (median) and 0.1-0.4 ms late (p99), against a tick period of about 20 ms. The old check failed whenever a macOS runner stalled for about one tick period, which is 5 ms at 4x.
+- **The clock is only as precise as the machine's sleep, and on macOS CI runners that is poor.** The engine waits for each tick in short `time.sleep` calls of up to 2 ms. On the `macos-26-arm64` runner VMs, a 1 ms sleep takes 7-10 ms (p50), so at 1x ticks go out 7-10 ms late (p50) and about 24 ms late (p99). That is at or over the ~6 ms level where a late hit becomes audible (§4).
+  - **Raising the thread's priority class doesn't help:** macOS user-interactive QoS (`--qos`) changed nothing.
+  - **Busy-waiting the last 1 ms of each sleep halves it** (`--spin 1`: p50 4 ms, p99 12 ms).
+  - **Whether a real MacBook Air behaves like this VM is unknown.** Real Mac hardware usually sleeps far more precisely than a VM, but nobody has measured it. Checklist §0.2 measures it on the Air before the session (2 min, no unit needed).
+- **The other 1x risk comes from the host process.** The plugin runs inside the Hermes gateway's Python process and shares its interpreter lock (the GIL) and its garbage collector:
+  - A busy Python thread in the gateway makes every tick about 5 ms late (13 ms on the macOS runner).
   - A full garbage collection of a large gateway heap stalls the clock for its whole length: 16 ms at 300k objects and 75 ms at 1.4M objects, measured.
-
-  Nobody has measured the gateway yet, so this needs numbers from the real setup. The proposed engine change for the v0.6.2 agent (below) reports clock lateness in `whiplash_status`, so Phil's hardware session measures it. Two mitigations are described, to apply only if those numbers call for them.
-- **The test is now principled instead of retry-based.** It measures lateness against the engine's own grid, uses a canary process to excuse machine stalls, and counts stalls per unit of real time (details below).
+- **What to change:** no `engine.py` change is needed before the Air numbers exist. If §0.2 shows Air sleeps like the runner's, the v0.6.2 agent's change in §6 (item 2, sleep-then-spin) is the fix. Item 1 (lateness in `whiplash_status`) is recommended either way, so the gateway itself gets measured. Nothing here is hardware-verified.
+- **The test is now principled instead of retry-based.** It measures lateness against the engine's own grid, beyond what a sleep costs on the machine. A canary process excuses machine stalls, and stalls are counted per unit of real time (§5).
 
 ---
 
@@ -111,16 +113,41 @@ What the table shows:
 
 ## 4. CI runners (informational step)
 
-Each job now ends with `scripts/clock_jitter.py`: 3 x 20 s at 1x, 3 x 40 s at 4x, and 2 x 20 s with 3 busy processes. The step can't fail the job. This PR's first run measured:
+Each job now ends with `scripts/clock_jitter.py`, and the step can't fail the job:
+- 3 x 20 s at 1x,
+- 3 x 40 s at 4x,
+- 2 x 20 s with 3 busy processes,
+- 2 x 20 s with `--qos`,
+- 2 x 20 s with `--spin 1`.
 
-(Filled in from this PR's first CI run: see below once it has finished.)
+Both macOS jobs agreed, on two runs (43033584124 and 43036000201, 2026-11-11, image `macos-26-arm64`, Python 3.11.9 and 3.13). Lateness is in real ms. The sleep column is how long the canary's 1 ms sleep took (p50 / p99):
+
+| Runner, condition | p50 | p95 | p99 | max | 1 ms sleep takes |
+| --- | --- | --- | --- | --- | --- |
+| Linux (ubuntu-latest), 1x idle | 0.03-0.05 | 0.05-0.07 | 0.07-0.13 | 0.2-0.3 | 1.05 / 1.07 |
+| Linux, 4x idle | 0.05 | 0.06 | 0.07-0.10 | 0.3-2.3 | 1.05 / 1.07 |
+| Linux, 1x + 3 busy processes | 0.05 | 0.07 | 0.08-0.13 | 0.8-3.7 | (23 stalls seen) |
+| **macOS, 1x idle** | **6.4-10.5** | 15-22 | 16-165 | 25-343 | **6.7-10.5 / 13.6-24** |
+| macOS, 4x idle | 2.5-4.2 | 5.7-7.6 | 6.2-8.4 | 7.6-57 | 9-10 / 13.6 |
+| macOS, 1x + 3 busy processes | 5.2-7.6 | 13.7-16 | 15.7-18.5 | 18-25 | 7.4-9 / 12-12.4 |
+| macOS, 1x, `--qos` (user-interactive QoS on the clock thread) | 8.5-10.3 | 20.6-22.1 | 23.5-66.7 | 25-245 | 9.2-10.4 / 13.6 |
+| **macOS, 1x, `--spin 1`** (busy-wait the last 1 ms) | **3.6-4.7** | 9.8-11.1 | 11.2-12.3 | 11.6-17.6 | 9.2-10 / 13.6 |
+| macOS, 1x, busy Python thread in-process (test) | 12.3-13.4 | 31-32 | | | |
+
+- **What the macOS rows show:** a sleep on these VMs is coarse, about 10 ms whatever is asked for. The engine's lateness follows it. It isn't load (the idle rows are the worst) and it isn't the engine's work (the Linux rows on the same commit are at 0.05 ms).
+- **QoS:** user-interactive QoS on the clock thread doesn't change it.
+- **Spin:** busy-waiting the last 1 ms halves it, but each remaining 1 ms sleep still takes ~10 ms. To beat it, the engine would have to stop sleeping a margin before the tick, sized to the machine's sleep (§6 item 2).
+- **Old CI history:** earlier macOS runs (PRs #16-#18) showed a 1.8-2.4 ms gap baseline at 4x, which fits the same coarse sleep, measured with the old statistic.
+- **Does this apply to the Air?** It is a VM. Apple Silicon hardware running a foreground process usually wakes from a 1 ms sleep within a fraction of a ms, but that is not verified here. A gateway running as a background service could get coarser timers. **§0.2 on the Air answers it.**
 
 ## 5. The test change: from "retry once" to a principled check
 
 `scripts/rehearse_demo.py`'s global clock check, used by `tests/test_rehearsal.py` and the CLI, now works like this:
 1. **Measure lateness, not gap deviation.** Each tick's lateness is measured in real time against the engine's own absolute grid, per constant-tempo segment, leaving out each run's last clock (sent early on stop).
 2. **Group late ticks into stalls.** A tick more than **4 ms** late is late: under the 6 ms JND and four times the USB-MIDI frame. Late ticks with at most one on-time tick between them form one stall.
-3. **Excuse what the machine did.** A stall is excused if the **canary** process saw the machine stall (a 1 ms sleep waking more than 2 ms late) during it. The engine's own causes are never excused: work on the clock thread, its lock held by a tool call, or the GIL or GC of its process. None of them stalls another process.
+3. **Judge Whiplash against the machine, and excuse what the machine did.** The **canary** process sleeps 1 ms at a time for the whole run and records how long each sleep took.
+   - **Late threshold:** a tick counts as late only beyond **4 ms or the machine's p99 sleep, whichever is longer**. The engine can't be more precise than the sleeps it waits in. That means 4 ms on Linux and about 14 ms on the macOS runners (§4).
+   - **Excused stalls:** a stall is excused if the canary saw a machine stall during it (a sleep longer than 2 ms, or 3x its median sleep if that is longer). The engine's own causes are never excused: work on the clock thread, its lock held by a tool call, or the GIL or GC of its process. None of them stalls another process.
 4. **Allow a rate, not a count, plus contention credit.** A segment may have **1 unexcused stall, plus 1 per 10 s of real time, plus 1 per machine stall the canary saw during the segment**. Credit is needed because a contended machine also preempts the clock thread on its own core, where a separate process can't see it.
    - **Still fails:** a regression repeats. Work on every bar line, or every tool call, gives a stall per bar, which is 2 per second at 4x. It fails, as `test_the_timing_rule_allows_one_burst_and_fails_a_repeating_stall` checks.
    - **Passes:** one burst of runner noise.
@@ -138,7 +165,7 @@ The single rerun in `tests/test_rehearsal.py` is removed. New tests cover:
 
 ## 6. Proposed engine change (for the v0.6.2 agent; `engine.py` is not touched here)
 
-The engine is fine as it is. What is missing is a measurement from inside the gateway on the Air, because the rehearsal and CI can't reproduce the host's GIL and GC load. In order of priority:
+The engine's own work is fine. Two things are unknown: how precise sleeps are on the Air, and what the gateway's GIL and GC do there. In order of priority:
 
 1. **Report clock lateness in `whiplash_status`** (cheap; do this). In `Engine._run`, right after `self.send(mido.Message("clock"))`:
 
@@ -153,13 +180,28 @@ The engine is fine as it is. What is missing is a measurement from inside the ga
    - **Exclude:** skip the final tick on stop (it is sent ahead of its slot).
    - **Tests:** a fake-port run with a forced 10 ms sleep in a tool call holding `_lock` shows a stall. An idle run shows p99 under 1 ms.
    - **Hardware:** checklist R10 asks Phil to copy the numbers.
-2. **Only if (1) shows GIL waits in the gateway** (p50 or p99 of about 5 ms): call `sys.setswitchinterval(0.001)` while playing and restore it on stop. Measured here: a busy in-process thread costs 5.1 ms per tick by default and 1.1 ms at 1 ms. It is process-wide, so the gateway's CPU-bound threads switch more often (a small throughput cost). Gate it with `WHIPLASH_SWITCH_INTERVAL` and say so in the README.
-3. **Only if (1) shows rare 15-80 ms stalls** (GC of the gateway's heap): `gc.freeze()` at play start moves the existing heap out of the collector's view, so full collections only walk new objects. It is intrusive for the host: frozen cycles are never collected. The robust long-term fix for both 2 and 3 is to run the sequencer in its own process (its own GIL and heap), which is v0.7-sized.
-4. **Not recommended yet:** spreading the overdue ticks after a stall instead of sending them back to back. Sending them all keeps the unit's position exact. Whether the burst upsets the unit's tempo is §15.3 Q18; decide after R10.
+2. **If §0.2 or (1) shows coarse sleeps on the Air** (a 1 ms sleep taking several ms, ticks p50 over 1 ms): sleep only until a margin before the next event, then busy-wait. In the wait loop of `Engine._run`, replace `time.sleep(max(0.0, min(wake - now, 0.002)))` with:
+
+   ```python
+   gap = wake - now
+   if gap > SPIN_MARGIN:                  # e.g. 3 ms, or measured: the p99 of a 1 ms sleep at start-up, capped at 15 ms
+       time.sleep(min(gap - SPIN_MARGIN, 0.002))
+   # else: loop again without sleeping (busy-wait); the loop already re-reads perf_counter and flushes notes
+   ```
+
+   - **CPU:** the clock thread spins for up to `SPIN_MARGIN` before each tick and each note event: about 15 % of one core at 3 ms and 126 BPM, and up to 75 % at a 15 ms margin.
+   - **GIL:** a spinning Python thread holds the GIL until its switch interval expires, which delays the gateway's own threads by up to 5 ms at a time.
+   - **Measured on the macOS runner,** emulated from outside the engine with `clock_jitter.py --spin 1`: p50 halved from 9 to 4 ms. A margin as large as the runner's sleep would be needed to get under 1 ms.
+   - **Gate it:** use `WHIPLASH_SPIN_MS`, with the default from a start-up measurement, so Linux and a precise Mac don't pay for it.
+   - **Tests:** a fake time module whose `sleep` oversleeps by 10 ms must still give ticks under 1 ms late.
+3. **Only if (1) shows GIL waits in the gateway** (p50 or p99 of about 5 ms): call `sys.setswitchinterval(0.001)` while playing and restore it on stop. Measured here: a busy in-process thread costs 5.1 ms per tick by default and 1.1 ms at 1 ms. It is process-wide, so the gateway's CPU-bound threads switch more often (a small throughput cost). Gate it with `WHIPLASH_SWITCH_INTERVAL` and say so in the README.
+4. **Only if (1) shows rare 15-80 ms stalls** (GC of the gateway's heap): `gc.freeze()` at play start moves the existing heap out of the collector's view, so full collections only walk new objects. It is intrusive for the host: frozen cycles are never collected. The robust long-term fix for both 3 and 4 is to run the sequencer in its own process (its own GIL and heap), which is v0.7-sized.
+5. **Not recommended:** macOS user-interactive QoS on the clock thread (`pthread_set_qos_class_self_np`). On the runners it changed nothing (§4). **Not recommended yet:** spreading the overdue ticks after a stall instead of sending them back to back. Sending them all keeps the unit's position exact. Whether the burst upsets the unit's tempo is §15.3 Q18; decide after R10.
 
 ## 7. For Phil's MacBook Air
 
 - **Before the session:** checklist §0.2 runs `scripts/clock_jitter.py` on the Air (no unit needed) and records p99, max and unexcused stalls. That measures macOS scheduling on that machine, not the gateway.
 - **During the session:** R10 watches the unit's tempo readout for flicker or hiccups.
-- **On stage:** the demo itself is quiet (one Hermes turn at a time). The risk is a gateway busy with CPU work or a large heap, both covered by item 6.1.
+- **If §0.2 shows a 1 ms sleep taking several ms on the Air,** tell the v0.6.2 agent before the demo: §6 item 2 is the fix. The rehearsal can't catch this, because its threshold follows the machine's own sleep.
+- **On stage:** the demo itself is quiet (one Hermes turn at a time). The remaining risks are a gateway busy with CPU work or a large heap, both covered by §6 item 1.
 - **Nothing here was tested on a Digitakt II.** Record results in [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md) §15.3 Q18 with who, when and the OS version.

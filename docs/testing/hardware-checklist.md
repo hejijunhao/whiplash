@@ -52,7 +52,11 @@ uv run python scripts/clock_jitter.py --runs 3              # 30 s each, real ti
 uv run python scripts/clock_jitter.py --runs 2 --load 8     # with every core busy
 ```
 
-- [ ] Write down `late_p99`, `late_max` and `unexcused` for each run. On Linux, idle, p99 is under 0.4 ms and `unexcused` is 0 ([docs/testing/clock-jitter.md](clock-jitter.md)). A p99 above 2 ms, or `unexcused` above `allowed`, is worth a note before the demo. This measures the laptop, not the gateway or the unit.
+- [ ] Write down, for each run, `late_p50`, `late_p99`, `late_max`, `sleep_p50` and `sleep_p99`. This measures the laptop, not the gateway or the unit.
+- **For reference** ([docs/testing/clock-jitter.md](clock-jitter.md)):
+  - Linux idle: late p50 0.05 ms, p99 under 0.4 ms, and a 1 ms sleep takes 1.05 ms.
+  - The macOS CI runner VMs: late p50 7-10 ms, p99 about 24 ms, and a 1 ms sleep takes 7-10 ms.
+- **If `sleep_p50` is above 2 ms or `late_p50` above 1 ms,** the Air's timers are coarse: the clock may run several ms late. Tell the Whiplash agent before the demo (clock-jitter.md §6 item 2 is the fix), and note it here.
 
 ### 0.3 On the unit
 

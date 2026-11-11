@@ -63,9 +63,9 @@ def test_the_midi_file_holds_what_was_sent(rehearsal):
     assert "MIDI Start" in markers and "MIDI Stop" in markers and "run 1 bar 9" in markers
     assert any(t.startswith("A7 play_pattern") for t in markers)
     # event times are the engine's musical time: the file is as long as the demo at 1x, not 4x
-    clocks = [s for s in r.port.sent if s.msg.type == "clock"]
-    musical = clocks[-1].music - r.port.sent[0].music
-    assert abs(mid.length - musical) < 0.6 and mid.length > 20
+    # (the file ends at the last message, the stop's panic, which on a slow runner comes well after the last clock)
+    musical = r.port.sent[-1].music - r.port.sent[0].music
+    assert abs(mid.length - musical) < 0.05 and mid.length > 20
 
 
 def test_the_checks_catch_sysex_blocked_ccs_and_hanging_notes(rehearsal):
