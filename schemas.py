@@ -66,16 +66,19 @@ SCHEMAS = {
         "name": "whiplash_set_param",
         "description": ("Change a sound parameter on one Digitakt II track instantly. Use a named param "
                         "(whiplash_list_params; sent as CC, clamped into its range) or a raw cc / nrpn [msb, lsb]. "
-                        "Give exactly one of param, cc or nrpn. Cancels a running ramp on the same param."),
+                        "Give exactly one of param, cc or nrpn. Cancels a running ramp on the same param. amp_hold "
+                        "clamps to 0-126; 127 is HOLD = NOTE (a mode switch), sent only for value 'note' or exactly "
+                        "127, and only when the user agrees."),
         "parameters": {"type": "object", "required": ["track", "value"], "properties": {
             "track": TRACK,
             "param": PARAM,
             "cc": {"type": "integer", "minimum": 0, "maximum": 119, "description": "Raw CC number"},
             "nrpn": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 127},
                      "minItems": 2, "maxItems": 2, "description": "Raw NRPN address [msb, lsb]"},
-            "value": {"type": "integer", "minimum": 0, "maximum": 16383,
+            "value": {"type": ["integer", "string"], "minimum": 0, "maximum": 16383,
                       "description": ("0-127 for param and cc. For nrpn, the full 14-bit value 0-16383 "
-                                      "(data MSB = value >> 7, LSB = value & 127); a 7-bit amount v is v * 128")},
+                                      "(data MSB = value >> 7, LSB = value & 127); a 7-bit amount v is v * 128. "
+                                      "The string 'note' is accepted only for amp_hold (= 127, HOLD = NOTE)")},
         }},
     },
     "whiplash_select_sample": {
@@ -97,7 +100,8 @@ SCHEMAS = {
         "description": ("Move one track's notes up or down from the next bar line, keeping the line's intervals. "
                         "Use it when a bass or synth sounds stretched, grainy or too low: note 60 is the sample's own "
                         "pitch, and the result's pitch block shows how far the line sits from it. Absolute (0 = back "
-                        "to the pattern). Carries across pattern switches; whiplash_stop resets it. Notes clamp to "
+                        "to the pattern). Works on any track that plays, including written parts on 9-16; refused on a track that plays "
+                        "nothing. Carries across pattern switches; whiplash_stop resets it. Notes clamp to "
                         "16-84, the manual's documented chromatic range. Needs a pattern playing." + SKILL),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": TRACK,
@@ -226,7 +230,7 @@ SCHEMAS = {
     },
     "whiplash_stop": {
         "name": "whiplash_stop",
-        "description": ("Stop playback: note-offs, All Notes Off on channels 1-8, and MIDI transport Stop (not in "
+        "description": ("Stop playback: note-offs, All Notes Off on channels 1-8 (and on any of 9-16 that played), and MIDI transport Stop (not in "
                         "clock-only mode, so a pattern running on the unit isn't halted). "
                         "Also resets mutes, ramps, mutations, transposes, written parts and any queued switch. Safe to call when nothing is "
                         "playing (acts as a panic button)."),

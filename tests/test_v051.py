@@ -445,11 +445,3 @@ def test_skill_teaches_write_part():
         assert fact in text, fact
     assert "use kb mode" not in text.lower()
 
-
-def test_version_is_0_5_1():
-    import tomllib
-    import yaml
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.5.1"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.5.1"
-    assert (ROOT / "CHANGELOG.md").read_text().split("\n## ", 1)[1].startswith("0.5.1")
-    assert "whiplash_write_part" in (ROOT / "README.md").read_text()

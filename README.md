@@ -15,15 +15,15 @@ Every tool is prefixed `whiplash_` so it can't collide with another plugin's too
 | `whiplash_list_midi_ports` | Lists MIDI ports and whether a Digitakt II is connected. |
 | `whiplash_list_params` | The named Digitakt II parameters, grouped (track, src, filter, amp, fx, lfo), with CC, range, centre and aliases. |
 | `whiplash_play_pattern` | Starts a beat by `genre` (`deephouse` 122 BPM, `soul` 86, `techno` 130, `breaks` 132) or `mood` (groovy, chill, dark, energetic, ...). Optional `bpm` (30-300), `bars` (1-512; omit to loop), `port`, `send_transport` (default `true`; `false` = clock only, see [Transport](#transport-and-the-units-own-pattern)), `transpose` (`{"6": -12, "7": 5}`, semitones per track). While something plays, the new pattern is **queued and swaps in on the next bar line** without stopping the clock. Every result carries an `overlap_warning` and a per-track `tracks` summary with each line's `pitch` (see [Pitch](#pitch-and-register)). |
-| `whiplash_set_param` | Instant sound change on one track: a named param (sent as CC, clamped into its range), a raw `cc`, or a raw `nrpn: [msb, lsb]`. |
+| `whiplash_set_param` | Instant sound change on one track: a named param (sent as CC, clamped into its range), a raw `cc`, or a raw `nrpn: [msb, lsb]`. `amp_hold` clamps to 0-126; HOLD = NOTE (CC 80 = 127) goes out only for `value: "note"` or exactly 127, and the result says `hold: "NOTE"`. |
 | `whiplash_select_sample` | Switches which sample a track plays, by `slot` 0-127 among the samples **already loaded in the project's sample pool** (Sample Slot Select, CC 19). Same as `whiplash_set_param` with `param: "sample_slot"`. Whiplash can't list, preview or load samples; see [Sample select](#sample-select). |
-| `whiplash_transpose` | Moves one track's notes by `semitones` or `octaves` (±48 semitones) from the next bar line, keeping the line's intervals. Absolute (0 = back to the pattern). Carries across pattern switches; `whiplash_stop` resets it. Returns the new `pitch`. Needs a pattern playing. |
+| `whiplash_transpose` | Moves one track's notes by `semitones` or `octaves` (±48 semitones) from the next bar line, keeping the line's intervals. Absolute (0 = back to the pattern). Works on any track that plays, including written parts on 9-16; on a track that plays nothing it is refused (it would do nothing). Carries across pattern switches; `whiplash_stop` resets it. Returns the new `pitch`. Needs a pattern playing. |
 | `whiplash_write_part` | Writes one track's notes, melody or rhythm (tracks 1-16), replacing its generated line from the next bar line. Place hits with one of `rhythm` (`four_on_floor`, `on_kick`, `offbeat_8ths`, `8ths`, `16ths`, `off_16ths`, `syncopated`, `half_time`), `grid` (a 16-cell step mask per bar, `"x..x..x.x..x..x."`), `steps`, `hits` or `lock_to` (copy another track's hits now). `notes` cycle over the hits: Elektron names (`C5` = 60), MIDI numbers, `.` rests, or scale degrees with `key`/`scale`. `length` (16th steps, 0.25-16) is the exact note-off; `velocity`, `bars` (1, 2, 4). `envelope: "note"` also sends HOLD = NOTE (CC 80 = 127). `reset: true` goes back to the generated line. See [Written parts](#written-parts). |
-| `whiplash_ramp_param` | Sweeps a named param (or raw CC) `from` → `to` over `beats` or `bars`, advanced on the MIDI clock. `curve`: linear, exp, log. Returns a ramp id; `cancel: "<id>"` or `"all"`. |
+| `whiplash_ramp_param` | Sweeps a named param (or raw CC) `from` → `to` over `beats` or `bars`, advanced on the MIDI clock. `curve`: linear, exp, log. Returns a ramp id; `cancel: "<id>"` or `"all"`. Ramps on `amp_hold` (CC 80) stop at 126, so a ramp never switches HOLD to NOTE. |
 | `whiplash_mutate` | Live edits to the running pattern: `density` (thin/thicken), `fill`, `swing`, `humanize`, `drop` (with auto-return), `reset`. `density` and `drop` take tracks 1-16; `reset` keeps written parts. |
 | `whiplash_mute_track` / `whiplash_unmute_track` | Live mute. `hardware: true` also flips the unit's own track mute (CC 94). |
 | `whiplash_set_tempo` | Live tempo change (30-300 BPM); the clock follows so the Digitakt's delay/LFOs stay in sync. |
-| `whiplash_stop` | Note-offs, All Notes Off on channels 1-8, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations, transposes, written parts and any queued switch. Works as a panic button when nothing is playing. |
+| `whiplash_stop` | Note-offs, All Notes Off on channels 1-8 plus any channel 9-16 that played a written part, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations, transposes, written parts and any queued switch. Works as a panic button when nothing is playing. |
 | `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `tracks` gives each track in use: role (marked `(assumed)`), the last sample `slot` and `tune` Whiplash sent, `transpose`, `pitch`, mute state, `part` (`generated` or `written`) and last CCs; `parts` lists the written parts. |
 | `whiplash_open_view` | Opens the **live visualiser**, a local web page (`http://127.0.0.1:7341`, or a free port) in the default browser. It shows the beat and the conversation while you keep chatting in the terminal. Optional `port`, and `open_browser: false` to only get the URL. Read-only. |
 | `whiplash_close_view` | Stops the visualiser's local server. The beat keeps playing. |
@@ -112,7 +112,7 @@ Without `whiplash_open_view`, nothing starts. The text/CLI session behaves exact
 | track | `mute` 94 (0/1), `track_level` 95 |
 | src | `tune` 16 (4-124, centre 64), `play_mode` 17 (0-3), `sample_slot` 19 (0-127, see below), `sample_start` 20 (0-120), `sample_length` 21 (0-120), `loop_pos` 22 (0-120), `sample_level` 23 |
 | filter | `filter_freq` 74, `filter_reso` 75, `filter_env_depth` 77 (centre 64), `filter_attack` 70, `filter_decay` 71, `filter_sustain` 72, `filter_release` 73, `filter_env_delay` 91, `filter_key_tracking` 92 (0-100) |
-| amp | `amp_attack` 79, `amp_hold` 80 (127 = NOTE), `amp_decay` 81, `amp_sustain` 82, `amp_release` 83, `amp_mode` 87 (0 AHD, 1 ADSR), `amp_volume` 89, `pan` 90 (centre 64) |
+| amp | `amp_attack` 79, `amp_hold` 80 (0-126; `"note"` = 127 = NOTE), `amp_decay` 81, `amp_sustain` 82, `amp_release` 83, `amp_mode` 87 (0 AHD, 1 ADSR), `amp_volume` 89, `pan` 90 (centre 64) |
 | fx | `delay_send` 84, `reverb_send` 85, `chorus_send` 12, `overdrive` 57, `bit_reduction` 54, `sample_rate_reduction` 55 |
 | lfo | `lfo1_speed` 102, `lfo1_depth` 109, `lfo2_speed` 112, `lfo2_depth` 119, `lfo3_speed` 78, `lfo3_depth` 86 (all centre 64) |
 
@@ -123,7 +123,7 @@ Some notes on the map:
 - **High-res LFOs.** The LFO params have an LSB CC (58-63). Whiplash sends the MSB only, as a plain 7-bit value.
 - **CC only, never NRPN.** Several NRPN addresses disagree between the manual and midi.guide (mute 1:101 vs 1:108, track level 1:100 vs 1:110, filter env depth 1:23 vs 1:26, filter base/width 1:51/1:52 vs 1:24/1:25). Raw `nrpn` is still available on `whiplash_set_param`.
 - **No machine switching.** Neither source documents a CC or NRPN for the SRC machine type (Oneshot, Werp, Stretch, ...); it is only reachable from the unit's MACHINE menu, so Whiplash can't change it.
-- **Note length and the amp envelope.** A note-off only shortens a sound when the track's AMP MODE is ADSR (`amp_mode` 1, CC 87; manual B.5 p. 110, midi.guide "0: AHD; 1: ADSR") or, in AHD, when HOLD is NOTE (`amp_hold` 127, the midi.guide default; manual 11.7 p. 56: fixed hold values 0-126 ignore Note Off). Whiplash never changes the envelope mode on its own.
+- **Note length and the amp envelope.** A note-off only shortens a sound when the track's AMP MODE is ADSR (`amp_mode` 1, CC 87; manual B.5 p. 110, midi.guide "0: AHD; 1: ADSR") or, in AHD, when HOLD is NOTE (`amp_hold` 127, the midi.guide default; manual 11.7 p. 56: fixed hold values 0-126 ignore Note Off). Whiplash never changes the envelope mode on its own: `amp_hold` clamps and ramps within 0-126, and 127 is sent only when asked for by name (`"note"`, exactly 127, or `envelope: "note"`).
 - **FX channel out of scope.** FX-channel and global params (delay time, reverb decay, ...) are not named params; raw `cc` can reach them.
 
 ### Sample select
@@ -174,7 +174,7 @@ If Hermes earlier auto-created a local skill for Whiplash (for example `~/.herme
 On the unit: **SETTINGS > MIDI CONFIG**
 - **PORT CONFIG**: INPUT FROM = USB (or MIDI+USB). Turn **RECEIVE NOTES** and **RECEIVE CC/NRPN** on.
 - **SYNC**: **CLOCK RECEIVE** and **TRANSPORT RECEIVE** on if the Digitakt's sequencer/FX should follow Whiplash.
-- **CHANNELS**: TRACK 1-8 CHANNEL = 1-8 (the default). Keep **AUTO CHANNEL** and **FX CONTROL CH** off channels 1-8 (or OFF). Otherwise Whiplash's notes and CCs also reach the active track or the send FX, because the same CC numbers mean different things there.
+- **CHANNELS**: TRACK 1-8 CHANNEL = 1-8 (the default). Keep **AUTO CHANNEL** and **FX CONTROL CH** off channels 1-8, and off any channel 9-16 you write parts on (or OFF). Otherwise Whiplash's notes and CCs also reach the active track or the send FX, because the same CC numbers mean different things there.
 
 Notes trigger each track's sample. Note 60 is the original pitch (see [Pitch and register](#pitch-and-register)), as long as TUNE is centred and the preset's OCTAVE (FUNC+FLTR > TRACK) is unchanged. Note lengths only shape the sound when AMP HOLD is set to NOTE (the midi.guide default; a given preset may differ) or the AMP mode is ADSR. See [docs/digitakt-ii/reference.md](docs/digitakt-ii/reference.md) §5-§7 for the details.
 
@@ -208,7 +208,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-252 tests, covering:
+270 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -220,6 +220,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 - transport modes: Start/Stop by default, clock only (no Start, no Stop), env default, mode change restarts, overlap warning
 - written parts: every placement (rhythm presets, grids, steps, hits, `lock_to`/`on_kick`), note names and scale degrees, notes cycling over hits, note-off at `length` x a sixteenth on the timeline, retriggers not cut short, bar landing, carrying over `mutate reset` and switches, `reset: true`, density/drop/fill/mute on a written part, tracks 9-16, bad input leaving the beat and port untouched, `envelope: "note"` sending exactly one CC 80 = 127, and clock jitter with 8 written parts
 - the native register (no generated line far below note 60, whole-octave shifts, drums untouched), transpose on the wire (clamping, bar landing, carry over a switch, reset on stop), the `pitch` block with a sent tune, the per-track status block, `amp_mode`, and the bundled skill (registration, fallback without the API, frontmatter, no stale claims)
+- v0.5.2: transpose on written parts on tracks 9-16 and refusal on silent tracks, All Notes Off on exactly the channels that played (1-8 always, 9-16 only after a note), and `amp_hold` never reaching HOLD = NOTE by clamp or ramp (named or raw CC 80) while `"note"` / 127 sends it with a label
 - input validation, single panic per stop, exit hook, SysEx refusal
 - the visualiser:
   - the state snapshot and which lanes appear
