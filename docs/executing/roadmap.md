@@ -1,6 +1,6 @@
 # Whiplash roadmap: v0.6 and beyond
 
-Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
+Status: **brainstorm for Phil's review**, except where a version below says otherwise. **v0.6.0 (keys, scales, chord progressions) is implemented** in PR "Whiplash v0.6.0: keys, scales, chord progressions (+ v0.6 plan)", and **v0.6.1 (arrangement, fills that follow the kit map)** in PR "Whiplash v0.6.1: arrangement + follow-ups"; the v0.6 split into PRs is in [v06-build-plan.md](v06-build-plan.md). It builds on [v05-build-plan.md](v05-build-plan.md), which covers native-pitch register, transpose, `whiplash_write_part`, rhythm presets, the bundled skill, kit labels, a one-call start-and-configure, a `techhouse` genre, and pause and resume.
 
 **How the versions are ordered:**
 
@@ -32,7 +32,11 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 
 ## v0.6: song structure, in key
 
-**Status:** split into three PRs ([v06-build-plan.md](v06-build-plan.md)). **v0.6.0** (feature 1: keys, scales, progressions) is implemented and not yet hardware-tested. v0.6.1 (arrangement, plus fills that follow the kit map) and v0.6.2 (transitions and mix levels) are not started.
+**Status:** split into three PRs ([v06-build-plan.md](v06-build-plan.md)).
+- **v0.6.0** (feature 1: keys, scales, progressions) is implemented.
+- **v0.6.1** (feature 2: arrangement, plus fills that follow the kit map) is implemented.
+- Neither has been tested on hardware yet.
+- v0.6.2 (transitions and mix levels) is not started.
 
 **Goal:** go from a looping beat to a short arranged track that follows a key and a chord progression.
 
@@ -43,7 +47,7 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
    - `whiplash_set_progression(chords: ["i", "VI", "III", "VII"], bars_per_chord, voicing)`. Chord tracks voice the progression; bass and lead parts follow the root, or snap to the scale.
    - It is bar-quantized and keeps to the native register from v0.5.
    - (Phil hasn't greenlit chord work for v0.5. This is where it would go.)
-2. **Arrangement** (M-L).
+2. **Arrangement** (M-L). **Implemented in v0.6.1** as `whiplash_arrange`, with presets `club` and `short_demo`, group words for tracks, and a clean stop after the last section. Section `transition` waits for v0.6.2.
    - `whiplash_arrange(sections: [{name: "intro", bars: 8, tracks: [1, 4], ...}, {name: "build", bars: 8, ramps: [...]}, {name: "drop", bars: 16}, ...])`.
    - A section is a set of active tracks, mutations, ramps and fills, scheduled on bar lines. That is mostly scheduling of existing primitives: queued switch, drop, fill, ramp.
    - Presets: `club` (intro 16 / build 8 / drop 16 / break 8 / drop 16 / outro 16) and `short demo` (60-90 s).

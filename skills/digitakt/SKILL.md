@@ -1,6 +1,6 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
@@ -17,7 +17,11 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 
 - Free text is matched to a role: kick, snare, rim, clap, closed hat, open hat, cymbal, perc, bass, pad, stab, chord, lead, fx, other ("tuned cymbal" -> cymbal, "dirty bass" -> bass, "synth" -> lead). Or give `{"role": "chord", "label": "Rhodes"}`. `null` (or `""`) removes a label; labels merge, so you only send what changed.
 - **Generated parts follow the map** from the next bar (or the next start). Each part goes to a track labelled with its role, else to one with a close role (rim <-> snare, chord -> pad, stab -> lead, open hat -> cymbal), else stays on its default track if the user hasn't labelled that track as something else, else it is dropped. A cymbal or fx track never gets a chord, bass or other melodic line. Labelled tracks with no matching part stay silent: write one with `whiplash_write_part`.
-- The result's `routing` says which part lands where (`parts`), which were `dropped`, and which labelled tracks are `silent_until_written`. Tell the user in their terms.
+- Every `whiplash_play_pattern` result (fresh start and queued switch), every `whiplash_label_tracks` result and `whiplash_status` carry `routing`: which part lands where (`parts`), which were `dropped`, and which labelled tracks are `silent_until_written`. Tell the user in their terms.
+- **Written parts win their track.** A track playing a `whiplash_write_part` part is never a routing target: the generated part goes to the next track with a matching label, or, if there is none, `routing.replaced_by_written` names it (the write_part result says `replaces_generated`). Nothing is lost silently, and no second bass appears on the default track.
+- **`vacated`:** an unlabelled default track whose part moved to a labelled track plays nothing (e.g. "tracks 7 and 8 are tuned cymbals" moves the open hat from track 5 to 7, so track 5 goes quiet). `routing.vacated` and `vacated_note` say so: tell the user, and offer to label track 5 (e.g. as open hat) or write a part there. Whether this should happen at all is an open question for Phil; don't promise either behaviour.
+- **Relabelling while playing:** a part that moves takes its `whiplash_transpose` and density with it (`follows_part` in the result, e.g. `{"transpose": {"6->10": 12}}`). A part that ends up on no track drops them (`"6->dropped"`).
+- **Tracks 9-16:** when the kit map routes a generated part there, or `tracks` setup names one, the result carries `channel_note` and `tracks_9_16`. Ask the user to check that AUTO CHANNEL and FX CONTROL CH aren't on those channels.
 - Results and `whiplash_status` show the label as `tracks[n].role` (without "(assumed)") plus `kit_role`; `roles_assumed` is false once anything is labelled. A selected slot with a label shows `slot_label`, in `whiplash_select_sample`, `whiplash_set_param` sample_slot and the play `setup` echo too.
 - The map lives in memory for the session: it survives `whiplash_stop` and pattern switches. `reset: true` clears it, and so does a gateway restart.
 - Labels are only what the user told you. Whiplash can't read sample names (that would need SysEx, which it never sends).
@@ -38,6 +42,19 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 - `whiplash_status` shows `progression.now` (the chord playing and `next_change_at_bar`), every voiced chord with note names, and `tracks[n].progression`. Read the chord names back to the user.
 - A melody in the playing key: `whiplash_write_part(track: 8, rhythm: "8ths", key: "current", notes: "1 3 5 8")`.
 - Typical request, "deep house in A minor, i-VI-III-VII, two bars per chord, pads on track 7", is three calls: `whiplash_label_tracks(tracks: {"7": "pad"})`, `whiplash_play_pattern(genre: "deephouse", key: "Am")`, then `whiplash_set_progression(chords: "i VI III VII", bars_per_chord: 2)`.
+
+## Arrangement: a whole track (`whiplash_arrange`)
+
+- `whiplash_arrange(preset: "short_demo")` turns the playing beat into a song from the next bar line: intro, build, drop, outro, about 75 s at the current tempo (`seconds: 90` for "a 90-second track"; it rounds to 4-bar phrases). `preset: "club"` is intro 16 / build 8 / drop 16 / break 8 / drop 16 / outro 16 bars (80 bars, about 2.5 minutes at 128 BPM).
+- In both presets: the intro plays kick and hats; the build adds perc and the music tracks with a rising filter (`filter_freq` 20 → 127, exp curve) and the kick sits out its last bar; the drop plays everything; the break drops kick and bass; the outro thins to drums. Every section but the outro ends on a fill.
+- **It stops by itself:** with `loop: false` (the default) the run stops cleanly on the bar line after the last section (note-offs, MIDI Stop). `loop: true` starts over from the first section. `clear: true` ends the arrangement and unmutes what it muted; the beat keeps playing. `whiplash_stop` ends everything.
+- **Custom sections:** `sections: [{name, bars, tracks, mute, drop, fill, chords, bars_per_chord, ramps}]`, 1-16 sections of 1-64 bars.
+  - `tracks`: what plays (everything else is muted by Whiplash, never with the unit's CC 94). Track numbers or groups: `all`, `drums`, `kick`, `hats` (closed, open, cymbal), `perc` (snare, rim, clap, perc), `bass`, `music` (pad, chord, stab, lead, fx, other), or any kit role. Or `mute`: what doesn't play. Groups resolve again at each section's first bar from the roles playing then, so the arrangement follows a switch or relabel.
+  - `drop`: tracks that sit out the section's last bar. `fill: true`: a drum fill on its last bar.
+  - `ramps: [{track, param, from, to, bars, curve}]` start on the section's first bar (default length: the section). Without `from` a ramp starts from the last value Whiplash sent; if there is none it is skipped (`skipped_ramps` in status). A ramp leaves the param where it ends, which changes the kit's sound until it is reloaded on the unit (the result's `filter_note`): tell the user.
+  - `chords`: a progression in the key playing, from the section's first bar (`"i VI III VII"`, `bars_per_chord`); `"none"` ends it. Sections without `chords` keep the one playing.
+- The result lists each section's `starts_at_bar`, `plays_now` (the groups resolved now), fills, drops, ramps and chords, plus `seconds` and when it `ends`. `whiplash_status.arrangement.current` gives the section playing, `bars_left`, `next` and `next_at_bar`. Read these back instead of guessing.
+- Typical request, "make it a 90-second track: intro, build, drop, outro": `whiplash_play_pattern(genre: ...)` if nothing plays, then `whiplash_arrange(preset: "short_demo", seconds: 90)`. Transitions between sections (filter swap, riser) come in v0.6.2.
 
 ## Writing notes, melodies and rhythms
 
@@ -73,8 +90,9 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 
 - Genres: `deephouse` 122 BPM, `soul` 86, `techno` 130, `breaks` 132, `techhouse` 126 (four on the floor, offbeat open hat, shuffled 16th hats, rolling off-beat bass). "tech house", "tech-house" and similar spellings resolve to `techhouse`; an unknown genre's error lists the closest matches.
 - Without labels a pattern assumes 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords or stabs, and marks those roles `(assumed)`. Ask what the tracks hold before calling a line "bass" or "chords".
-- While a pattern plays, `whiplash_play_pattern` queues the new one for the next bar line without stopping the clock (`mode: "queued"`, `switch_at_bar`). Mutes, ramps, drops, transposes and written parts carry over; mutations reset (density, swing, humanize). `tracks` settings in a queued call land at the switch bar. A different `port` or `send_transport` restarts instead.
-- `whiplash_mutate`: `density` (tracks, amount -1..1 or thin/thicken), `fill` (drum fill on the next bar, tracks 1-5), `swing` (50-80), `humanize` (0-1), `drop` (silence tracks for `bars`, then they return; `fill: true` adds a fill on the last dropped bar), `reset` (back to the pattern; written parts stay).
+- While a pattern plays, `whiplash_play_pattern` queues the new one for the next bar line without stopping the clock (`mode: "queued"`, `switch_at_bar`). Mutes, ramps, drops, transposes, written parts, the progression and the arrangement carry over; mutations reset (density, swing, humanize). `tracks` settings in a queued call land at the switch bar. A different `port` or `send_transport` restarts instead.
+- A queued result's `tracks` describe the switch **as it will land**: its own slot, tune, transpose and mute are already in them (`setup_at_switch` marks those), and `muted_at_switch` lists the mutes after the switch. `muted_carried` is what is muted now.
+- `whiplash_mutate`: `density` (tracks, amount -1..1 or thin/thicken), `fill` (drum fill on the next bar; shapes follow each track's role, so a kick labelled on track 9 gets the kick fill; with no `tracks` it fills every kick, snare/rim, clap and hat track playing; cymbal and perc tracks only fill when named; melodic tracks are refused), `swing` (50-80), `humanize` (0-1), `drop` (silence tracks for `bars`, then they return; `fill: true` adds a fill on the last dropped bar), `reset` (back to the pattern; written parts stay).
 - `whiplash_ramp_param` sweeps on the clock; a new ramp on the same track and param replaces the old one, and `whiplash_stop` cancels all. Ramps on `amp_hold` stop at 126.
 - Mutes reset on `whiplash_stop` or a fresh start, so mute after starting (or use `tracks: {"n": {"mute": true}}`).
 - `whiplash_stop` silences everything and resets mutes, ramps, mutations, transposes, written parts and any queued switch. The kit map stays.
@@ -110,6 +128,9 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Wrong rhythm", "make it 4/4", "lock to the kick" | `whiplash_write_part` with `rhythm` or `lock_to`, not density |
 | "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`, or `key: "current"`) |
 | "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern`, then `whiplash_set_progression` |
+| "Make it a whole track", "intro, build, drop", "90 seconds" | `whiplash_arrange` (`preset: "short_demo"`, `seconds`) |
+| A track went quiet after labelling | `routing.vacated` (its part moved to a labelled track) or `replaced_by_written` |
+| No fill on a moved drum part | label the track (fills follow roles), or name it in `tracks` |
 | Chords sound like one note | expected on an audio track: use two or three chord tracks in `chords` mode |
 | Drums you didn't ask for | the unit's own pattern: empty pattern or clock only |
 | Wrong instrument on a track | ask the user, label it with `whiplash_label_tracks`, then `whiplash_select_sample` or `tracks: {"n": {"slot": ...}}` |

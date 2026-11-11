@@ -18,7 +18,7 @@ The kit lines below are for Phil's project 6 (tracks 7-8 tuned cymbals, slot 9 a
 git -C ~/whiplash pull            # or: hermes plugins update whiplash
 (cd ~/whiplash && uv run python scripts/rehearse_demo.py -q)  # rehearse; must print RESULT: PASS
 hermes gateway restart            # required after any update; a new chat is not enough
-hermes plugins list               # whiplash enabled, v0.6.0, 18 tools
+hermes plugins list               # whiplash enabled, v0.6.1, 19 tools
 ```
 
 - Start a **new chat** in Hermes, so the kit map and the conversation are empty.

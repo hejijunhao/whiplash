@@ -221,6 +221,7 @@ def test_tools_in_manifest_order():
     assert list(tools.HANDLERS)[6] == "whiplash_transpose" == list(schemas.SCHEMAS)[6]  # v0.5
     assert list(tools.HANDLERS)[7] == "whiplash_write_part" == list(schemas.SCHEMAS)[7]  # v0.5.1
     assert list(tools.HANDLERS)[8] == "whiplash_set_progression" == list(schemas.SCHEMAS)[8]  # v0.6.0
+    assert list(tools.HANDLERS)[9] == "whiplash_arrange" == list(schemas.SCHEMAS)[9]  # v0.6.1
     # v0.4's 12 tools, v0.5's transpose, v0.5.1's write_part, v0.5.3's label_tracks, v0.6.0's set_progression,
-    # then the visualiser's two
-    assert len(tools.HANDLERS) == 18 and list(tools.HANDLERS)[16:] == ["whiplash_open_view", "whiplash_close_view"]
+    # v0.6.1's arrange, then the visualiser's two
+    assert len(tools.HANDLERS) == 19 and list(tools.HANDLERS)[17:] == ["whiplash_open_view", "whiplash_close_view"]

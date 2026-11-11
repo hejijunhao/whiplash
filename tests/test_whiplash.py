@@ -83,7 +83,7 @@ def test_register_is_fast_and_lazy():
 
 
 def test_every_tool_is_namespaced():
-    assert len(tools.HANDLERS) == 18
+    assert len(tools.HANDLERS) == 19
     assert all(name.startswith("whiplash_") for name in tools.HANDLERS)
 
 
@@ -190,7 +190,7 @@ def test_natural_end_then_new_play_never_doubles_the_panic(fake):
     eng.play(patterns.PATTERNS["soul"], bpm=300, bars=1)
     eng._thread.join(timeout=5)
     assert port.count("start") == 2
-    assert port.count("stop") == 3  # one idle panic before the new start, one at its end
+    assert port.count("stop") == 2  # v0.6.1: no idle panic before the new start (the first run silenced it), one at its end
 
 
 def test_stop_when_idle_is_a_panic_button(fake):

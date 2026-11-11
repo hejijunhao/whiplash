@@ -2,6 +2,7 @@
 from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
+from .arrange import GROUPS, PRESETS, RAMPS_MAX, SECONDS_MAX, SECONDS_MIN, SECTION_BARS_MAX, SECTIONS_MAX
 from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .kitmap import ROLES
@@ -29,11 +30,10 @@ SCHEMAS = {
     },
     "whiplash_play_pattern": {
         "name": "whiplash_play_pattern",
-        "description": ("Start a generated beat (genre or mood), or queue a switch to it on the next bar if one is playing. "
-                        "key/scale set its key. tracks sets each track's sample slot, tune, transpose and mute in the "
-                        "same call. Pass the "
+        "description": ("Start a beat (genre or mood), or queue a switch on the next bar if one plays. key/scale set its "
+                        "key; tracks sets each track's slot, tune, transpose and mute in the same call. Pass the "
                         "result's overlap_warning (and any 'warning': virtual port, hardware silent) on to the user. "
-                        "Roles follow whiplash_label_tracks, else they are assumed." + SKILL),
+                        "Roles follow whiplash_label_tracks." + SKILL),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
             "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
@@ -73,8 +73,8 @@ SCHEMAS = {
     },
     "whiplash_select_sample": {
         "name": "whiplash_select_sample",
-        "description": ("Switch a track to another sample already loaded in the project (CC 19 slot in the unit's current "
-                        "bank). Whiplash can't list or hear samples: ask the user what a slot holds."),
+        "description": ("Switch a track to a sample already loaded in the project (CC 19 slot, current bank). Whiplash "
+                        "can't list or hear samples: ask the user what a slot holds."),
         "parameters": {"type": "object", "required": ["track", "slot"], "properties": {
             "track": TRACK,
             "slot": {"type": "integer", "minimum": 0, "maximum": 127,
@@ -83,9 +83,8 @@ SCHEMAS = {
     },
     "whiplash_label_tracks": {
         "name": "whiplash_label_tracks",
-        "description": ("Record what the user says each track and sample slot holds (e.g. track 7 cymbal, track 5 pad). "
-                        "Generated parts then follow these roles from the next bar. Use it as soon as the user "
-                        "describes their kit. Kept until reset or a gateway restart." + SKILL),
+        "description": ("Record what the user says each track and slot holds (e.g. track 7 cymbal, 5 pad), as soon as they "
+                        "describe their kit. Generated parts follow these roles from the next bar." + SKILL),
         "parameters": {"type": "object", "properties": {
             "tracks": {"type": "object", "additionalProperties": {"type": ["string", "object", "null"]},
                        "description": (f'Track -> what it holds, e.g. {{"7": "tuned cymbal", "5": "pad"}}. Free text is '
@@ -97,8 +96,8 @@ SCHEMAS = {
     },
     "whiplash_transpose": {
         "name": "whiplash_transpose",
-        "description": ("Shift one playing track's notes from the next bar (absolute; 0 = back). First fix for a line that "
-                        "sounds stretched or grainy. Notes stay in 16-84, the documented chromatic range." + SKILL),
+        "description": ("Shift one playing track's notes from the next bar (absolute; 0 = back). First fix for a stretched "
+                        "or grainy line. Notes stay in 16-84, the documented chromatic range." + SKILL),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": TRACK,
             "semitones": {"type": "integer", "minimum": -TRANSPOSE_MAX, "maximum": TRANSPOSE_MAX,
@@ -109,10 +108,10 @@ SCHEMAS = {
     },
     "whiplash_write_part": {
         "name": "whiplash_write_part",
-        "description": ("Write a track's own notes or rhythm (melody, four on the floor, lock_to the kick, shorter notes), "
-                        "replacing its generated line from the next bar. Notes: C5 = MIDI 60 = the sample's own pitch. "
-                        "length only sounds if AMP MODE is ADSR or HOLD is NOTE (read length_audible); envelope "
-                        "'note' only when the user agrees. Cleared by reset or whiplash_stop." + SKILL),
+        "description": ("Write a track's own notes or rhythm (melody, four on the floor, lock_to the kick), replacing its "
+                        "line from the next bar. C5 = MIDI 60 = the sample's pitch. length only sounds if AMP MODE is "
+                        "ADSR or HOLD is NOTE (read length_audible); envelope 'note' only when the user agrees. Cleared by reset or "
+                        "whiplash_stop." + SKILL),
         "parameters": {"type": "object", "required": ["track"], "properties": {
             "track": {**TRACK, "description": "Digitakt track 1-16 (= MIDI channel)"},
             "rhythm": {"type": "string", "enum": rhythm_names(),
@@ -156,8 +155,8 @@ SCHEMAS = {
     },
     "whiplash_set_progression": {
         "name": "whiplash_set_progression",
-        "description": ("Loop a chord progression from the next bar: chord/pad/stab tracks voice it, bass plays the roots, "
-                        "leads snap to the key. Never on drum, cymbal or fx tracks. clear or whiplash_stop ends it." + SKILL),
+        "description": ("Loop chords from the next bar: chord/pad/stab tracks voice them, bass plays roots, leads snap to "
+                        "the key. Never on drum, cymbal or fx tracks. clear ends it." + SKILL),
         "parameters": {"type": "object", "properties": {
             "chords": {"type": ["array", "string"], "items": {"type": "string"}, "maxItems": MAX_CHORDS,
                        "description": "Roman numerals in the key ('i VI III VII', 'ii7 V7 Imaj7') or names ('Am F C G')"},
@@ -170,10 +169,40 @@ SCHEMAS = {
             "clear": {"type": "boolean", "description": "End the progression"},
         }},
     },
+    "whiplash_arrange": {
+        "name": "whiplash_arrange",
+        "description": ("Play the beat as a song from the next bar: sections (intro, build, drop) bring tracks in and out, "
+                        "ramp, fill, swap chords. Presets club, short_demo. Stops after the last section unless "
+                        "loop." + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "preset": {"type": "string", "enum": list(PRESETS)},
+            "seconds": {"type": "integer", "minimum": SECONDS_MIN, "maximum": SECONDS_MAX,
+                        "description": "short_demo length (default 75)"},
+            "sections": {"type": "array", "maxItems": SECTIONS_MAX, "items": {"type": "object", "required": ["bars"],
+                         "properties": {
+                "name": {"type": "string"},
+                "bars": {"type": "integer", "minimum": 1, "maximum": SECTION_BARS_MAX},
+                "tracks": {"type": "array", "items": {"type": ["integer", "string"]},
+                           "description": "What plays (others muted): 1-16, all, drums, kick, hats, perc, bass, music"},
+                "mute": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Or: what doesn't"},
+                "drop": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Sit out the last bar"},
+                "fill": {"type": "boolean", "description": "Drum fill on the last bar"},
+                "chords": {"type": ["string", "array"], "items": {"type": "string"}, "description": "'i VI III VII', or 'none'"},
+                "bars_per_chord": {"type": "integer", "minimum": 1, "maximum": BARS_PER_CHORD_MAX},
+                "ramps": {"type": "array", "maxItems": RAMPS_MAX, "items": {"type": "object", "properties": {
+                    "track": {"type": ["integer", "string"]}, "param": {"type": "string"},
+                    "from": {"type": "integer"}, "to": {"type": "integer"}, "bars": {"type": "integer"},
+                    "curve": {"type": "string", "enum": sorted(CURVES)}}},
+                          "description": "Start on the first bar; bars default to the section's"},
+            }}},
+            "loop": {"type": "boolean"},
+            "clear": {"type": "boolean", "description": "End the arrangement"},
+        }},
+    },
     "whiplash_ramp_param": {
         "name": "whiplash_ramp_param",
-        "description": ("Sweep a param over beats or bars on the clock (e.g. open the filter over 8 bars). Needs a pattern "
-                        "playing. Cancel with cancel: '<ramp_id>' or 'all'."),
+        "description": ("Sweep a param over beats or bars on the clock (e.g. open the filter over 8 bars). Cancel with "
+                        "cancel: '<ramp_id>' or 'all'."),
         "parameters": {"type": "object", "properties": {
             "track": TRACK,
             "param": PARAM,
@@ -191,8 +220,8 @@ SCHEMAS = {
     },
     "whiplash_mutate": {
         "name": "whiplash_mutate",
-        "description": ("Change the running pattern on the bar: density, fill, swing, humanize, drop (silence tracks for "
-                        "some bars), or reset."),
+        "description": ("Change the running pattern on the bar: density, fill, swing, humanize, drop "
+                        "(silence tracks for some bars), or reset."),
         "parameters": {"type": "object", "required": ["action"], "properties": {
             "action": {"type": "string", "enum": ["density", "fill", "swing", "humanize", "drop", "reset"]},
             "tracks": TRACKS,
@@ -221,15 +250,16 @@ SCHEMAS = {
     },
     "whiplash_stop": {
         "name": "whiplash_stop",
-        "description": ("Stop and silence: note-offs, All Notes Off on 1-8 and any of 9-16 that played, MIDI Stop (not in "
-                        "clock-only mode). Resets mutes, ramps, mutations, transposes and written parts; keeps the kit "
-                        "map. Safe as a panic button."),
+        "description": ("Stop and silence: note-offs, All Notes Off on 1-8 and any 9-16 that played, MIDI Stop (not "
+                        "when clock-only). Resets mutes, ramps, "
+                        "mutations, transposes, written parts, progression and arrangement; keeps the kit map. Safe "
+                        "as a panic button."),
         "parameters": EMPTY,
     },
     "whiplash_status": {
         "name": "whiplash_status",
-        "description": ("What Whiplash is doing now: port, pattern, key, progression, bpm, bar, queued switch, per-track "
-                        "role, slot, pitch, part and mutes, ramps, mutations, kit map, last_error." + SKILL),
+        "description": ("Now: port, pattern, key, chords, section, bpm, bar, queued switch, per-track "
+                        "role/slot/pitch/part/mute, ramps, mutations, kit map, routing, errors." + SKILL),
         "parameters": EMPTY,
     },
     "whiplash_open_view": {

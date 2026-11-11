@@ -1,6 +1,6 @@
 # Hardware test session: Whiplash on a Digitakt II
 
-This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.6.0 plus the visualiser's key and chord display** that hasn't been checked on a real unit yet:
+This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.6.0 plus the visualiser's key and chord display** that hasn't been checked on a real unit yet (v0.6.1's `whiplash_arrange` and fills by role have their HW checks in the v0.6 build plan, not here yet):
 - v0.6.0: keys and scales on `whiplash_play_pattern`, chord progressions (`whiplash_set_progression`), and the visualiser's KEY module and per-track chord lines,
 - v0.5.3: the kit map (`whiplash_label_tracks`), one-call start (`tracks` on `whiplash_play_pattern`), the `techhouse` genre and aliases, and the shorter tool descriptions (turn latency),
 - the visualiser v0.5 update: kit labels, `SMP` slot labels, `NO PART`, written parts as a piano roll, `TRN`/`LEN`/`HLD NOTE` tags, and the tracks 9-16 row,
@@ -32,10 +32,10 @@ Type the prompts as written; *italic* text in a prompt is a placeholder. If Herm
 ```bash
 git -C ~/whiplash pull          # symlinked checkout; or: hermes plugins update whiplash
 hermes gateway restart          # required: the gateway keeps old plugin code until it restarts
-hermes plugins list             # whiplash -> enabled (v0.6.0, 18 tools)
+hermes plugins list             # whiplash -> enabled (v0.6.1, 19 tools)
 ```
 
-A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` still shows 17 tools or v0.5.3, the gateway didn't restart: run it again.
+A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` shows fewer tools or an older version, the gateway didn't restart: run it again.
 
 If Hermes earlier auto-created a local skill for Whiplash, delete it. Look for `~/.hermes/skills/whiplash-digitakt/` or anything similar under `~/.hermes/skills/`. It holds stale claims such as "can't switch samples".
 

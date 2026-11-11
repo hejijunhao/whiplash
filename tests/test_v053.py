@@ -393,9 +393,10 @@ def test_description_size_budget():
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
     assert sum(tool_text.values()) <= 3000, tool_text
     assert max(tool_text.values()) <= 400, tool_text
-    # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params
-    assert _descriptions(schemas.SCHEMAS) <= 7200
-    assert len(json.dumps(schemas.SCHEMAS)) <= 16000
+    # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params.
+    # v0.6.1 adds whiplash_arrange (its section schema) and trims other tool descriptions to stay under 3000.
+    assert _descriptions(schemas.SCHEMAS) <= 7400
+    assert len(json.dumps(schemas.SCHEMAS)) <= 17500
 
 
 def test_short_descriptions_keep_the_safety_caveats():
@@ -454,6 +455,7 @@ def test_fill_leaves_a_melodic_line_on_a_drum_track_alone():
 
 
 def test_fill_skips_a_bass_routed_onto_the_snare_track():
+    # v0.6.1: fills follow roles, so the default fill leaves the bass-labelled track 2 out, and naming it is refused
     def track2(fill):
         eng, _port = make_engine()
         try:
@@ -461,7 +463,9 @@ def test_fill_skips_a_bass_routed_onto_the_snare_track():
             pretend_playing(eng, P["techno"])
             bar_events(eng, 0)
             if fill:
-                eng.schedule_fill([2])
+                assert 2 not in eng.schedule_fill()["tracks"]
+                with pytest.raises(engine.WhiplashError, match="aren't drum tracks"):
+                    eng.schedule_fill([2])
             return [e for e in bar_events(eng, 1) if e[1] == 2]
         finally:
             eng.shutdown()
