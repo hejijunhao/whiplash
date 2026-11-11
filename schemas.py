@@ -10,6 +10,7 @@ from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .kitmap import ROLES
 from .listen import BARS_MAX as LISTEN_BARS_MAX
 from .patterns import MOODS, PATTERNS
+from .jam import MODES as FOLLOW_MODES
 
 TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Track 1-16 (= MIDI channel)"}
 TRACKS = {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 16}, "description": "Tracks 1-16"}
@@ -310,6 +311,31 @@ SCHEMAS = {
                         "its USB audio. Never applies them: show the user, whiplash_label_tracks only on their yes."
                         + SKILL),
         "parameters": {"type": "object", "properties": {"tracks": TRACKS}},
+    },
+    "whiplash_play_along": {
+        "name": "whiplash_play_along",
+        "description": ("Hear the user's knob moves and notes from the unit's MIDI out: status lists them, a Whiplash "
+                        "ramp on a knob they grab stops (yielded_to_user: tell them), and the session is recorded in "
+                        "memory. Needs the unit's send settings (setup). on: false closes it." + SKILL),
+        "parameters": {"type": "object", "properties": {"on": {"type": "boolean", "description": "Default true"}}},
+    },
+    "whiplash_follow": {
+        "name": "whiplash_follow",
+        "description": ("Call and response: the user plays a phrase on track (KEYBOARD mode); on the next bar Whiplash "
+                        "answers on answer_track, in key, on the grid, in the native register. stop: true ends it."
+                        + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "track": {**TRACK, "description": "Where the user plays (= MIDI channel)"},
+            "answer_track": {**TRACK, "description": "Where Whiplash answers"},
+            "mode": {"type": "string", "enum": list(FOLLOW_MODES),
+                     "description": "echo, answer (default: mirrored, ends on the tonic) or harmonize (a third up)"},
+            "stop": {"type": "boolean"},
+        }},
+    },
+    "whiplash_undo": {
+        "name": "whiplash_undo",
+        "description": "Revert the last written part, mix or arrangement change, on the next bar.",
+        "parameters": EMPTY,
     },
     "whiplash_open_view": {
         "name": "whiplash_open_view",

@@ -31,13 +31,9 @@ def assert_notes_only(port):
 
 # ---- packaging and refusals (no numpy) ------------------------------------------------------------------------
 
-def test_version_is_0_7_1():
-    assert whiplash.__version__ == "0.7.1"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.7.1"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.7.1"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.7.1"
+def test_changelog_keeps_0_7_1():  # v0.8.0 pins the version number in test_v080.py
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.7.1")
+    assert any(r.startswith("0.7.1") for r in releases)
 
 
 def test_scan_kit_is_listed_after_listen_everywhere():

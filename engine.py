@@ -17,6 +17,12 @@ second, CC_PER_TICK_MAX per tick; a ramp over budget sends its value on a later 
 The loudness guard refuses level/volume/overdrive increases while the last whiplash_listen showed clipping, unless
 the call says force. For listens the sequencer appends to two deques (bar_log, note_log while armed) and nothing else.
 
+v0.8.0 play along: the unit's MIDI input opens only from whiplash_play_along / whiplash_follow, on a daemon reader
+thread that never takes _lock and never sends. It hands the sequencer three things through lock-free deques: knob
+grabs (drained at the start of _advance_ramps, which cancels a ramp on that knob), phrase notes (answered at the bar
+line by _answer) and user moves (status). While the input is open, send() also notes each note/CC for the echo filter
+and appends it to the in-memory recording; the sequencer publishes clock_ref once per tick for the timestamps.
+
 Transport: by default a run sends MIDI Start, clock, and Stop. Start also starts the Digitakt's
 own sequencer, so trigs stored in the pattern selected on the unit play on top of Whiplash.
 send_transport=False (or WHIPLASH_SEND_TRANSPORT=0) sends clock only, and then never sends Stop
@@ -24,14 +30,16 @@ either, so Whiplash can't halt a pattern someone runs on the unit.
 """
 import atexit
 import collections
+import functools
 import os
 import heapq
 import logging
 import threading
 import time
+import time as _walltime  # the input reader's sleeps (tests may swap the module's `time` for a virtual clock)
 from dataclasses import dataclass, replace
 
-from . import arrange, ccmap, harmony, kitmap, mixer, mutate, parts, patterns
+from . import arrange, ccmap, harmony, jam, kitmap, mixer, mutate, parts, patterns
 from . import transition as _transition_mod  # play() has a `transition` argument
 
 log = logging.getLogger("whiplash")
@@ -95,6 +103,9 @@ HIGH_TRACK_NOTE = ("Tracks 9-16 play on MIDI channels 9-16. If the unit's AUTO C
                    "this channel (SETTINGS > MIDI CONFIG > CHANNELS), these notes and CCs also reach the active "
                    "track or the send FX. Ask the user to check.")
 ENVELOPES = {"note"}
+MODE_WORDS = {"echo": "your phrase played back, in key",
+              "answer": "a reply that mirrors your contour and resolves on the tonic",
+              "harmonize": "your phrase a diatonic third above"}  # v0.8.0 whiplash_follow modes, for its result
 CURRENT_KEY = {"current", "session", "playing"}  # write_part key: use the key the beat is playing in
 POLY_NOTE = ("chords mode plays one chord tone per hit, and each chord track starts on a different tone, so it works "
              "on a track that plays one note at a time. The manual gives the Digitakt II 16 audio voices for 16 "
@@ -310,6 +321,10 @@ def list_ports():
     return {"outputs": mido.get_output_names(), "inputs": mido.get_input_names()}
 
 
+def _no_input(_name=None):
+    raise WhiplashError("this engine has no MIDI input (a test engine built with a fake output only)")
+
+
 def find_device(names):
     for name in names:
         if name != VIRTUAL_NAME and any(h in name.lower() for h in DEVICE_HINTS):
@@ -345,7 +360,7 @@ class Ramp:
 
 
 class Engine:
-    def __init__(self, opener=None, lister=None):
+    def __init__(self, opener=None, lister=None, in_opener=None):
         self._lock = threading.RLock()
         self._transport = threading.RLock()
         self._opener = opener  # test hook: callable(port_name|None) -> (port, label, virtual)
@@ -420,6 +435,22 @@ class Engine:
         self.last_scan = None  # v0.7.1: the proposal of the last whiplash_scan_kit (read-only, never applied)
         self.stops = 0  # v0.7.1: counts stop() calls (whiplash_stop, a fresh play); a running kit scan aborts on one
         self.rails = {"cc_deferred": 0, "ramps_refused": 0, "guard_refusals": 0, "guard_forced": 0}
+        # v0.8.0 play along (all idle until whiplash_play_along or whiplash_follow opens the input)
+        self._in_opener = in_opener if in_opener is not None else (_no_input if opener else None)  # test hook
+        self._in_open = threading.Lock()  # serialises opening/closing the input (never taken by the sequencer)
+        self._in_lock = threading.Lock()  # guards user_moves; reader and status only, never the sequencer
+        self._input = None  # {"port", "name", "thread", "stop", "opened", "heard", ...} while open
+        self.user_moves = collections.deque(maxlen=jam.MOVES_MAX)
+        self._grabs = collections.deque(maxlen=jam.GRABS_MAX)  # (track, cc, user value), drained by the sequencer
+        self.yields = collections.deque(maxlen=jam.YIELDS_MAX)  # ramps that yielded to the user (status)
+        self._yield_new = collections.deque(maxlen=jam.YIELDS_MAX)  # not yet reported in a tool result
+        self._echo = None  # (kind, channel, number) -> (value, time) of what Whiplash sent, while the input is open
+        self._rec = None  # jam.Recording while recording; self.recording keeps the last one
+        self.recording = None
+        self.clock_ref = None  # (tick, perf_counter time of that tick, tick length), published once per tick
+        self._follow = None  # {"track", "answer", "mode", "since_bar", "replies", "last"} while following
+        self._phrase = collections.deque(maxlen=jam.PHRASE_BUFFER)  # (time, note, velocity) on the call track
+        self._undo = []  # newest last: {"kind": "part" | "mix" | "arrangement", "what", ...}
 
     # ---- port handling -------------------------------------------------
     def ensure_port(self, port=None, allow_virtual=True):
@@ -505,6 +536,15 @@ class Engine:
                 self.port_lost = lost
                 raise
             self.sent_count += 1
+            echo, rec = self._echo, self._rec
+            if (echo is not None or rec is not None) and msg.type != "clock":  # v0.8.0: only while play-along is on
+                now = time.perf_counter()
+                if echo is not None and msg.type in ("note_on", "control_change"):
+                    number = msg.note if msg.type == "note_on" else msg.control
+                    echo[(msg.type, msg.channel, number)] = (msg.velocity if msg.type == "note_on" else msg.value,
+                                                             now)
+                if rec is not None and msg.type in ("note_on", "note_off", "control_change"):
+                    rec.out(msg, self.clock_ref, now)
 
     def _cc(self, mido, ch, control, value):
         self.send(mido.Message("control_change", channel=ch, control=control, value=value))
@@ -744,6 +784,8 @@ class Engine:
                     self._parts = {}
                     self._key, self._prog = None, None
                     self._arr, self._arr_muted = None, set()
+                    self._follow, self._undo = None, []  # v0.8.0: follow ends with the beat; nothing left to undo
+                    self._phrase.clear()
                     if self._raw_pattern is not None:
                         self._load(self._raw_pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
@@ -758,6 +800,10 @@ class Engine:
             self.stop()
         except Exception:
             log.exception("whiplash shutdown: stop failed")
+        try:
+            self.close_input()
+        except Exception:
+            log.exception("whiplash shutdown: closing the MIDI input failed")
         with self._lock:
             self._close_port()
 
@@ -819,9 +865,10 @@ class Engine:
         return cleared
 
     # ---- sequencer thread ----------------------------------------------
-    def _bar_boundary(self, bar_n):
+    def _bar_boundary(self, bar_n, at=None):
         """At the top of bar_n (caller holds _lock): switch, end check, build the bar's events.
 
+        at: perf_counter time of the bar's first tick (the sequencer passes it; follow quantizes against it).
         Returns None when the run should end, else {step: [(track, note, vel, gate, offset_ticks)]}.
         """
         queued = self._queued
@@ -830,6 +877,7 @@ class Engine:
             if queued.get("key") is not None:
                 self._key = queued["key"]
             self._load(queued["pattern"], queued["bpm"], queued["bars"], start_bar=bar_n)
+            self._mark("pattern", queued["pattern"].name, at)
             self._set_transposes(queued.get("transpose") or {})
             self._apply_setup(queued.get("ccs") or (), queued.get("mutes") or {})  # before this bar's notes
             if self._restore:  # a filter_swap closed the outgoing cutoff: the incoming one reopens from the one
@@ -881,6 +929,12 @@ class Engine:
                 if shift:
                     note = clamp_note(note + shift)
                 events[step].append((track, note, vel, gate, offset))
+        if self._follow is not None:
+            self._answer(bar_n, at, events)
+        rec = self._rec
+        if rec is not None and rec.bpm != self.bpm:  # a tempo change, at the bar line it lands on
+            rec.bpm = self.bpm
+            self._mark("tempo", self.bpm, at)
         return events
 
     def _reroute(self):
@@ -960,13 +1014,14 @@ class Engine:
                 bar_n, step = divmod(step_abs, patterns.STEPS)
                 with self._lock:
                     if sub == 0 and step == 0:
-                        events = self._bar_boundary(bar_n)
+                        events = self._bar_boundary(bar_n, next_tick)
                         if events is None:
                             break
                         self.bar_hits = (bar_n, events, self.bar_fills[1])
                         exact = self._bar_exact
                     tick_len = 60.0 / self.bpm / PPQN
                     swing, muted = self.swing, set(self.muted)
+                self.clock_ref = (tick, next_tick, tick_len)  # v0.8.0 recording timestamps; one assignment
                 if sub == 0:
                     self.position = (bar_n, step, next_tick)  # for the view; one assignment, no lock
                     if step == 0:
@@ -1013,7 +1068,7 @@ class Engine:
             log.exception("sequencer thread crashed")
             self._record("sequencer stopped", exc)
         finally:
-            self.position = self.bar_hits = None
+            self.position = self.bar_hits = self.clock_ref = None
             with self._lock:
                 self._park_reopens()
                 self._ramps.clear()  # ramps are clocked by this thread; they can't outlive it
@@ -1044,6 +1099,8 @@ class Engine:
 
     def _advance_ramps(self, mido):
         with self._lock:
+            if self._grabs:  # v0.8.0: the user grabbed a knob a ramp is moving: the ramp yields
+                self._yield_to_user()
             if not self._ramps:
                 return
             budget = self.cc_budget()
@@ -1117,6 +1174,9 @@ class Engine:
         for act in acts:
             if act["kind"] == "mix":
                 self._apply_mix(act["entries"], act["ticks"])
+                continue
+            if act["kind"] == "call":  # v0.8.0 whiplash_undo: restore on this bar line
+                act["fn"](bar_n)
                 continue
             cc = act["cc"]
             for track in act["tracks"]:
@@ -1341,6 +1401,11 @@ class Engine:
                     self.rails["ramps_refused"] += 1
                     raise WhiplashError(f"this mix would run more than {MAX_RAMPS} ramps at once (the safety cap): "
                                         "ramp fewer tracks, use bars 0, or cancel running ramps first")
+            if changes:
+                self._push_undo({"kind": "mix", "entries": [(t, cc, self._cc_values.get((t - 1, cc)))
+                                                            for t, cc, _ in changes],
+                                 "what": "mix: " + ", ".join(f"track {t} {'level' if cc == LEVEL_CC else 'pan'} "
+                                                             f"{v}" for t, cc, v in changes[:6])})
             out = {"levels": {str(t): v for t, v in sorted(level_out.items())},
                    "pan": {str(t): v for t, v in sorted(pan_out.items())},
                    "changes": len(changes), "cc": {"level": LEVEL_CC, "pan": PAN_CC}}
@@ -1488,6 +1553,400 @@ class Engine:
             return None
         out = {k: v for k, v in heard.items() if k != "at"}
         out["age_s"] = round(time.time() - heard["at"], 1)
+        return out
+
+    # ---- v0.8.0: play along (MIDI input, ramps yield, follow, undo, recording) -------------------------
+    def _mark(self, kind, value, at=None):
+        """A recording marker (pattern switch, section, tempo), from the bar line (caller holds _lock)."""
+        rec = self._rec
+        if rec is not None:
+            rec.mark(kind, value, self.clock_ref, time.perf_counter() if at is None else at)
+
+    def open_input(self):
+        """Open the Digitakt's MIDI input and start the reader thread. True if it opened now, False if it was open.
+
+        Only whiplash_play_along and whiplash_follow call this. Raises WhiplashError with the setup hint (and
+        changes nothing) when there is no Digitakt input; never opens another input."""
+        with self._in_open:
+            inp = self._input
+            if inp is not None and inp["thread"].is_alive():
+                return False
+            if inp is not None:  # the reader ended (input unplugged): drop what is left, then reopen
+                self._close_input_locked()
+            try:
+                if self._in_opener is not None:
+                    port, name = self._in_opener(None)
+                else:
+                    port, name = jam.open_input(_mido(), VIRTUAL_NAME)
+            except jam.JamError as exc:
+                raise WhiplashError(str(exc)) from None
+            inp = {"port": port, "name": name, "stop": threading.Event(), "opened": time.time(), "heard": 0,
+                   "last": None, "echoes": 0, "notes": collections.Counter(), "lost": None, "decoder": jam.Decoder()}
+            if self.recording is None:
+                self.recording = jam.Recording()
+            self._echo = {}
+            self._rec = self.recording
+            inp["thread"] = threading.Thread(target=self._read, args=(inp,), name="whiplash-in", daemon=True)
+            self._input = inp
+            inp["thread"].start()
+            return True
+
+    def close_input(self):
+        """Stop the reader, close the input, end any follow. The recording stays in memory. None if not open."""
+        with self._in_open:
+            return self._close_input_locked()
+
+    def _close_input_locked(self):
+        inp = self._input
+        if inp is None:
+            return None
+        inp["stop"].set()
+        if inp["thread"] is not threading.current_thread():
+            inp["thread"].join(timeout=JOIN_TIMEOUT)
+        try:
+            inp["port"].close()
+        except Exception:
+            log.exception("closing the MIDI input")
+        self._input, self._echo, self._rec = None, None, None
+        with self._lock:
+            had = self._follow is not None
+            self._follow = None
+        self._phrase.clear()
+        self._grabs.clear()
+        return {"port": inp["name"], "follow_stopped": had}
+
+    def _read(self, inp):
+        """The reader thread: poll the input, hand each message to _heard. Never takes _lock, never sends.
+
+        At most READ_BATCH messages per batch, then a short sleep, so a flood of input gives the GIL back to the
+        sequencer. An exception (the input went away) ends the thread and is shown as play_along.lost."""
+        port, stop = inp["port"], inp["stop"]
+        try:
+            while not stop.is_set():
+                n = 0
+                for msg in port.iter_pending():
+                    self._heard(inp, msg, time.perf_counter())
+                    n += 1
+                    if n >= jam.READ_BATCH or stop.is_set():
+                        break
+                _walltime.sleep(jam.READ_YIELD if n >= jam.READ_BATCH else jam.READ_IDLE)
+        except Exception as exc:
+            inp["lost"] = f"{type(exc).__name__}: {exc}"
+            log.warning("whiplash: MIDI input %s stopped: %s", inp["name"], inp["lost"])
+
+    def _heard(self, inp, msg, now):
+        """One message from the unit (reader thread). Decoded, echo-filtered, recorded, then: a note may join the
+        follow phrase, a CC/NRPN becomes a user move and, on a ramped knob, a grab for the sequencer."""
+        with self._in_lock:
+            inp["heard"] += 1
+            inp["last"] = now
+            move = inp["decoder"].feed(msg)
+            if move is None:
+                return
+            echo = self._echo
+            if echo is not None and (move["kind"] == "cc" or move["velocity"]):
+                if move["kind"] == "note":
+                    key, value = ("note_on", msg.channel, move["note"]), move["velocity"]
+                else:
+                    key, value = ("control_change", msg.channel, msg.control), msg.value
+                sent = echo.get(key)
+                if sent is not None and sent[0] == value and now - sent[1] < jam.ECHO_WINDOW:
+                    inp["echoes"] += 1
+                    return  # Whiplash's own message coming back (soft thru): not the user
+            rec = self._rec
+            if rec is not None:
+                rec.heard(msg, self.clock_ref, now)
+            if move["kind"] == "note":
+                if move["velocity"]:
+                    inp["notes"][move["track"]] += 1
+                    follow = self._follow
+                    if follow is not None and move["track"] == follow["track"]:
+                        self._phrase.append((now, move["note"], move["velocity"]))
+                return
+            move["t"] = now
+            last = self.user_moves[-1] if self.user_moves else None
+            if (last is not None and last["track"] == move["track"] and last["param"] == move["param"]
+                    and now - last["t"] < 2.0):
+                last["value"], last["t"] = move["value"], now  # one gesture: keep where it started
+                last["count"] += 1
+            else:
+                move["from"], move["count"] = move["value"], 1
+                self.user_moves.append(move)
+        cc = move.get("cc")
+        if cc is not None and (move["track"], cc) in self._ramps:  # a dict lookup; the sequencer does the rest
+            self._grabs.append((move["track"], cc, move["value"]))
+
+    def _yield_to_user(self):
+        """Cancel each ramp the user grabbed (sequencer, caller holds _lock, once per tick when there are grabs)."""
+        while self._grabs:
+            track, cc, value = self._grabs.popleft()
+            ramp = self._ramps.pop((track, cc), None)
+            if ramp is None:
+                continue
+            self._restore.pop((track, cc), None)  # the user took over a cutoff a filter_swap would put back
+            note = {"track": track, "param": ramp.label, "cc": cc, "ramp": ramp.id, "ramp_was_at": ramp.last,
+                    "ramp_to": ramp.end, "user_value": value, "bar": self.bar,
+                    "said": f"you grabbed track {track} {ramp.label}: Whiplash's ramp {ramp.id} "
+                            f"({ramp.start} -> {ramp.end}) stopped at {ramp.last}; your knob wins"}
+            self.yields.append(note)
+            self._yield_new.append(note)
+
+    def take_yields(self):
+        """Yields not yet reported in a tool result (every tool result carries them as yielded_to_user)."""
+        out = []
+        while self._yield_new:
+            try:
+                out.append(self._yield_new.popleft())
+            except IndexError:
+                break
+        return out
+
+    def play_along(self, on=True):
+        """whiplash_play_along: open (or close) the unit's MIDI input. Nothing else changes."""
+        on = True if on is None else check_flag(on, "on")
+        if not on:
+            closed = self.close_input()
+            with self._lock:
+                rec = self.recording.summary() if self.recording else None
+            return {"on": False, "was_open": closed is not None,
+                    "follow_stopped": bool(closed and closed["follow_stopped"]),
+                    "recording": rec, "note": "the session recording stays in memory (nothing is written to disk)"}
+        opened = self.open_input()
+        with self._lock:
+            out = {"on": True, "opened_now": opened, **self.play_along_status()}
+        out["setup"] = jam.SEND_SETUP
+        out["does"] = ("Whiplash now hears the unit: knob moves show in whiplash_status (play_along.user_moves) and a "
+                       "Whiplash ramp on the knob you grab stops at once (yielded_to_user in the next result). "
+                       "Everything sent and heard is recorded in memory, with clock-tick times. It never sends "
+                       "anything it hears back to the unit.")
+        return out
+
+    def follow(self, track=None, answer_track=None, mode=None, stop=False):
+        """whiplash_follow: answer what the user plays on `track`, on `answer_track`, on the next bar line.
+
+        Notes heard on track's channel in a bar are quantized to the 16th grid at the next bar line; that bar plays
+        a reply (jam.reply: echo, answer or harmonize) in the key playing, in the native register, replacing the
+        answer track's own line for that bar. Validated before anything changes; opens the input if needed."""
+        stop = check_flag(stop, "stop")
+        if stop:
+            extra = [k for k, v in (("track", track), ("answer_track", answer_track), ("mode", mode))
+                     if v not in (None, "")]
+            if extra:
+                raise WhiplashError(f"stop: true takes nothing else (got {', '.join(extra)})")
+            with self._lock:
+                had, self._follow = self._follow, None
+            self._phrase.clear()
+            return {"stopped": had is not None, "was": self._follow_summary(had)}
+        if track in (None, "") or answer_track in (None, ""):
+            raise WhiplashError("give track (where the user plays) and answer_track (where Whiplash answers), e.g. "
+                                "track 7, answer_track 8; or stop: true")
+        track, answer = check_track(track), check_track(answer_track)
+        if track == answer:
+            raise WhiplashError("answer_track must differ from track (one voice per track): e.g. track 7, "
+                                "answer_track 8")
+        try:
+            mode = jam.check_mode(mode)
+        except jam.JamError as exc:
+            raise WhiplashError(str(exc)) from None
+        with self._lock:
+            self._require_playing()
+            self._check_answer_track(answer)
+        self.open_input()  # raises with the setup hint before anything changes
+        with self._lock:
+            self._require_playing()
+            self._check_answer_track(answer)
+            replaced = self._follow_summary(self._follow)
+            self._phrase.clear()
+            at = self.bar + 1
+            self._follow = {"track": track, "answer": answer, "mode": mode, "since_bar": at, "replies": 0,
+                            "last": None, "dropped": 0}
+            out = {"following": self._follow_summary(self._follow), "key": self.key_name(), "applies": "next bar",
+                   "at_bar": at,
+                   "how": (f"Play a phrase on track {track} (KEYBOARD mode on that track, with OUTPUT CH = track "
+                           f"channel, or give the AUTO channel's number as track). Each bar you play in is answered "
+                           f"on the next bar line on track {answer}: {MODE_WORDS[mode]}, on the 16th grid, at most "
+                           f"{jam.PHRASE_MAX} notes, in the native register; that bar replaces track {answer}'s own "
+                           "line. Stop with stop: true or whiplash_stop."),
+                   "setup": jam.SEND_SETUP}
+            if replaced:
+                out["replaced"] = replaced
+            if answer > 8 or track > 8:
+                out["channel_note"] = HIGH_TRACK_NOTE
+            if answer in self.muted or answer in self.hw_muted:
+                out["warning"] = f"track {answer} is muted, so the answers won't sound until it is unmuted"
+            return out
+
+    def _check_answer_track(self, answer):
+        role = harmony.role_of(answer, self.pattern, self._kit_tracks)
+        if role in harmony.NEVER:
+            raise WhiplashError(f"track {answer} holds {role}: Whiplash answers only on a melodic track (pad, chord, "
+                                "stab, bass, lead, or an unlabelled track 9-16). Pick another answer_track, or "
+                                "relabel it with whiplash_label_tracks")
+
+    @staticmethod
+    def _follow_summary(f):
+        if f is None:
+            return None
+        return {"track": f["track"], "answer_track": f["answer"], "mode": f["mode"], "since_bar": f["since_bar"],
+                "replies": f["replies"], "last": f["last"], "dropped_notes": f["dropped"]}
+
+    def _answer(self, bar_n, at, events):
+        """At bar_n's line (sequencer, caller holds _lock): answer the notes heard in the bar that just ended.
+
+        Pops at most PHRASE_BUFFER notes, quantizes them and replaces the answer track's events for this bar.
+        Small list work, like the rest of _bar_boundary."""
+        f = self._follow
+        at = time.perf_counter() if at is None else at
+        step_len = 60.0 / self.bpm / 4.0
+        cut = at - step_len / 2  # a note just before the line belongs to the new bar's phrase
+        heard, queue = [], self._phrase
+        while queue and queue[0][0] < cut:
+            heard.append(queue.popleft())
+        if not heard:
+            return
+        phrase = jam.quantize(heard, at - patterns.STEPS * step_len, step_len)
+        f["dropped"] += len(heard) - len(phrase)  # older than one bar, or a second note on one step
+        if not phrase:
+            return
+        track, shift = f["answer"], self._transpose.get(f["answer"], 0)
+        notes = jam.reply(f["mode"], phrase, self.effective_key())
+        for step in list(events):
+            events[step] = [e for e in events[step] if e[0] != track]
+        played = []
+        for step, note, vel in notes:
+            note = jam.fold(note + shift) if shift else note
+            events[step].append((track, note, vel, 1, 0))
+            played.append(note)
+        f["replies"] += 1
+        f["last"] = {"bar": bar_n, "heard": [n for _, n, _ in phrase], "played": played,
+                     "steps": [s for s, _, _ in notes]}
+
+    def follow_status(self):
+        return self._follow_summary(self._follow)
+
+    def _push_undo(self, entry):
+        """Remember how to revert a part, mix or arrangement change (caller holds _lock)."""
+        self._undo.append(entry)
+        del self._undo[:-jam.UNDO_MAX]
+
+    def undo(self):
+        """whiplash_undo: revert the newest part, mix or arrangement change on the next bar line.
+
+        Validated before anything changes; an arrangement that would already have ended is not restored (that
+        would stop the beat)."""
+        with self._lock:
+            if not self._undo:
+                raise WhiplashError("nothing to undo: whiplash_undo reverts the last written part, mix or "
+                                    "arrangement change since the beat started")
+            entry = self._undo[-1]
+            playing = self.playing()
+            at = self.bar + 1
+            if entry["kind"] != "mix" and not playing:
+                raise WhiplashError("nothing is playing: parts and arrangements only exist while a beat plays")
+            if entry["kind"] == "arrangement" and entry["prev"] is not None:
+                arr = entry["prev"][0]
+                if not arr["loop"] and at - arr["start"] >= arr["total"]:
+                    raise WhiplashError(f"the {arr['name']} arrangement would already have ended (bar "
+                                        f"{arr['start'] + arr['total']}), so restoring it would stop the beat; "
+                                        "nothing changed. Use whiplash_arrange to start one again")
+            self._undo.pop()
+            out = {"undone": entry["what"], "kind": entry["kind"],
+                   "can_still_undo": [e["what"] for e in reversed(self._undo)][:3]}
+            if entry["kind"] == "mix":
+                back = [(t, cc, v) for t, cc, v in entry["entries"] if v is not None]
+                cannot = sorted({t for t, _, v in entry["entries"] if v is None})
+                if cannot:
+                    out["cannot_revert"] = cannot
+                    out["cannot_revert_note"] = ("Whiplash hadn't sent these tracks' level or pan before that mix, so "
+                                                 "it doesn't know the value to go back to")
+                out["back_to"] = {f"{t} {'level' if cc == LEVEL_CC else 'pan'}": v for t, cc, v in back}
+                if playing:
+                    self._timed.setdefault(at, []).append({"kind": "mix", "owner": "undo", "entries": back,
+                                                           "ticks": 0})
+                    out.update(applies="next bar", at_bar=at)
+                else:
+                    if back:
+                        self.ensure_port()
+                        self._apply_mix(back, 0)
+                    out["applies"] = "now"
+                return out
+            self._timed.setdefault(at, []).append({"kind": "call", "owner": "undo",
+                                                   "fn": functools.partial(self._apply_undo, entry)})
+            out.update(applies="next bar", at_bar=at)
+            if entry["kind"] == "part":
+                out["track"] = entry["track"]
+                out["back_to"] = "the previous written part" if entry["prev"] is not None else "the generated line"
+            else:
+                out["back_to"] = (f"the {entry['prev'][0]['name']} arrangement, in the section bar {at} falls in"
+                                  if entry["prev"] is not None else "no arrangement (its mutes are lifted)")
+            return out
+
+    def _apply_undo(self, entry, bar_n):
+        """Restore a part or an arrangement on bar_n's line (sequencer, caller holds _lock, from _run_timed)."""
+        if entry["kind"] == "part":
+            if entry["prev"] is None:
+                self._parts.pop(entry["track"], None)
+            else:
+                self._parts[entry["track"]] = entry["prev"]
+            self._reroute()
+            return
+        self.muted -= self._arr_muted
+        self._cancel_owner(ARR_OWNER)
+        if self._restore:
+            self._reopen()
+        self._arr, self._arr_muted = None, set()
+        if entry["prev"] is None:
+            return
+        arr = entry["prev"][0]
+        offset = bar_n - arr["start"]
+        if not arr["loop"] and offset >= arr["total"]:
+            return  # ended meanwhile (checked when undo was called; kept as a guard)
+        arr["ended_at_bar"] = None
+        self._arr = arr
+        if offset < 0:
+            return  # it hasn't started yet: its first section starts on its own bar
+        offset %= arr["total"]
+        first = 0
+        for i, sec in enumerate(arr["sections"]):
+            if offset < first + sec["bars"]:
+                self._enter_section(arr, i, bar_n, start=bar_n - (offset - first))
+                return
+            first += sec["bars"]
+
+    def recording_snapshot(self):
+        """A copy of the session recording (oldest first), for v0.8.1's export. [] when nothing was recorded."""
+        rec = self.recording
+        return rec.snapshot() if rec is not None else []
+
+    def play_along_status(self):
+        """whiplash_status.play_along (caller holds _lock): None until the input was opened once."""
+        inp, rec = self._input, self.recording
+        if inp is None and rec is None:
+            return None
+        out = {"open": bool(inp and inp["thread"].is_alive()), "port": inp["name"] if inp else None}
+        with self._in_lock:
+            moves = [dict(m) for m in list(self.user_moves)[-jam.MOVES_SHOWN:]]
+            if inp is not None:
+                out.update(heard=inp["heard"], echoes_ignored=inp["echoes"],
+                           notes_heard={str(t): n for t, n in sorted(inp["notes"].items())},
+                           ignored=dict(inp["decoder"].ignored))
+        now = time.perf_counter()
+        if inp is not None:
+            out["last_heard_s"] = None if inp["last"] is None else round(now - inp["last"], 1)
+            if inp["lost"]:
+                out["lost"] = inp["lost"]
+                out["hint"] = "the MIDI input stopped (USB unplugged?): call whiplash_play_along to reopen it"
+            elif not inp["heard"] and time.time() - inp["opened"] > jam.QUIET_HINT_AFTER:
+                out["hint"] = jam.SEND_HINT
+        out["user_moves"] = [{**{k: m[k] for k in ("track", "param", "value", "from", "via") if k in m},
+                              **({"unsure": True} if m.get("unsure") else {}),
+                              "said": jam.said(m), "age_s": round(now - m["t"], 1)} for m in reversed(moves)]
+        out["yielded"] = list(self.yields)[-4:]
+        out["follow"] = self.follow_status()
+        if rec is not None:
+            out["recording"] = {"on": self._rec is not None, **rec.summary()}
+        out["moves_note"] = ("Moves are what the unit sent (track = MIDI channel; on the AUTO channel that is the "
+                             "channel's number, not a track). last_cc in tracks stays what Whiplash sent.")
         return out
 
     # ---- parameters ----------------------------------------------------
@@ -1868,6 +2327,9 @@ class Engine:
             with self._lock:
                 self._require_playing()
                 had = self._parts.pop(track, None)
+                if had is not None:
+                    self._push_undo({"kind": "part", "track": track, "prev": had,
+                                     "what": f"reset of track {track}'s written part"})
                 self._reroute()  # a generated part the written one replaced comes back on its track
                 return {"track": track, "reset": True, "was_written": had is not None,
                         "part": "generated" if any(self._work.get(track) or []) else None,
@@ -1900,6 +2362,8 @@ class Engine:
         with self._lock:
             self._require_playing()
             replaced = track in self._parts
+            self._push_undo({"kind": "part", "track": track, "prev": self._parts.get(track),
+                             "what": f"written part on track {track}"})
             self._parts[track] = part
             self._reroute()  # routing never targets a written track: a generated part there moves or is reported
             transpose = self._transpose.get(track, 0)
@@ -2038,6 +2502,9 @@ class Engine:
             with self._lock:
                 self._require_playing()
                 had = self._arr
+                if had is not None:
+                    self._push_undo({"kind": "arrangement", "prev": (had, set(self._arr_muted)),
+                                     "what": f"clearing the {had['name']} arrangement"})
                 unmuted = sorted(self._arr_muted & self.muted)
                 self.muted -= self._arr_muted
                 self._arr, self._arr_muted = None, set()
@@ -2081,6 +2548,8 @@ class Engine:
             self._require_playing()
             at = self.bar + 1
             replaced = self._arr is not None
+            self._push_undo({"kind": "arrangement", "prev": (self._arr, set(self._arr_muted)) if replaced else None,
+                             "what": f"the {name} arrangement"})
             if replaced:
                 self._cancel_owner(ARR_OWNER)  # closed cutoffs reopen on the new arrangement's first section
             self._arr = {"name": name, "sections": resolved, "start": at, "loop": loop, "offsets": offsets,
@@ -2189,18 +2658,23 @@ class Engine:
             self._enter_section(arr, i, bar_n)
         return True
 
-    def _enter_section(self, arr, i, bar_n):
-        """Schedule one section on its first bar (caller holds _lock): dict and set work over at most 16 tracks."""
+    def _enter_section(self, arr, i, bar_n, start=None):
+        """Schedule one section on its first bar (caller holds _lock): dict and set work over at most 16 tracks.
+
+        start: the section's first bar when it is entered part-way through (v0.8.0 undo resumes an arrangement);
+        its fill, drops and transition stay anchored to that start."""
         sec = arr["sections"][i]
-        arr["index"], arr["section_start"] = i, bar_n
-        last = bar_n + sec["bars"] - 1
+        begin = bar_n if start is None else start
+        arr["index"], arr["section_start"] = i, begin
+        last = begin + sec["bars"] - 1
+        self._mark("section", sec["name"])
         if self._restore:  # the previous section's filter_swap: reopen on this section's one
             self._reopen()
         if sec["prog"] == "clear":
             self._prog = None
             self._refresh_harmony()
         elif sec["prog"] is not None:
-            self._prog = replace(sec["prog"], start=bar_n)
+            self._prog = replace(sec["prog"], start=begin)
             self._refresh_harmony()
         roles = self._roles_playing()
         if sec["mute"]:
@@ -2499,6 +2973,8 @@ class Engine:
                 "muted": sorted(self.muted), "hardware_muted": sorted(self.hw_muted),
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "mutations": self.mutations(),
+                "play_along": self.play_along_status(),
+                "undo": [e["what"] for e in reversed(self._undo)][:4],
                 "last_error": self.last_error, "messages_sent": self.sent_count,
             }
 
