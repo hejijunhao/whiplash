@@ -232,7 +232,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 
 One test does a real virtual-port loopback through rtmidi; it skips where the machine has no MIDI system. CI runs the suite on Linux and macOS (`.github/workflows/tests.yml`).
 
-All of this runs against fake or virtual ports. Behaviour on a real Digitakt II is not covered by the test suite.
+All of this runs against fake or virtual ports. Behaviour on a real Digitakt II is not covered by the test suite; the ordered hardware session for that, with a 10-minute smoke test first, is [docs/testing/hardware-checklist.md](docs/testing/hardware-checklist.md).
 
 ## 90-second demo: a build and drop
 

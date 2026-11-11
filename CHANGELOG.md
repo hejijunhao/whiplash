@@ -19,6 +19,25 @@ Changed
 - The view keeps `amp_hold` knob travel at 0-127, so an explicit NOTE shows at the top.
 - Version 0.5.2 in `pyproject.toml`, `plugin.yaml` and `docs/catalog-entry.yaml`.
 
+### Also in 0.5.2: hardware test plan and v0.5.0 review (PR #10)
+
+Added
+- `docs/testing/hardware-checklist.md`: one ordered hardware session for a real Digitakt II. It starts with a 10-minute smoke test, which covers the demo plus one written melody. Then it covers:
+  - the v0.5.0 pitch register, status, skill and `amp_mode`,
+  - v0.4 sample select and transport modes,
+  - v0.3 live control,
+  - the reference fixes,
+  - the visualiser restyle,
+  - v0.5.1 `whiplash_write_part` (melody, rhythm presets, lock to kick, length vs HOLD/MODE, retrigger, tracks 9-16),
+  - the v0.5.2 fixes for the review findings (transpose on 9-16, All Notes Off on the 9-16 channels in use, `amp_hold` 127 only when explicit),
+  - and hot-plug.
+
+  Each check has the setup, the prompt to type, what to expect, and pass/fail boxes. The checks map to the reference's open hardware questions (§15.3). It is linked from README and CLAUDE.md.
+
+Fixed (docs)
+- Reference §8.1 Amp table: `amp_mode` is shipped (it said "planned").
+- v0.5 build plan status: P0a shipped in v0.5.0, and P0b shipped in v0.5.1.
+
 ## 0.5.1
 
 Written parts: Hermes can now write melodies, basslines and rhythms itself, the three asks from the Nov 11 2026 Digitakt II session that v0.5.0 left open ("play different notes so it's a melody", "4/4 on the bass drum, not 16ths", "plays non-stop"). 16 tools. Nothing here has been tested on a real Digitakt II yet.

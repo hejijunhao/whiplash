@@ -34,4 +34,6 @@ It cites the official OS 1.17 manual by page, cross-checks [midi.guide](https://
 
 `uv sync && uv run pytest -q`. CI runs Linux and macOS (`.github/workflows/tests.yml`).
 
+Hardware checks go through [docs/testing/hardware-checklist.md](docs/testing/hardware-checklist.md): one ordered session on a real unit, smoke test first. Add a check there for any new hardware-facing behaviour, and record results in the device reference.
+
 The repo root is the package, loaded as `whiplash` (see `tests/conftest.py`). Run the tests from a checkout directory named `whiplash`, or from another valid Python identifier. A worktree directory with a hyphen, such as `whiplash-viz`, breaks collection.
