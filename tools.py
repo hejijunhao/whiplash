@@ -95,7 +95,7 @@ def list_params(p):
 def play_pattern(p):
     pattern = patterns.resolve(p.get("genre"), p.get("mood"))
     result = ENGINE.play(pattern, bpm=p.get("bpm"), bars=p.get("bars"), port=p.get("port"),
-                         send_transport=p.get("send_transport"), transpose=p.get("transpose"))
+                         send_transport=p.get("send_transport"), transpose=p.get("transpose"), tracks=p.get("tracks"))
     transport = {"send_transport": result["send_transport"],
                  "transport_mode": eng.transport_mode(result["send_transport"]),
                  "overlap_warning": overlap_warning(result["send_transport"])}
@@ -108,18 +108,39 @@ def play_pattern(p):
                "tracks": ENGINE.tracks_summary(pattern, transpose=_queued_transpose(status)),
                "muted_carried": status["muted"], "ramps_carried": [r["id"] for r in status["ramps"]],
                "transpose_carried": status["transpose"],
-               "port": ENGINE.port_name, "virtual": ENGINE.virtual, **transport, **TRACK_NOTES}
+               "port": ENGINE.port_name, "virtual": ENGINE.virtual, **transport, **track_notes()}
         if result["replaced_queued"]:
             out["replaced_queued"] = result["replaced_queued"]
+        if result.get("setup"):
+            out["setup"] = setup_echo(result["setup"], f"at the switch, bar {result['switch_at_bar']}")
         return out
-    return {"mode": "started", "playing": pattern.name, "bpm": ENGINE.bpm, "swing": pattern.swing,
-            "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual,
-            "tracks": ENGINE.tracks_summary(),
-            "replaced_playing": result["was_playing"], "mutes_cleared": result["mutes_cleared"],
-            "ramps_cancelled": result["ramps_cancelled"], **transport, **TRACK_NOTES}
+    out = {"mode": "started", "playing": pattern.name, "bpm": ENGINE.bpm, "swing": pattern.swing,
+           "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual,
+           "tracks": ENGINE.tracks_summary(),
+           "replaced_playing": result["was_playing"], "mutes_cleared": result["mutes_cleared"],
+           "ramps_cancelled": result["ramps_cancelled"], **transport, **track_notes()}
+    if result.get("setup"):
+        out["setup"] = setup_echo(result["setup"], "before the first bar")
+    return out
 
 
-TRACK_NOTES = {"roles_assumed": True, "kit_note": eng.KIT_NOTE, "pitch_note": eng.PITCH_NOTE}
+def track_notes():
+    labelled = bool(ENGINE.kit()["tracks"])
+    return {"roles_assumed": not labelled, "kit_note": eng.KIT_LABELLED_NOTE if labelled else eng.KIT_NOTE,
+            "pitch_note": eng.PITCH_NOTE}
+
+
+def setup_echo(setup, when):
+    """play_pattern's per-track settings as applied, with slot labels from the kit map."""
+    out = {}
+    for track, entry in sorted(setup.items()):
+        item = dict(entry)
+        if "slot" in item:
+            label = ENGINE.slot_label(item["slot"])
+            if label:
+                item["slot_label"] = label
+        out[str(track)] = item
+    return {"tracks": out, "applied": when}
 
 
 def _queued_transpose(status):
@@ -140,14 +161,27 @@ def result_bpm(p, pattern):
 @_tool
 def set_param(p):
     ENGINE.ensure_port()
-    return ENGINE.set_param(p["track"], p["value"], param=p.get("param"), cc=p.get("cc"), nrpn=p.get("nrpn"))
+    out = ENGINE.set_param(p["track"], p["value"], param=p.get("param"), cc=p.get("cc"), nrpn=p.get("nrpn"))
+    label = ENGINE.slot_label(out["value"]) if out.get("param") == "sample_slot" else None
+    if label:
+        out["slot_label"] = label
+    return out
 
 
 @_tool
 def select_sample(p):
     ENGINE.ensure_port()
     out = ENGINE.set_param(p["track"], p["slot"], param="sample_slot")
-    return {"track": out["track"], "slot": out["value"], "cc": out["cc"], "note": SAMPLE_NOTE}
+    result = {"track": out["track"], "slot": out["value"], "cc": out["cc"], "note": SAMPLE_NOTE}
+    label = ENGINE.slot_label(out["value"])
+    if label:
+        result["slot_label"] = label
+    return result
+
+
+@_tool
+def label_tracks(p):
+    return ENGINE.label_tracks(tracks=p.get("tracks"), slots=p.get("slots"), reset=p.get("reset"))
 
 
 @_tool
@@ -261,5 +295,5 @@ def close_view(p):
 
 
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
-                                             select_sample, transpose, write_part, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
+                                             select_sample, label_tracks, transpose, write_part, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
                                              status, open_view, close_view)}

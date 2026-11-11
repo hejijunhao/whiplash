@@ -1,11 +1,26 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
 
-Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI channel per track (track N = channel N). It can't read anything back from the unit. This skill ships with the plugin and is updated with it, so trust it over any older notes of your own.
+Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI channel per track (track N = channel N). It can't read anything back from the unit. This skill ships with the plugin and is updated with it, so trust it over any older notes of your own. The tool descriptions are kept short on purpose; the detail is here.
+
+## Fast path: label, then start in one call
+
+1. When the user says what their tracks hold ("track 7 is a cymbal, track 5 is a pad"), call `whiplash_label_tracks(tracks: {"7": "cymbal", "5": "pad"})` straight away. Labelled slots too: `slots: {"11": "synth Phil likes"}`.
+2. Start the beat **and** fit it to the kit in the same call: `whiplash_play_pattern(genre: "deephouse", tracks: {"6": {"slot": 9, "transpose": 12}, "8": {"mute": true}})`. Each entry takes `slot` (0-127), `tune` (64 = none), `transpose` (semitones) and `mute`.
+3. Read the result, pass on its `overlap_warning` (and any `warning`), and answer. Don't follow up with separate select_sample / transpose / mute calls for things `tracks` already did.
+
+## Kit map (`whiplash_label_tracks`)
+
+- Free text is matched to a role: kick, snare, rim, clap, closed hat, open hat, cymbal, perc, bass, pad, stab, chord, lead, fx, other ("tuned cymbal" -> cymbal, "dirty bass" -> bass, "synth" -> lead). Or give `{"role": "chord", "label": "Rhodes"}`. `null` (or `""`) removes a label; labels merge, so you only send what changed.
+- **Generated parts follow the map** from the next bar (or the next start). Each part goes to a track labelled with its role, else to one with a close role (rim <-> snare, chord -> pad, stab -> lead, open hat -> cymbal), else stays on its default track if the user hasn't labelled that track as something else, else it is dropped. A cymbal or fx track never gets a chord, bass or other melodic line. Labelled tracks with no matching part stay silent: write one with `whiplash_write_part`.
+- The result's `routing` says which part lands where (`parts`), which were `dropped`, and which labelled tracks are `silent_until_written`. Tell the user in their terms.
+- Results and `whiplash_status` show the label as `tracks[n].role` (without "(assumed)") plus `kit_role`; `roles_assumed` is false once anything is labelled. A selected slot with a label shows `slot_label`, in `whiplash_select_sample`, `whiplash_set_param` sample_slot and the play `setup` echo too.
+- The map lives in memory for the session: it survives `whiplash_stop` and pattern switches. `reset: true` clears it, and so does a gateway restart.
+- Labels are only what the user told you. Whiplash can't read sample names (that would need SysEx, which it never sends).
 
 ## Writing notes, melodies and rhythms
 
@@ -37,10 +52,16 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 - Transpose works on any track that plays, including written parts on 9-16. On a track that plays nothing it is refused: write the part first.
 - Transpose lands on the next bar, carries across pattern switches, and `whiplash_stop` resets it. You can also pass it at start: `whiplash_play_pattern(genre, transpose: {"6": 12})`.
 
-## Track roles are assumptions
+## Patterns, switching and live changes
 
-- The pattern assumes 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords or stabs. Results mark these `(assumed)`.
-- The user's kit may be laid out differently, so ask what each track holds before you describe the beat as "bass" or "chords".
+- Genres: `deephouse` 122 BPM, `soul` 86, `techno` 130, `breaks` 132, `techhouse` 126 (four on the floor, offbeat open hat, shuffled 16th hats, rolling off-beat bass). "tech house", "tech-house" and similar spellings resolve to `techhouse`; an unknown genre's error lists the closest matches.
+- Without labels a pattern assumes 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords or stabs, and marks those roles `(assumed)`. Ask what the tracks hold before calling a line "bass" or "chords".
+- While a pattern plays, `whiplash_play_pattern` queues the new one for the next bar line without stopping the clock (`mode: "queued"`, `switch_at_bar`). Mutes, ramps, drops, transposes and written parts carry over; mutations reset (density, swing, humanize). `tracks` settings in a queued call land at the switch bar. A different `port` or `send_transport` restarts instead.
+- `whiplash_mutate`: `density` (tracks, amount -1..1 or thin/thicken), `fill` (drum fill on the next bar, tracks 1-5), `swing` (50-80), `humanize` (0-1), `drop` (silence tracks for `bars`, then they return; `fill: true` adds a fill on the last dropped bar), `reset` (back to the pattern; written parts stay).
+- `whiplash_ramp_param` sweeps on the clock; a new ramp on the same track and param replaces the old one, and `whiplash_stop` cancels all. Ramps on `amp_hold` stop at 126.
+- Mutes reset on `whiplash_stop` or a fresh start, so mute after starting (or use `tracks: {"n": {"mute": true}}`).
+- `whiplash_stop` silences everything and resets mutes, ramps, mutations, transposes, written parts and any queued switch. The kit map stays.
+- With no Digitakt connected Whiplash plays into a virtual port named "Whiplash", which is silent. Results then carry a `warning`: tell the user. `whiplash_open_view` opens a read-only local visualiser if the user wants to watch.
 
 ## Sample select
 
@@ -72,7 +93,9 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Wrong rhythm", "make it 4/4", "lock to the kick" | `whiplash_write_part` with `rhythm` or `lock_to`, not density |
 | "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`) |
 | Drums you didn't ask for | the unit's own pattern: empty pattern or clock only |
-| Wrong instrument on a track | ask the user, then `whiplash_select_sample` |
+| Wrong instrument on a track | ask the user, label it with `whiplash_label_tracks`, then `whiplash_select_sample` or `tracks: {"n": {"slot": ...}}` |
+| Chords on a cymbal, bass on a hat | the pattern's assumed layout: label the tracks with `whiplash_label_tracks` |
+| Many calls just to set the kit up | one `whiplash_play_pattern` with `tracks` |
 | Silence everywhere | `warning` in a result: virtual port, no Digitakt connected |
 
 ## What Whiplash can never do

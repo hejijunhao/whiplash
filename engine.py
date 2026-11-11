@@ -26,7 +26,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from . import ccmap, mutate, parts, patterns
+from . import ccmap, kitmap, mutate, parts, patterns
 
 log = logging.getLogger("whiplash")
 
@@ -55,9 +55,13 @@ HOLD_RAMP_NOTE = ("amp_hold ramps stop at 126: 127 is HOLD = NOTE, a mode switch
 ALL_NOTES_OFF = 123
 LOW_CHANNELS = frozenset(range(8))  # channels 1-8 always get All Notes Off on panic
 _NOT_PARAMS = {123, 6, 38, 98, 99}  # All Notes Off and NRPN data entry: never shown as a track's last_cc
-KIT_NOTE = ("Track roles are the pattern's assumed layout, not what the unit holds: ask the user what each track "
-            "plays. slot, tune and last_cc are the last values Whiplash sent (it can't read the unit; null = not "
-            "sent yet).")
+KIT_NOTE = ("Track roles marked (assumed) are the pattern's layout, not what the unit holds: ask the user what each "
+            "track plays and record it with whiplash_label_tracks. slot, tune and last_cc are the last values "
+            "Whiplash sent (it can't read the unit; null = not sent yet).")
+KIT_LABELLED_NOTE = ("Roles without (assumed) come from the user's labels (whiplash_label_tracks); generated parts "
+                     "follow them. Whiplash can't read the unit, so the labels are only as right as the user's "
+                     "description. slot, tune and last_cc are the last values Whiplash sent (null = not sent yet).")
+SETUP_KEYS = ("slot", "tune", "transpose", "mute")
 PITCH_NOTE = ("pitch: MIDI note 60 plays a sample at its own pitch, if tune is 64 and the preset's OCTAVE (FUNC+FLTR "
               "> TRACK) is unchanged. semitones_from_native = note - 60 + (tune - 64), using the tune Whiplash last "
               "sent (null = not sent, counted as 64); Whiplash can't see the OCTAVE setting or an LFO on tune. "
@@ -195,6 +199,52 @@ def check_envelope(value):
     return word
 
 
+def check_setup(tracks):
+    """play_pattern's tracks: {"6": {"slot": 9, "tune": 64, "transpose": -12, "mute": false}} -> {6: {...}}.
+
+    Validates everything; slot is a whole 0-127 and tune clamps into its named range like whiplash_set_param.
+    """
+    if tracks in (None, {}):
+        return {}
+    if not isinstance(tracks, dict):
+        raise WhiplashError('tracks must map track to settings, e.g. {"6": {"slot": 9, "transpose": 12}}')
+    out = {}
+    for raw, entry in tracks.items():
+        track = check_track(raw)
+        if not isinstance(entry, dict):
+            raise WhiplashError(f'track {raw}: give an object like {{"slot": 9, "tune": 64}}, got {entry!r}')
+        unknown = sorted(set(entry) - set(SETUP_KEYS))
+        if unknown:
+            raise WhiplashError(f"track {track}: unknown setting(s) {unknown}; use {', '.join(SETUP_KEYS)}")
+        setup = {}
+        if entry.get("slot") is not None:
+            setup["slot"] = check_whole(entry["slot"], 0, 127, f"slot for track {track}")
+        if entry.get("tune") is not None:
+            spec = ccmap.PARAMS["tune"]
+            tune = check_whole(entry["tune"], 0, 127, f"tune for track {track}", " (64 = no shift)")
+            setup["tune"] = min(spec.max, max(spec.min, tune))
+            if setup["tune"] != tune:
+                setup["tune_clamped"] = True
+        if entry.get("transpose") is not None:
+            setup["transpose"] = check_transpose(entry["transpose"], f"transpose for track {track}")
+        if entry.get("mute") is not None:
+            setup["mute"] = check_flag(entry["mute"], f"mute for track {track}")
+        if setup:
+            out[track] = setup
+    return out
+
+
+def setup_ccs(setup):
+    """[(track, cc, value)] for the slot and tune settings, slot first (a new sample, then its tune)."""
+    out = []
+    for track, entry in sorted(setup.items()):
+        if "slot" in entry:
+            out.append((track, SLOT_CC, entry["slot"]))
+        if "tune" in entry:
+            out.append((track, TUNE_CC, entry["tune"]))
+    return out
+
+
 def clamp_note(note):
     return min(patterns.NOTE_MAX, max(patterns.NOTE_MIN, note))
 
@@ -272,7 +322,11 @@ class Engine:
         self._thread = None
         self._stop = None  # per-run stop Event
         self._done = None  # per-run Event, set once the run has silenced the port itself
-        self.pattern = None
+        self.pattern = None  # the playing pattern, routed onto the kit map
+        self._raw_pattern = None  # the same pattern as generated, before routing
+        self._kit_tracks = {}  # track -> (role, label) from whiplash_label_tracks; survives stop and switches
+        self._kit_slots = {}  # slot -> label
+        self._kit_dirty = False  # labels changed while playing: re-route at the next bar line
         self.bpm = 120.0
         self.swing = 0.5
         self.muted = set()
@@ -406,7 +460,8 @@ class Engine:
     def transport_on(self):
         return default_send_transport() if self.send_transport is None else self.send_transport
 
-    def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None, transpose=None):
+    def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None, transpose=None,
+             tracks=None):
         """Start a pattern, or queue a live switch to it at the next bar line.
 
         send_transport: True sends MIDI Start/Stop around the clock, False sends clock only,
@@ -417,11 +472,23 @@ class Engine:
         Both carry "send_transport".
         transpose ({track: semitones}) applies from the first bar of a fresh start, or from the switch
         bar of a queued one, merged into the transposes already carried.
+        tracks ({track: {slot, tune, transpose, mute}}) sets each track up in the same call: the slot and
+        tune CCs go out just before the first bar (fresh start) or at the switch bar (queued), and the
+        mutes land with them.
         """
         bpm = check_bpm(pattern.bpm if bpm is None else bpm)  # validate before touching the running beat
         bars = check_bars(bars)
         send_transport = check_send_transport(send_transport)
         transpose = check_transpose_map(transpose)
+        setup = check_setup(tracks)
+        for track, entry in setup.items():
+            if "transpose" in entry:
+                if transpose.get(track, entry["transpose"]) != entry["transpose"]:
+                    raise WhiplashError(f"track {track}: transpose given twice with different values "
+                                        f"({transpose[track]} and {entry['transpose']})")
+                transpose[track] = entry["transpose"]
+        ccs = setup_ccs(setup)
+        mutes = {t: e["mute"] for t, e in setup.items() if "mute" in e}
         with self._transport:
             same_mode = send_transport is None or send_transport == self.send_transport
             if (self.playing() and self._port is not None and (port is None or port == self.port_name)
@@ -430,9 +497,11 @@ class Engine:
                     self._check_transpose_targets(transpose, pattern, carried=set(self._parts))
                     replaced = self._queued["pattern"].name if self._queued else None
                     at = self.bar + 1
-                    self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at, "transpose": transpose}
-                return {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
-                        "send_transport": self.send_transport}
+                    self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at, "transpose": transpose,
+                                    "ccs": ccs, "mutes": mutes}
+                out = {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
+                       "send_transport": self.send_transport}
+                return {**out, "setup": setup} if setup else out
             self._check_transpose_targets(transpose, pattern, carried=set())  # a fresh start clears written parts
             if send_transport is None:
                 send_transport = default_send_transport()
@@ -442,6 +511,7 @@ class Engine:
                 self.send_transport = send_transport
                 self._load(pattern, bpm, bars, start_bar=0)
                 self._transpose = {t: v for t, v in transpose.items() if v}
+                self._apply_setup(ccs, mutes)  # before the thread starts: before MIDI Start and the first note
                 self.bar = 0
                 self.last_error = None
                 self._stop, self._done = threading.Event(), threading.Event()
@@ -449,17 +519,42 @@ class Engine:
                     target=self._run, args=(send_clock, send_transport, self._stop, self._done),
                     name="whiplash-seq", daemon=True)
                 self._thread.start()
-            return {"mode": "started", "send_transport": send_transport, **stopped}
+            out = {"mode": "started", "send_transport": send_transport, **stopped}
+            return {**out, "setup": setup} if setup else out
+
+    def _apply_setup(self, ccs, mutes):
+        """Send play_pattern's per-track slot/tune CCs and set its mutes (caller holds _lock).
+
+        A sent CC replaces a running ramp on the same track and CC, as whiplash_set_param does. Unmuting
+        also releases a unit mute Whiplash set (CC 94 = 0), as whiplash_unmute_track does.
+        """
+        mido = __import__("mido") if ccs or mutes else None
+        for track, control, value in ccs:
+            self._ramps.pop((track, control), None)
+            self._cc(mido, track - 1, control, value)
+        for track, muted in mutes.items():
+            if muted:
+                self.muted.add(track)
+            else:
+                self.muted.discard(track)
+                if track in self.hw_muted:
+                    self._cc(mido, track - 1, MUTE_CC, 0)
+                    self.hw_muted.discard(track)
 
     def _load(self, pattern, bpm, bars, start_bar):
-        """Make pattern current (caller holds _lock). Resets mutations, keeps mutes, ramps, drops."""
-        self.pattern = pattern
+        """Make pattern current (caller holds _lock). Resets mutations, keeps mutes, ramps, drops.
+
+        pattern is the generated one; it plays routed onto the kit map (kitmap.route).
+        """
+        self._raw_pattern = pattern
+        self.pattern = kitmap.route(pattern, self._kit_tracks)
+        self._kit_dirty = False
         self.bpm = bpm
         self.swing = pattern.swing
         self.bars_total = bars
         self.pattern_start = start_bar
         self._density, self.humanize = {}, 0.0
-        self._work = mutate.working(pattern)
+        self._work = mutate.working(self.pattern)
         for track, part in self._parts.items():  # written parts carry across switches and mutate reset
             self._work[track] = [list(bar) for bar in part.bars]
 
@@ -490,8 +585,8 @@ class Engine:
                     self._drops, self._fills = {}, {}
                     self._transpose = {}
                     self._parts = {}
-                    if self.pattern is not None:
-                        self._load(self.pattern, self.bpm, self.bars_total, 0)
+                    if self._raw_pattern is not None:
+                        self._load(self._raw_pattern, self.bpm, self.bars_total, 0)
                 cleared = self._clear_mutes()
             return {"was_playing": was_playing, "mutes_cleared": cleared, "ramps_cancelled": ramps}
 
@@ -564,7 +659,10 @@ class Engine:
             self._queued = None
             self._load(queued["pattern"], queued["bpm"], queued["bars"], start_bar=bar_n)
             self._set_transposes(queued.get("transpose") or {})
+            self._apply_setup(queued.get("ccs") or (), queued.get("mutes") or {})  # before this bar's notes
             log.info("whiplash: switched to %s at bar %d", queued["pattern"].name, bar_n)
+        if self._kit_dirty:
+            self._reroute()
         if self.bars_total and bar_n - self.pattern_start >= self.bars_total:
             return None
         self.bar = bar_n
@@ -593,6 +691,17 @@ class Engine:
                 events[step].append((track, note, vel, gate, offset))
         return events
 
+    def _reroute(self):
+        """Labels changed while playing (caller holds _lock): route the same pattern onto the new map.
+
+        Unlike a switch this keeps swing, humanize and per-track density.
+        """
+        old = set(self._work)
+        self.pattern = kitmap.route(self._raw_pattern, self._kit_tracks)
+        self._kit_dirty = False
+        for track in old | set(self.pattern.bars) | set(self._parts):
+            self._rebuild(track)
+
     @staticmethod
     def _silent_tracks(tracks, pattern, carried):
         """The tracks that would play nothing: no notes in pattern and no written part carried."""
@@ -601,7 +710,8 @@ class Engine:
 
     def _check_transpose_targets(self, transpose, pattern, carried):
         """Refuse a non-zero transpose on a track that would play nothing (it would silently do nothing)."""
-        silent = self._silent_tracks([t for t, v in transpose.items() if v], pattern, carried)
+        silent = self._silent_tracks([t for t, v in transpose.items() if v],
+                                     kitmap.route(pattern, self._kit_tracks), carried)
         if silent:
             raise WhiplashError(f"track(s) {silent} play nothing in {pattern.name}, so transpose would do nothing. "
                                 "Tracks 9-16 only play a written part: start the pattern, write one with "
@@ -951,7 +1061,7 @@ class Engine:
         with self._lock:
             self._require_playing()
             self._drops, self._fills = {}, {}
-            self._load(self.pattern, self.bpm, self.bars_total, self.pattern_start)
+            self._load(self._raw_pattern, self.bpm, self.bars_total, self.pattern_start)
             return {"reset": True, "swing": round(self.swing * 100), "applies": "next bar"}
 
     def set_transpose(self, track, semitones=None, octaves=None):
@@ -977,7 +1087,7 @@ class Engine:
                 silent = self._silent_tracks([track], self.pattern, carried)
                 queued = self._queued
                 if silent and queued:  # it may play in the pattern that is about to switch in
-                    silent = self._silent_tracks(silent, queued["pattern"], carried)
+                    silent = self._silent_tracks(silent, kitmap.route(queued["pattern"], self._kit_tracks), carried)
                 if silent:
                     raise WhiplashError(f"track {track} plays nothing right now, so transpose would do nothing. "
                                         + ("Tracks 9-16 only play a written part: " if track > 8 else "")
@@ -1132,7 +1242,8 @@ class Engine:
             pattern = self.pattern if current else pattern
             if current:
                 work = self._work
-            else:  # a queued pattern: written parts carry into it
+            else:  # a queued pattern: routed onto the kit map, and written parts carry into it
+                pattern = kitmap.route(pattern, self._kit_tracks)
                 work = mutate.working(pattern)
                 work.update({t: part.bars for t, part in self._parts.items()})
             transpose = dict(self._transpose) if transpose is None else transpose
@@ -1143,14 +1254,16 @@ class Engine:
                     last[ch + 1][spec.name if spec else f"cc {control}"] = value
             roles = pattern.roles if pattern is not None else {}
             in_use = {t for t, bars in work.items() if any(bars)} | set(last) | set(transpose)
-            in_use |= self.muted | self.hw_muted
+            in_use |= self.muted | self.hw_muted | set(self._kit_tracks)
             out = {}
             for track in sorted(in_use):
+                label = self._kit_tracks.get(track)
                 role = roles.get(track)
                 cc = last.get(track, {})
+                slot = cc.get("sample_slot")
                 out[str(track)] = {
-                    "role": f"{role} (assumed)" if role else None,
-                    "slot": cc.get("sample_slot"), "tune": cc.get("tune"),
+                    "role": label[1] if label else f"{role} (assumed)" if role else None,
+                    "slot": slot, "tune": cc.get("tune"),
                     "transpose": transpose.get(track, 0),
                     "pitch": self._pitch(track, work.get(track), transpose.get(track, 0),
                                          None if track in self._parts else pattern),
@@ -1159,6 +1272,56 @@ class Engine:
                              "generated" if work.get(track) and any(work[track]) else None),
                     "last_cc": {k: v for k, v in cc.items() if k not in ("sample_slot", "tune")},
                 }
+                if label:
+                    out[str(track)]["kit_role"] = label[0]
+                if slot is not None and slot in self._kit_slots:
+                    out[str(track)]["slot_label"] = self._kit_slots[slot]
+            return out
+
+    # ---- kit map -------------------------------------------------------
+    def kit(self):
+        """The session kit map as JSON-friendly dicts."""
+        with self._lock:
+            return {"tracks": {str(t): {"role": r, "label": l} for t, (r, l) in sorted(self._kit_tracks.items())},
+                    "slots": {str(s): l for s, l in sorted(self._kit_slots.items())}}
+
+    def slot_label(self, slot):
+        with self._lock:
+            return self._kit_slots.get(slot)
+
+    def label_tracks(self, tracks=None, slots=None, reset=False):
+        """Record what the user says each track and slot holds. Merges; a null/empty label removes one.
+
+        Generated parts follow the map from the next bar line (or the next start). Validated before
+        anything changes. The map survives whiplash_stop and pattern switches; reset: true clears it
+        first (labels given in the same call are then applied to the empty map).
+        """
+        reset = check_flag(reset, "reset")
+        try:
+            track_changes = kitmap.check_tracks(tracks)
+            slot_changes = kitmap.check_slots(slots)
+        except kitmap.KitError as exc:
+            raise WhiplashError(str(exc)) from None
+        if not (reset or track_changes or slot_changes):
+            raise WhiplashError('give tracks (e.g. {"7": "cymbal", "5": "pad"}), slots (e.g. {"11": "synth"}) '
+                                "or reset: true")
+        with self._lock:
+            base_tracks = {} if reset else self._kit_tracks
+            base_slots = {} if reset else self._kit_slots
+            self._kit_tracks = kitmap.merged(base_tracks, track_changes)
+            self._kit_slots = kitmap.merged(base_slots, slot_changes)
+            playing = self.playing() and self._raw_pattern is not None
+            if playing:
+                self._kit_dirty = True  # the sequencer re-routes at the next bar line
+            elif self._raw_pattern is not None:
+                self._reroute()  # nothing is clocking: route now so status shows it
+            out = {"kit": self.kit(), "reset": reset,
+                   "applies": "next bar" if playing else "next whiplash_play_pattern"}
+            if playing:
+                out["at_bar"] = self.bar + 1
+            if self._raw_pattern is not None:
+                out["routing"] = kitmap.describe(self._raw_pattern, self._kit_tracks)
+                out["routing"]["pattern"] = self._raw_pattern.name
             return out
 
     def mutations(self):
@@ -1182,7 +1345,8 @@ class Engine:
                            if queued else None),
                 "transpose": {str(t): v for t, v in sorted(self._transpose.items())},
                 "parts": {str(t): {"placed_by": p.source, "bars": p.bars_written} for t, p in sorted(self._parts.items())},
-                "tracks": self.tracks_summary(), "roles_assumed": True, "kit_note": KIT_NOTE,
+                "tracks": self.tracks_summary(), "roles_assumed": not self._kit_tracks,
+                "kit_note": KIT_LABELLED_NOTE if self._kit_tracks else KIT_NOTE, "kit": self.kit(),
                 "pitch_note": PITCH_NOTE,
                 "muted": sorted(self.muted), "hardware_muted": sorted(self.hw_muted),
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
@@ -1202,8 +1366,10 @@ class Engine:
                 "fallback": self.fallback, "port_lost": self.port_lost, "last_error": self.last_error,
                 "pattern": self.pattern, "bpm": self.bpm, "swing": self.swing, "bar": self.bar,
                 "pattern_start": self.pattern_start, "bars": self.bars_total,
-                "queued": dict(self._queued) if self._queued else None,
+                "queued": ({**self._queued, "pattern": kitmap.route(self._queued["pattern"], self._kit_tracks)}
+                           if self._queued else None),
                 "muted": set(self.muted), "hw_muted": set(self.hw_muted),
+                "kit_tracks": dict(self._kit_tracks),
                 "ramps": [r.summary() for r in sorted(self._ramps.values(), key=lambda r: int(r.id[1:]))],
                 "density": dict(self._density), "humanize": self.humanize, "work": dict(self._work),
                 "drops": dict(self._drops), "fills": {b: set(t) for b, t in self._fills.items()},
