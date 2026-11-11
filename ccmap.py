@@ -11,8 +11,25 @@ Why no NRPN for named params: several NRPN addresses disagree between the two so
 The `nrpn` field is documentation only (midi.guide addresses); Whiplash never sends it.
 Raw NRPN stays available on whiplash_set_param for anyone who has checked their unit.
 
-Sample assignment (sample slot CC 19 / NRPN 1:8, sample bank CC 24 / NRPN 1:9, sample NRPN 1:3)
-is never in this table and is blocked in raw passthrough too, so Whiplash can't reassign samples.
+Sample select (v0.4). Only the sample SLOT is exposed, as the named param `sample_slot`:
+- Manual, Appendix B, B.3 SOURCE PARAMETERS (p. 109): "Sample Slot Select" CC 19, NRPN 1:8, and
+  "Sample Bank Select" CC 24, NRPN 1:9; repeated in B.9 MISC PARAMETERS (p. 113) as "Sample Slot"
+  19 / 1:8 and "Sample Bank" 24 / 1:9. No CC LSB is listed for either (7-bit, not high-res; the
+  high-res list in B.8 names only the LFO speed/depth params). The manual gives no value range.
+- midi.guide (updated Oct 12 2026), Source section: Sample Slot Select CC 19 [0-127], NRPN 1:8
+  [0-16256] (data MSB only); Sample Bank Select CC 24 [0-7], NRPN 1:9 [0-896]; "Sample" NRPN 1:3
+  [0-1023] = bank x 128 + slot (A0 = 0 .. H127 = 1023), with the note that turning SMP sends only
+  the slot in the selected bank.
+- The project pool holds up to 1016 sample slots (manual 5.2.6, p. 17); the SMP list's first
+  entry is OFF, which plays no sample (Appendix A.2, p. 94). Neither source says whether CC 19
+  value 0 is OFF or the first sample: that needs checking on the unit.
+CC 19 agrees in both sources, so `sample_slot` sends CC 19 (7-bit, 0-127) on the track's channel:
+a slot within the RAM bank currently selected on the unit. It only picks among samples already
+loaded into the project; it can't list, preview or load anything. Raw cc=19 stays refused so the
+one path is the validated named param. Sample BANK select (CC 24, NRPN 1:9) and the absolute
+"sample" NRPN 1:3 (midi.guide only, absent from the manual) stay blocked, as do NRPN 1:8 raw.
+Machine type (Oneshot/Werp/Stretch/...): neither source lists a CC or NRPN for it (it is only
+reached via the MACHINE menu, [FUNC] + [SRC], Appendix A.1), so Whiplash can't switch machines.
 FX-channel and global parameters (delay time, reverb decay, ...) live on the FX channel and are
 out of scope for named params; raw cc can still reach them.
 """
@@ -69,6 +86,9 @@ _TABLE = (
     _c("sample_length", 21, "src", "SRC knob F: sample length on Oneshot/Repitch/Stretch (0-120); "
        "machine dependent", max=120, aliases=("length",), nrpn=(1, 5)),
     _c("loop_pos", 22, "src", "Loop position (Oneshot machine only)", aliases=("loop_position",), nrpn=(1, 6)),
+    _c("sample_slot", 19, "src", "Sample slot (0-127) within the RAM bank selected on the unit; picks a sample "
+       "already loaded in the project pool. Can't list, preview or load samples; the SMP list starts with "
+       "OFF (no sound)", discrete=True, aliases=("sample", "sample_select", "smp", "slot"), nrpn=(1, 8)),
     _c("sample_level", 23, "src", "Sample level into the filter", nrpn=(1, 7)),
     # filter
     _c("filter_freq", 74, "filter", "Filter cutoff frequency", aliases=("filter_cutoff", "cutoff", "filter"),
@@ -117,9 +137,11 @@ ALIASES = {alias: p.name for p in _TABLE for alias in p.aliases}
 BY_CC = {p.cc: p for p in _TABLE}
 MUTE_CC = PARAMS["mute"].cc
 
-# CCs that must never be sent: bank select 0/32, sample slot/bank select 19/24, and the
-# NRPN/data-entry controllers (sent only by the NRPN helper).
-BLOCKED_CCS = {0, 32, 19, 24, 6, 38, 98, 99, 100, 101}
+# CCs that must never be sent: bank select 0/32, sample bank select 24, and the NRPN/data-entry
+# controllers (sent only by the NRPN helper).
+BLOCKED_CCS = {0, 32, 24, 6, 38, 98, 99, 100, 101}
+# Sent only through the named param (validated, documented), never as raw cc.
+NAMED_ONLY_CCS = {19: "sample_slot"}
 BLOCKED_NRPNS = {(1, 3), (1, 8), (1, 9)}  # sample, sample slot, sample bank
 
 

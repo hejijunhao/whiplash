@@ -132,7 +132,7 @@ EXPECTED_CC = {
     "filter_env_delay": 91, "filter_key_tracking": 92, "amp_attack": 79, "amp_hold": 80, "amp_decay": 81,
     "amp_sustain": 82, "amp_release": 83, "delay_send": 84, "reverb_send": 85, "chorus_send": 12, "overdrive": 57,
     "bit_reduction": 54, "sample_rate_reduction": 55, "lfo1_speed": 102, "lfo1_depth": 109, "lfo2_speed": 112,
-    "lfo2_depth": 119, "lfo3_speed": 78, "lfo3_depth": 86,
+    "lfo2_depth": 119, "lfo3_speed": 78, "lfo3_depth": 86, "sample_slot": 19,
 }
 
 
@@ -149,7 +149,8 @@ def test_param_map_matches_the_manual():
     assert ccmap.PARAMS["sample_start"].max == ccmap.PARAMS["sample_length"].max == 120
     assert ccmap.PARAMS["filter_key_tracking"].max == 100 and ccmap.PARAMS["play_mode"].max == 3
     assert not set(ccmap.ALIASES) & set(ccmap.PARAMS)
-    assert {19, 24}.issubset(ccmap.BLOCKED_CCS) and {(1, 3), (1, 8), (1, 9)} == ccmap.BLOCKED_NRPNS
+    assert 24 in ccmap.BLOCKED_CCS and 19 not in ccmap.BLOCKED_CCS and ccmap.NAMED_ONLY_CCS == {19: "sample_slot"}
+    assert {(1, 3), (1, 8), (1, 9)} == ccmap.BLOCKED_NRPNS
 
 
 @pytest.mark.parametrize("name, canonical", [
@@ -166,7 +167,7 @@ def test_unknown_param_suggests_close_matches(fake):
     with pytest.raises(engine.WhiplashError, match="did you mean filter_freq"):
         eng.set_param(1, 10, param="cutof")
     with pytest.raises(engine.WhiplashError, match="whiplash_list_params"):
-        eng.set_param(1, 10, param="sample")  # sample assignment is not a param
+        eng.set_param(1, 10, param="sample_bank")  # bank select is not a param
     assert port.messages == []
 
 
@@ -313,7 +314,7 @@ def test_live_switch_lands_on_the_bar_without_stop_or_start(fake):
     eng.set_mute(3, True)
     eng.ramp(6, 127, param="cutoff", start=0, bars=2)
     out = eng.play(P["soul"], bpm=280)
-    assert out == {"mode": "queued", "switch_at_bar": 1, "replaced_queued": None}
+    assert out == {"mode": "queued", "switch_at_bar": 1, "replaced_queued": None, "send_transport": True}
     assert eng.status()["queued"] == {"pattern": "soul", "bpm": 280, "switch_at_bar": 1}
     wait_bar(eng, 3)
     st = eng.status()
