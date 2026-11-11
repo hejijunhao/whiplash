@@ -310,7 +310,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-626 tests, covering:
+628 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -352,7 +352,7 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - the read-only `state.db` fallback
   - server start/stop, the localhost Host check, SSE frames, and the open/close tools
 
-One test does a real virtual-port loopback through rtmidi; it skips where the machine has no MIDI system. CI runs the suite on Linux and macOS (`.github/workflows/tests.yml`).
+Wall-clock timing bounds (clock jitter, a tempo measured from real send times) are enforced locally and reported only on CI, where shared runners stall now and then; set `WHIPLASH_STRICT_TIMING=1` to enforce them there too. The schedule they stand for is pinned on a virtual clock (`tests/test_v070.py`). One test does a real virtual-port loopback through rtmidi; it skips where the machine has no MIDI system. CI runs the suite on Linux and macOS (`.github/workflows/tests.yml`).
 
 ### Rehearse the demo offline
 

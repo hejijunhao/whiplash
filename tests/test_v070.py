@@ -394,3 +394,106 @@ def test_panic_and_the_allow_list_are_untouched(fake):
         with pytest.raises(engine.WhiplashError):
             eng.send(bad)
     assert {0, 32, 24, 6, 38, 98, 99, 100, 101} <= ccmap.BLOCKED_CCS
+
+
+# ---- virtual clock: the schedule itself, free of runner stalls ------------------------------------------------
+# Wall-clock jitter bounds are local-only on CI (conftest.STRICT_TIMING). These pin what they stand for
+# deterministically: on a virtual clock, where sleep advances time exactly, every clock tick and note goes out at
+# its scheduled time, a queued tempo lands exactly on the switch bar, and neither an armed listen nor a saturated
+# CC budget moves anything.
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+class VirtualTime:
+    """Stands in for the time module inside engine.py: perf_counter is virtual and sleep advances it exactly
+    (pacing itself with a short real sleep so other threads get a turn). Everything else is the real module."""
+
+    def __init__(self):
+        self.t = 1000.0
+        self.lock = threading.Lock()
+
+    def perf_counter(self):
+        with self.lock:
+            return self.t
+
+    def sleep(self, seconds):
+        with self.lock:
+            self.t += max(0.0, seconds)
+        time.sleep(0.0002 if seconds > 0 else 0)
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+class VirtualPort:
+    def __init__(self, clock):
+        self.clock, self.sent = clock, []
+
+    def send(self, msg):
+        self.sent.append((self.clock.perf_counter(), msg))
+
+    def close(self):
+        pass
+
+
+def _real_wait(cond, timeout=60.0):
+    end = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < end, "virtual-clock run stalled"
+        time.sleep(0.005)
+
+
+def test_virtual_clock_schedule_is_exact_through_a_tempo_switch_with_a_listen_armed(monkeypatch):
+    vt = VirtualTime()
+    monkeypatch.setattr(engine, "time", vt)
+    port = VirtualPort(vt)
+    eng = engine.Engine(opener=lambda name: (port, "Fake", False))
+    try:
+        eng.arm_listen()  # the sequencer logs every note-on while armed
+        eng.play(P["techno"], bpm=122)
+        _real_wait(lambda: eng.bar >= 2)
+        for track in range(1, 17):  # saturate the per-tick CC budget for a beat
+            for param in ("filter_freq", "level", "pan"):
+                eng.ramp(track, 127, param=param, start=0, beats=1)
+        out = eng.play(P["techno"], bpm=126, bars=3)
+        at = out["switch_at_bar"]
+        _real_wait(lambda: not eng.playing())
+        notes = eng.disarm_listen()
+        bars = dict(eng.bar_log)
+    finally:
+        eng.shutdown()
+    assert eng.rails["cc_deferred"] > 0  # the budget really was saturated
+    clocks = [t for t, m in port.sent if m.type == "clock"]
+    assert len(clocks) >= (at + 3) * engine.TICKS_PER_BAR - 1
+    old, new = 60.0 / 122 / engine.PPQN, 60.0 / 126 / engine.PPQN
+    switch_tick = at * engine.TICKS_PER_BAR
+    gaps = [b - a for a, b in zip(clocks, clocks[1:])]
+    assert max(abs(g - old) for g in gaps[:switch_tick]) < 1e-6  # every tick on time: no jitter at all
+    assert max(abs(g - new) for g in gaps[switch_tick:]) < 1e-6  # the new tempo from exactly the switch bar
+    assert abs(bars[at] - bars[at - 1] - 96 * old) < 1e-6 and abs(bars[at + 1] - bars[at] - 96 * new) < 1e-6
+    # every note-on went out exactly on its step (techno: swing 50 here is not assumed; even steps only)
+    checked = 0
+    for t, ch, note, vel in notes:
+        bar = max(b for b, start in bars.items() if start <= t + 1e-9)
+        step_len = (bars[bar + 1] - bars[bar]) / 16 if bar + 1 in bars else 6 * (new if bar >= at else old)
+        pos = (t - bars[bar]) / step_len
+        if round(pos) % 2 == 0:
+            assert abs(pos - round(pos)) < 1e-6, (bar, pos)
+            checked += 1
+    assert checked > 50
+    assert all(m.type in engine.ALLOWED_TYPES for _, m in port.sent)
+
+
+def test_listen_analysis_yields_the_gil_in_small_batches(monkeypatch):
+    """The deterministic half of the listen jitter test: the analysis never runs long without yielding, so the
+    sequencer thread can take the GIL back. Counted on 8 bars of noise (the largest listen at 120 BPM)."""
+    np = pytest.importorskip("numpy")
+    calls = []
+    monkeypatch.setattr(listen, "_yield", lambda: calls.append(1))
+    sr, secs = 48000, 16.0
+    audio = np.random.default_rng(0).normal(0, 0.1, (int(secs * sr), 2))
+    listen.analyse(np, audio, sr, 0.0, secs, [i * 2.0 for i in range(9)], [(0.0, 1, 60)], {1: "kick"})
+    # at least one yield per ~0.25 s of audio processed by each stage
+    assert len(calls) >= 4 * secs, len(calls)
