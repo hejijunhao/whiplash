@@ -133,4 +133,24 @@ SCHEMAS = {
                         "ramps with progress, mutations, and last_error if the sequencer stopped on a fault."),
         "parameters": EMPTY,
     },
+    "whiplash_open_view": {
+        "name": "whiplash_open_view",
+        "description": ("Open the Whiplash visualiser: a local web page (http://127.0.0.1 only) in the default browser "
+                        "that shows the beat live while the chat continues here: every track in use with its notes "
+                        "and playhead, BPM, bar, queued switches, mutes, drops, fills, ramps, the MIDI port, an "
+                        "audio spectrum/scope (from the Digitakt's USB audio if the user allows it, else clearly "
+                        "labelled MIDI fallback) and this conversation. Read-only: it never sends MIDI or changes "
+                        "the beat. Works with or without a pattern playing. Use when the user asks to launch, open "
+                        "or show the visualiser/view. Calling it again just reopens the browser on the same page."),
+        "parameters": {"type": "object", "properties": {
+            "port": {"type": "integer", "minimum": 1024, "maximum": 65535,
+                     "description": "Local TCP port (default 7341, or a free one if that is taken)"},
+            "open_browser": {"type": "boolean", "description": "Open the default browser (default true); false only returns the URL"},
+        }},
+    },
+    "whiplash_close_view": {
+        "name": "whiplash_close_view",
+        "description": "Close the Whiplash visualiser's local web server. The beat keeps playing.",
+        "parameters": EMPTY,
+    },
 }

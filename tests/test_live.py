@@ -114,7 +114,8 @@ def test_catalog_entry_draft_matches_manifest():
     assert entry["name"] == "whiplash" and entry["version"] == manifest["version"]
     assert entry["requires_hermes"] == manifest["requires_hermes"]
     assert entry["capabilities"]["provides_tools"] == manifest["provides_tools"]
-    assert entry["capabilities"]["provides_hooks"] == [] and entry["capabilities"]["requires_env"] == []
+    assert entry["capabilities"]["provides_hooks"] == manifest["provides_hooks"]
+    assert entry["capabilities"]["requires_env"] == []
 
 
 def test_schemas_are_well_formed():
