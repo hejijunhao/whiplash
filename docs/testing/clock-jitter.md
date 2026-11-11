@@ -27,7 +27,7 @@
   - On DIN MIDI, a byte takes 320 µs (31.25 kbaud, 10 bits a byte). A clock is one byte (F8); a note is three bytes, about 0.96 ms. A clock byte can be held back by up to one byte of another message. Sources: the MIDI 1.0 electrical spec as reprinted by [Hinton Instruments](https://hinton-instruments.co.uk/reference/midi/protocol/index.htm), and [MIDI beat clock](https://en.wikipedia.org/wiki/MIDI_beat_clock).
   - **USB MIDI** (how the Digitakt II connects) carries events in 1 ms USB frames. An event waits 0-1 ms for the next frame, so about 1 ms of jitter is inherent before Whiplash does anything. At 120 BPM, ticks alternate between 20 and 21 ms on the wire. Sources: [linux-audio-dev, 2004](https://lists.linuxaudio.org/archives/linux-audio-dev/2004-September/009849.html) and the [MIDI.org forum on USB jitter](https://midi.org/community/midi-connections/jitter-and-latency-usb-firewire-thunderbolt). [Behaviour Research Methods (2018)](https://link.springer.com/article/10.3758/s13428-018-1042-7) measured MIDI devices and found millisecond accuracy is not generally achievable.
 - **What listeners notice:** for a tone displaced in an isochronous sequence with inter-onset intervals under about 240 ms, the just-noticeable difference is about **6 ms**. Above that it is about 2.5 % of the interval. Musical training made no difference (Friberg & Sundberg, "Time discrimination in a monotonic, isochronous sequence", JASA 98(5), 1995, pp. 2524-2531; [abstract](https://typeset.io/pdf/time-discrimination-in-a-monotonic-isochronous-sequence-ynslrz5yhj.pdf)). Whiplash's 16ths at 120-130 BPM are 115-125 ms apart, so 6 ms is the scale where a late note becomes audible.
-- **The unit:** the manual says CLOCK RECEIVE makes the unit follow the incoming 24-PPQN clock ([M] p. 77, reference §9). It doesn't say how the unit smooths an uneven clock, for example its tempo readout or whether one late tick moves its delay or LFO. That is reference §15.3 Q18, checked by checklist R10.
+- **The unit:** the manual says CLOCK RECEIVE makes the unit follow the incoming 24-PPQN clock ([M] p. 77, reference §9). It doesn't say how the unit smooths an uneven clock, for example its tempo readout or whether one late tick moves its delay or LFO. That is reference §15.3 Q22, checked by checklist R10.
 - **Whiplash's side:** the sequencer schedules every tick on an absolute grid (`next_tick += tick_len` in `Engine._run`). Notes are scheduled from the same grid by the same thread. So:
   - A stall delays the clock and the notes together, and a late tick never shifts the ones after it.
   - After a stall, the overdue ticks go out back to back, so the unit's tick count, and therefore its bar position, stays right.
@@ -154,7 +154,7 @@ Both macOS jobs agreed, on two runs (43033584124 and 43036000201, 2026-11-11, im
    - **No speed dependence:** the allowance is per real second, so it doesn't change with `--speed`.
 5. **Name the stall.** Each unexcused stall is printed in the report with its run, bar and tick, so a CI failure says where it happened.
 
-The single rerun in `tests/test_rehearsal.py` is removed. New tests cover:
+The single rerun in `tests/test_rehearsal.py` is removed. v0.7.0 (PR #20) made every wall-clock bound report-only on CI (`conftest.STRICT_TIMING`), and this check follows that policy. On CI it is printed in the report; locally, or with `WHIPLASH_STRICT_TIMING=1`, it must pass. On a quiet runner it passes anyway: the threshold follows the machine's sleep, so it is safe to make strict on CI later. New tests cover:
 - the lateness fit,
 - the stall rule (one burst passes, a per-bar regression fails),
 - the canary excuse,
@@ -196,7 +196,7 @@ The engine's own work is fine. Two things are unknown: how precise sleeps are on
    - **Tests:** a fake time module whose `sleep` oversleeps by 10 ms must still give ticks under 1 ms late.
 3. **Only if (1) shows GIL waits in the gateway** (p50 or p99 of about 5 ms): call `sys.setswitchinterval(0.001)` while playing and restore it on stop. Measured here: a busy in-process thread costs 5.1 ms per tick by default and 1.1 ms at 1 ms. It is process-wide, so the gateway's CPU-bound threads switch more often (a small throughput cost). Gate it with `WHIPLASH_SWITCH_INTERVAL` and say so in the README.
 4. **Only if (1) shows rare 15-80 ms stalls** (GC of the gateway's heap): `gc.freeze()` at play start moves the existing heap out of the collector's view, so full collections only walk new objects. It is intrusive for the host: frozen cycles are never collected. The robust long-term fix for both 3 and 4 is to run the sequencer in its own process (its own GIL and heap), which is v0.7-sized.
-5. **Not recommended:** macOS user-interactive QoS on the clock thread (`pthread_set_qos_class_self_np`). On the runners it changed nothing (§4). **Not recommended yet:** spreading the overdue ticks after a stall instead of sending them back to back. Sending them all keeps the unit's position exact. Whether the burst upsets the unit's tempo is §15.3 Q18; decide after R10.
+5. **Not recommended:** macOS user-interactive QoS on the clock thread (`pthread_set_qos_class_self_np`). On the runners it changed nothing (§4). **Not recommended yet:** spreading the overdue ticks after a stall instead of sending them back to back. Sending them all keeps the unit's position exact. Whether the burst upsets the unit's tempo is §15.3 Q22; decide after R10.
 
 ## 7. For Phil's MacBook Air
 
@@ -204,4 +204,4 @@ The engine's own work is fine. Two things are unknown: how precise sleeps are on
 - **During the session:** R10 watches the unit's tempo readout for flicker or hiccups.
 - **If §0.2 shows a 1 ms sleep taking several ms on the Air,** tell the v0.6.2 agent before the demo: §6 item 2 is the fix. The rehearsal can't catch this, because its threshold follows the machine's own sleep.
 - **On stage:** the demo itself is quiet (one Hermes turn at a time). The remaining risks are a gateway busy with CPU work or a large heap, both covered by §6 item 1.
-- **Nothing here was tested on a Digitakt II.** Record results in [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md) §15.3 Q18 with who, when and the OS version.
+- **Nothing here was tested on a Digitakt II.** Record results in [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md) §15.3 Q22 with who, when and the OS version.

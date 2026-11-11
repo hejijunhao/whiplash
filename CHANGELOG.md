@@ -18,7 +18,9 @@ Added
 - **Hardware checklist for v0.6.1:**
   - A3 and A7 now describe `routing` on play results, including `vacated: {"5": 7}` and its note.
   - New Part R (R1-R9, PR #17's HW 6.1-1 to 6.1-9): `short_demo` and `club`, a kick fill on track 9, the build's filter sweep (§15.3 Q14), the vacated-track design question for Phil, transpose following a relabel, queued setup, written parts replacing routed ones, and no extra Stop.
-  - R10 and §0.2 cover clock steadiness (new reference §15.3 Q18) and running `clock_jitter.py` on the Air.
+  - R10 and §0.2 cover clock steadiness (new reference §15.3 Q22) and running `clock_jitter.py` on the Air.
+  - New Part V (V1-V9, PR #20's HW 7.0-1 to 7.0-9): the v0.7.0 listening loop. It covers the input name (Q18), kick offset and swing (Q20), bass against kick, clipping and the loudness guard, track level in the listen (Q19), unplug mid-listen, USB MIDI only, outs while capturing (Q7) and the 48-ramp cap at 300 BPM (Q21). The open-question table maps them.
+  - The setup lines now expect v0.7.0 with 21 tools.
 - **Demo:** an optional 30-second arrangement beat that ends the run by itself, gated on R1 and `--v061`. None of this is hardware-verified.
 - **Visualiser: key, scale and chord progression (v0.6.0).** A full-width KEY module shows the key the beat plays in (`SET` or the pattern's `HOME` key) and a key queued for the next switch. After `whiplash_set_progression` it shows one cell per chord: the numeral as typed (case kept), the chord name and its voiced notes. The chord playing is lit with a square per bar, the next chord is dashed with a four-beat countdown, and the highlight moves on the extrapolated playhead, so it changes on the bar line. Each track that follows the progression gets a chord line (`CHD`, `STK`, `ROOT`, `SNAP`) with the notes it plays in this chord and the next. Drum, cymbal and fx tracks never get one. Same flat grayscale pixel-art rack; no new dependencies.
   - The snapshot (`view.snapshot`) gains `harmony` (key, `key_source`, `next_key`, and the progression with `index`, `next_at`, `next_index` and every voiced chord), and lanes gain `harmony` (mode, notes now, notes in the next chord, bar of the change). A following track's `loop` now holds the next four bars as the sequencer will play them, each in its own chord (`harmony.apply`, outside the engine lock), so the page's between-frame extrapolation shows chord changes on time. An empty pad track's held tone gets a module too.
@@ -33,7 +35,37 @@ Changed
 - **The rehearsal's clock check is principled instead of retry-based.**
   - **Before:** it took the p95 of gap deviation against a 2-bar baseline plus 3 ms, and the test reran once on a jitter-only failure.
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
-  - The rerun in `tests/test_rehearsal.py` is removed.
+  - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
+
+## 0.7.0
+
+The first v0.7 PR: the listening loop, part 1 (capture, `whiplash_listen` and the safety rails; [docs/executing/v07-build-plan.md](docs/executing/v07-build-plan.md) items 1, 2 and 4). 21 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, and the plugin imports and runs with no new dependency installed.
+
+Added
+- **`whiplash_listen(bars, device)`** (`listen.py`). Captures the unit's USB audio for 1-8 bars (default 2, at most 24 s) from the next bar line on Whiplash's own clock, or right away when nothing plays, and returns compact features, never audio:
+  - `loudness`: `lufs_ish` (K-weighted, gated as in BS.1770, from 100 ms sub-blocks), `rms_dbfs`, `peak_dbfs`, `headroom_db`, `clipping` (3+ samples at full scale) and `clipped_samples`.
+  - `bands`: low (under 150 Hz), low-mid, mid, high (over 4 kHz), as % of the energy and dB.
+  - `kick`: each kick Whiplash sent matched to a low-band onset: `sent`, `heard`, `missed`, `median_offset_ms` (includes the USB round trip), `spread_ms`, the first 16 offsets.
+  - `onsets`: count and per bar against the sequencer's bar times, latency-corrected `median_abs_offset_ms`, `max_abs_offset_ms`, `on_grid_pct` (within 10 ms), `offbeat_delay_ms` and `swing_estimate`.
+  - `low_end`: how much louder the low band is on the kicks than between them, and `masking` under 3 dB.
+  - `tracks`: per track that sent notes, its solo hits and how many were heard; `seems_silent` when none of two or more were. `unexpected_audio` when there was sound but Whiplash sent no notes (usually the unit's own pattern). `silent` below -60 dBFS peak. One-line `notes`.
+- **Input discovery.** The first audio input whose name contains "Digitakt"; `device` or `WHIPLASH_AUDIO_INPUT` (name fragment or index) overrides it. Never falls back to another input, so a laptop microphone is never analysed by mistake. Errors carry the fix: USB CONFIG = USB AUDIO/MIDI, macOS microphone permission, the install hint.
+- **Optional `[listen]` extra** in `pyproject.toml` (`numpy>=1.24,<3`, `sounddevice>=0.4.6,<0.6`), imported only inside a listen. Without it `whiplash_listen` returns the install hint and nothing else changes. `plugin.yaml`'s `python_dependencies` are unchanged. numpy joins the dev group so CI runs the analysis tests; sounddevice is never installed in CI.
+- **Safety rails** (`engine.py`):
+  - At most 48 ramps at once (`MAX_RAMPS`). A user ramp or a mix ramp past it is refused before anything changes; a scheduled ramp (transition or section) past it doesn't start and is counted.
+  - Ramp CCs capped at 1,000 a second and 16 per clock tick (`CC_RATE_MAX`, `CC_PER_TICK_MAX`). A ramp over the budget sends its value on a later tick, held-back ramps first, and still ends on its exact end value. Under the cap nothing changes.
+  - Loudness guard: after a listen hears clipping, raising TRACK LEVEL (CC 95), AMP VOLUME (CC 89) or OVERDRIVE (CC 57) via `whiplash_set_param`, `whiplash_ramp_param` or `whiplash_mix` is refused until a listen shows none. A value Whiplash never sent counts as a raise; lowering is always allowed. `force: true` (new on those three tools) goes past it, and the result carries `guard`.
+  - `whiplash_status` gains `listen` (the last listen's loudness, peak, clipping and age) and `safety` (caps, counters, `loudness_guard`).
+
+Changed
+- The sequencer appends `(bar, time)` to `Engine.bar_log` once per bar, and `(time, channel, note, velocity)` to `Engine.note_log` per note-on only while a listen is armed: lock-free deque appends, nothing else. Capture runs in PortAudio's callback thread (it only copies blocks); waiting and analysis run in the tool call's thread, in small numpy batches that yield the GIL. A test measures clock jitter with a listen running.
+- `_advance_ramps` applies the per-tick budget. `whiplash_stop` and the panic are unchanged.
+- **Timing tests on CI.** Wall-clock bounds (every clock-jitter test, now through one `assert_jitter` helper in `tests/test_v051.py`, and the rehearsal's A7 tempo measured from real send times) are enforced locally and reported only on CI (`conftest.STRICT_TIMING`; `WHIPLASH_STRICT_TIMING=1` enforces them anywhere): shared macOS runners stall 5-15 ms at times, and main itself failed that way (runs 43015115037, 43025375026). A new virtual-clock test pins the schedule they stand for: every tick and note exactly on time through a tempo switch, with a listen armed and the CC budget saturated. The listen end-to-end test compares its grid offsets with the send lateness measured from the port (same median) instead of a fixed bound.
+- Tool-description budget: the total rises from 3,000 to 3,300 characters for `whiplash_listen` (per-tool cap 400 unchanged), params to 8,400 characters and the JSON to 20,100 bytes.
+- Version 0.7.0 in `pyproject.toml`, `plugin.yaml`, `docs/catalog-entry.yaml` and `__init__.py`. `whiplash_listen` is added to `provides_tools` after `whiplash_status`. The manifest and catalog descriptions disclose the audio input. The skill gains a Listening section, Safety rails and diagnostics rows. README: Listening and Safety rails sections, setup and disclosures.
+- Reference: §14 `whiplash_listen` implications, new §15.1 #34-35 and §15.3 Q18-21.
+
+Not touched: `docs/testing/hardware-checklist.md`, `docs/demo/`, `scripts/`, `view.py`, `view.html` (owned by the visualiser agent). The PR lists the new hardware checks.
 
 ## 0.6.2
 

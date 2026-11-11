@@ -8,6 +8,7 @@ from .transition import BARS_MAX as TX_BARS_MAX, KINDS as TX_KINDS
 from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .kitmap import ROLES
+from .listen import BARS_MAX as LISTEN_BARS_MAX
 from .patterns import MOODS, PATTERNS
 
 TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Track 1-16 (= MIDI channel)"}
@@ -23,6 +24,8 @@ TRANSITION = {"type": "string", "enum": list(TX_KINDS)}
 TX_BARS = {"type": "integer", "minimum": 1, "maximum": TX_BARS_MAX, "description": "Default 4 (drop_swap 1)"}
 FILTER_FROM = {"type": "integer", "minimum": 0, "maximum": 127,
                "description": "filter_swap: cutoff where Whiplash hasn't sent one"}
+
+FORCE = {"type": "boolean", "description": "Past the loudness guard after a listen heard clipping; only if the user insists"}
 
 SCHEMAS = {
     "whiplash_list_midi_ports": {
@@ -79,6 +82,7 @@ SCHEMAS = {
                      "minItems": 2, "maxItems": 2, "description": "Raw NRPN address [msb, lsb]"},
             "value": {"type": ["integer", "string"], "minimum": 0, "maximum": 16383,
                       "description": "0-127; nrpn 0-16383 (14-bit); 'note' only for amp_hold"},
+            "force": FORCE,
         }},
     },
     "whiplash_select_sample": {
@@ -224,6 +228,7 @@ SCHEMAS = {
             "bars": {"type": "integer", "minimum": 0, "maximum": MIX_BARS_MAX, "description": "Ramp length; 0 = on the bar"},
             "save_as": {"type": "string"},
             "recall": {"type": "string"},
+            "force": FORCE,
         }},
     },
     "whiplash_ramp_param": {
@@ -242,6 +247,7 @@ SCHEMAS = {
             "curve": {"type": "string", "enum": sorted(CURVES),
                       "description": "linear (default), exp (slow start, fast finish), log (fast start, gentle finish)"},
             "cancel": {"type": "string", "description": "Cancel a ramp by id, or 'all'. Other arguments are ignored."},
+            "force": FORCE,
         }},
     },
     "whiplash_mutate": {
@@ -286,6 +292,16 @@ SCHEMAS = {
         "description": ("Now: port, pattern, key, chords, section, bpm, bar, queued switch, per-track "
                         "role/slot/pitch/part/mute, ramps, mutations, kit map, routing, errors." + SKILL),
         "parameters": EMPTY,
+    },
+    "whiplash_listen": {
+        "name": "whiplash_listen",
+        "description": ("Hear the unit: capture its USB audio for some bars from the next bar line. Returns loudness, "
+                        "peak/clipping, 4-band balance, onsets vs the grid, kick offsets and silent-track hints, "
+                        "never audio. Needs USB CONFIG = USB AUDIO/MIDI and the listen extra." + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "bars": {"type": "integer", "minimum": 1, "maximum": LISTEN_BARS_MAX, "description": "Default 2"},
+            "device": {"type": "string", "description": "Audio input name or index (default: the Digitakt's)"},
+        }},
     },
     "whiplash_open_view": {
         "name": "whiplash_open_view",

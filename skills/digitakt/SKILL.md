@@ -1,6 +1,6 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
@@ -77,6 +77,29 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 - `save_as: "drop mix"` stores the mix as it will be after the call (the last values sent plus this call's). `recall: "drop mix"` sends it back exactly, only what differs. Saved mixes survive `whiplash_stop`; status shows `mix.saved`. A section's `mix` recalls one on its first bar.
 - Only one CC goes out per change, and only what differs from the last value Whiplash sent. Whiplash can't read the unit's levels: the kit's own come back when the user reloads it. When nothing plays the CCs go out at once.
 - Typical requests: "bring the bass down a bit and pan the hats left" → `whiplash_mix(levels: {"bass": 90}, pan: {"hats": "left"})` (ask or read `status.mix.levels` for where the bass is now). "Save this as the drop mix, then go back to it after the break" → `save_as: "drop mix"` now, then `recall: "drop mix"` (or a section's `mix: "drop mix"`).
+
+## Listening: what the unit actually sounds like (`whiplash_listen`)
+
+- **Needs:** USB CONFIG = USB AUDIO/MIDI on the unit (manual 14.8.1, p. 83; MIDI keeps working) with USB OUT = MAIN, the plugin's optional `[listen]` extra (numpy and sounddevice), and on macOS microphone permission for the app that runs Hermes. If one is missing the call fails with a hint: pass it on. Every other tool works without it.
+- `whiplash_listen(bars: 2)` captures 1-8 bars (at most 24 s) from the next bar line, or right away when nothing plays, then answers with numbers, never audio:
+  - `loudness`: `lufs_ish` (gated, K-weighted, within about a dB of a meter), `peak_dbfs`, `headroom_db`, `clipping`.
+  - `bands`: `low` (under 150 Hz), `low_mid`, `mid`, `high` (over 4 kHz), each as a % of the energy.
+  - `kick`: how long after Whiplash sent each kick it was heard. A steady few ms is the USB round trip; `spread_ms` is the real timing wobble.
+  - `onsets`: hits against Whiplash's 16th grid, corrected by that latency: `on_grid_pct`, `median_abs_offset_ms`, `offbeat_delay_ms` and `swing_estimate` (50 = straight; above 75 it reads low).
+  - `low_end.masking`: the low band barely rises on the kicks, so something (usually the bass) sits on the kick.
+  - `tracks[n].seems_silent`: notes went out on that track but none of its solo hits came back. `unexpected_audio`: sound while Whiplash sent no notes, usually the unit's own pattern.
+  - `notes`: one-line readings. Quote the numbers to the user, then propose a fix and listen again.
+- It hears only the USB OUT pair (normally MAIN), so per-track findings are inferred from note timing. Nothing is recorded or stored.
+- Typical requests:
+  - "Does the bass clash with the kick?" → listen; read `low_end` and `bands.low`; propose the bass down a few steps (`whiplash_mix`) or its filter a little lower; do it; listen again.
+  - "It's too loud, fix it without killing the vibe" → listen; lower levels a few steps over `bars: 2` with `whiplash_mix` (no hard cut); listen until `clipping` is false.
+  - "Is it in time?" → listen; report `kick.median_offset_ms`, `spread_ms`, `on_grid_pct` and `swing_estimate`.
+
+### Safety rails
+
+- **Loudness guard:** once a listen hears clipping, raising `track_level`, `amp_volume` or `overdrive` (with `whiplash_set_param`, `whiplash_ramp_param` or `whiplash_mix`) is refused until a later listen shows none. A track Whiplash never sent a level to counts as a raise. Lowering is always fine. Pass `force: true` only when the user insists after you told them it clips; the result then carries `guard`.
+- At most 48 ramps run at once, and ramp CCs are capped at 1,000 a second (16 per clock tick); a ramp over the cap sends its value a tick later and still ends exactly. `status.safety` shows the caps, the counters and whether the guard is on; `status.listen` the last listen.
+- `whiplash_stop` is still the panic button, unchanged.
 
 ## Writing notes, melodies and rhythms
 
@@ -163,6 +186,9 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | Chords on a cymbal, bass on a hat | the pattern's assumed layout: label the tracks with `whiplash_label_tracks` |
 | Many calls just to set the kit up | one `whiplash_play_pattern` with `tracks` |
 | Silence everywhere | `warning` in a result: virtual port, no Digitakt connected |
+| "Does it clip?", "too loud", "is it muddy?", "is it in time?" | `whiplash_listen`, act on the numbers, listen again |
+| Level or drive refused: "loudness guard" | lower something and listen again; `force: true` only if the user insists |
+| listen: "no Digitakt II audio input" or "numpy is not installed" | pass the hint on: USB CONFIG = USB AUDIO/MIDI, macOS microphone permission, the `[listen]` extra, or `device` |
 
 ## What Whiplash can never do
 

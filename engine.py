@@ -12,6 +12,11 @@ Everything musical is timed off the sequencer's own MIDI clock: a live pattern
 switch lands on the next bar line, drops and fills are bar-scheduled, and ramps
 advance one step per clock tick.
 
+v0.7.0 safety rails: at most MAX_RAMPS ramps run at once, and ramp CCs are capped per clock tick (CC_RATE_MAX per
+second, CC_PER_TICK_MAX per tick; a ramp over budget sends its value on a later tick, never loses its end value).
+The loudness guard refuses level/volume/overdrive increases while the last whiplash_listen showed clipping, unless
+the call says force. For listens the sequencer appends to two deques (bar_log, note_log while armed) and nothing else.
+
 Transport: by default a run sends MIDI Start, clock, and Stop. Start also starts the Digitakt's
 own sequencer, so trigs stored in the pattern selected on the unit play on top of Whiplash.
 send_transport=False (or WHIPLASH_SEND_TRANSPORT=0) sends clock only, and then never sends Stop
@@ -42,6 +47,9 @@ BPM_MIN, BPM_MAX = 30, 300
 BARS_MAX = 512
 RAMP_BEATS_MAX, RAMP_BARS_MAX = 512, 128
 DROP_BARS_MAX = 32
+MAX_RAMPS = 48  # v0.7.0: 16 tracks x (filter, level, pan), the most any built-in transition plus mix can start
+CC_RATE_MAX = 1000  # v0.7.0: ramp CCs per second, at most (the budget per clock tick follows the tempo)
+CC_PER_TICK_MAX = 16  # v0.7.0: ramp CCs per clock tick, at most
 TRANSPOSE_MAX = 48  # semitones either way (4 octaves); notes still clamp to the 16-84 chromatic range
 TUNE_CC = ccmap.PARAMS["tune"].cc
 AMP_MODE_CC = ccmap.PARAMS["amp_mode"].cc
@@ -50,6 +58,10 @@ HOLD_CC = ccmap.PARAMS["amp_hold"].cc
 FILTER_CC = ccmap.PARAMS["filter_freq"].cc
 LEVEL_CC = ccmap.PARAMS["track_level"].cc
 PAN_CC = ccmap.PARAMS["pan"].cc
+GUARDED_CCS = {LEVEL_CC: "track_level", ccmap.PARAMS["amp_volume"].cc: "amp_volume",
+               ccmap.PARAMS["overdrive"].cc: "overdrive"}  # v0.7.0 loudness guard: increases need force after clipping
+GUARD_FORCED = ("forced past the loudness guard: the last whiplash_listen showed clipping. Listen again after this "
+                "and tell the user if it still clips")
 REOPEN = "reopen"  # owner of the ramps that put a transition's closed cutoff back
 MIX_OWNER = "mix"
 ARR_OWNER = "arr"
@@ -318,6 +330,7 @@ class Ramp:
     elapsed: int = 0
     last: int = None
     owner: str = None  # v0.6.2: the transition or mix that started it (cancelled with it); None = the user's
+    deferred: bool = False  # v0.7.0: its last value change was held back by the CC budget; goes first next tick
 
     def progress(self):
         return min(1.0, self.elapsed / self.total)
@@ -398,6 +411,13 @@ class Engine:
         self.position = None  # (bar, step, perf_counter time the step's tick is due)
         self.bar_fills = (None, frozenset())
         self.bar_hits = None  # (bar, {step: [(track, note, vel, gate, offset)]}, fill tracks) for the bar now playing
+        # v0.7.0 listening loop. bar_log: (bar, perf_counter time of its first tick), appended by the sequencer once
+        # per bar. note_log: a deque while a listen is armed, else None; the sequencer appends (time, channel,
+        # note, velocity) per note-on. Both are lock-free appends, read by the listen in the tool call's thread.
+        self.bar_log = collections.deque(maxlen=64)
+        self.note_log = None
+        self.last_listen = None  # listen.summary() of the last whiplash_listen; the loudness guard reads clipping
+        self.rails = {"cc_deferred": 0, "ramps_refused": 0, "guard_refusals": 0, "guard_forced": 0}
 
     # ---- port handling -------------------------------------------------
     def ensure_port(self, port=None, allow_virtual=True):
@@ -946,6 +966,8 @@ class Engine:
                     swing, muted = self.swing, set(self.muted)
                 if sub == 0:
                     self.position = (bar_n, step, next_tick)  # for the view; one assignment, no lock
+                    if step == 0:
+                        self.bar_log.append((bar_n, next_tick))  # for whiplash_listen's grid; one append
                     sixteenth = tick_len * TICKS_PER_STEP
                     t0 = next_tick + ((swing - 0.5) * 2 * sixteenth if step % 2 else 0)
                     for track, note, vel, gate, offset in events.get(step, ()):
@@ -1006,18 +1028,40 @@ class Engine:
             self.send(mido.Message("note_on", channel=ch, note=note, velocity=vel))
             self._sounding.add((ch, note))
             self._note_channels.add(ch)
+            heard = self.note_log
+            if heard is not None:  # a listen is armed: one append, no lock
+                heard.append((time.perf_counter(), ch, note, vel))
         else:
             self.send(mido.Message("note_off", channel=ch, note=note))
             self._sounding.discard((ch, note))
 
+    def cc_budget(self):
+        """Ramp CCs allowed per clock tick at the current tempo (v0.7.0 rate cap)."""
+        return max(1, min(CC_PER_TICK_MAX, int(CC_RATE_MAX * 60.0 / (self.bpm * PPQN))))
+
     def _advance_ramps(self, mido):
         with self._lock:
+            if not self._ramps:
+                return
+            budget = self.cc_budget()
+            due = []
             for key, ramp in list(self._ramps.items()):
-                ramp.elapsed += 1
+                if ramp.elapsed < ramp.total:
+                    ramp.elapsed += 1
+                if ramp.value() != ramp.last:  # only on integer changes: no CC floods
+                    due.append((key, ramp))
+                elif ramp.elapsed >= ramp.total:
+                    del self._ramps[key]
+            if len(due) > budget:  # held back last tick goes first; the rest wait (they jump to their value later)
+                due = [d for d in due if d[1].deferred] + [d for d in due if not d[1].deferred]
+            for i, (key, ramp) in enumerate(due):
+                if i >= budget:
+                    ramp.deferred = True
+                    self.rails["cc_deferred"] += 1
+                    continue
                 value = ramp.value()
-                if value != ramp.last:  # only on integer changes: no CC floods
-                    self._cc(mido, ramp.track - 1, ramp.cc, value)
-                    ramp.last = value
+                self._cc(mido, ramp.track - 1, ramp.cc, value)
+                ramp.last, ramp.deferred = value, False
                 if ramp.elapsed >= ramp.total:
                     del self._ramps[key]
 
@@ -1026,6 +1070,9 @@ class Engine:
         """Start a ramp now (caller holds _lock; a bar line or a tool call). Replaces one on the same track/CC."""
         ch = track - 1
         self._ramps.pop((track, cc), None)
+        if len(self._ramps) >= MAX_RAMPS:  # v0.7.0 cap: a scheduled ramp past it doesn't start (counted in status)
+            self.rails["ramps_refused"] += 1
+            return None
         self._ramp_seq += 1
         ramp = Ramp(f"r{self._ramp_seq}", track, cc, label, begin, to, max(1, ticks), curve, owner=owner)
         if self._cc_values.get((ch, cc)) != begin:
@@ -1228,14 +1275,16 @@ class Engine:
         out = [(t, LEVEL_CC, e["level"]) for t, e in sorted(snap.items()) if "level" in e]
         return out + [(t, PAN_CC, e["pan"]) for t, e in sorted(snap.items()) if "pan" in e]
 
-    def mix(self, levels=None, pan=None, preset=None, bars=None, save_as=None, recall=None):
+    def mix(self, levels=None, pan=None, preset=None, bars=None, save_as=None, recall=None, force=False):
         """Set track LEVEL (CC 95) and PAN (CC 90) per track, from the next bar line (whiplash_mix).
 
         levels/pan map tracks or group words to values; preset gives each role a level (auto = the genre
         playing). bars ramps each change on the clock (0 = on the bar line). save_as stores the mix as it will be
         after this call (the last values sent plus these); recall sends a saved mix, only what differs. When
-        nothing is playing the CCs go out now. Everything is validated before anything is sent.
+        nothing is playing the CCs go out now. Everything is validated before anything is sent. force: past the
+        loudness guard (level increases after a listen heard clipping).
         """
+        force = check_flag(force, "force")
         try:
             level_items = mixer.values(levels, "levels", mixer.level)
             pan_items = mixer.values(pan, "pan", mixer.pan)
@@ -1282,6 +1331,13 @@ class Engine:
                     raise WhiplashError("nothing to save: Whiplash hasn't sent a level or pan yet; give levels or "
                                         "pan (or a preset) with save_as")
             changes = [(t, cc, v) for t, cc, v in entries if self._cc_values.get((t - 1, cc)) != v]
+            forced = self._guard([(t, cc, v, None) for t, cc, v in changes], force)
+            if ticks and playing:
+                new = {(t, cc) for t, cc, v in changes if self._cc_values.get((t - 1, cc)) is not None}
+                if len(set(self._ramps) | new) > MAX_RAMPS:
+                    self.rails["ramps_refused"] += 1
+                    raise WhiplashError(f"this mix would run more than {MAX_RAMPS} ramps at once (the safety cap): "
+                                        "ramp fewer tracks, use bars 0, or cancel running ramps first")
             out = {"levels": {str(t): v for t, v in sorted(level_out.items())},
                    "pan": {str(t): v for t, v in sorted(pan_out.items())},
                    "changes": len(changes), "cc": {"level": LEVEL_CC, "pan": PAN_CC}}
@@ -1305,6 +1361,8 @@ class Engine:
                 self.ensure_port()
                 sent, _ = self._apply_mix(entries, 0)
                 out.update(applies="now", sent=sent)
+            if forced:
+                out["guard"] = GUARD_FORCED
             if save:
                 self._mixes[save] = snap
                 out["saved_as"] = save
@@ -1322,6 +1380,89 @@ class Engine:
         return {"levels": {str(t): e["level"] for t, e in sorted(known.items()) if "level" in e},
                 "pan": {str(t): e["pan"] for t, e in sorted(known.items()) if "pan" in e},
                 "saved": sorted(self._mixes)}
+
+    # ---- v0.7.0: listening loop and loudness guard ------------------------
+    def _guard(self, changes, force):
+        """Loudness guard (caller holds _lock). changes: [(track, cc, new value, base or None)], base defaulting to
+        the last value sent. While the last listen heard clipping, an increase (or a value with nothing known to
+        compare) on a guarded CC raises unless force. Returns True when force let a guarded increase through."""
+        if not (self.last_listen and self.last_listen.get("clipping")):
+            return False
+        ups = []
+        for track, cc, value, base in changes:
+            if cc not in GUARDED_CCS:
+                continue
+            base = self._cc_values.get((track - 1, cc)) if base is None else base
+            if base is None or value > base:
+                ups.append(f"{GUARDED_CCS[cc]} on track {track} ({'unknown' if base is None else base} -> {value})")
+        if not ups:
+            return False
+        if not force:
+            self.rails["guard_refusals"] += 1
+            raise WhiplashError("loudness guard: the last whiplash_listen heard clipping, so raising "
+                                f"{'; '.join(ups[:6])} is refused. Lower something instead and listen again; pass "
+                                "force=true only if the user insists")
+        self.rails["guard_forced"] += 1
+        return True
+
+    def listen_clock(self):
+        """(playing, bpm) for a listen."""
+        with self._lock:
+            return self.playing(), float(self.bpm)
+
+    def next_bar_line(self, margin=0.0, wait=1.0):
+        """(bar number, perf_counter time) of the next bar line at least `margin` s away, from the position the
+        sequencer publishes; (None, None) when nothing plays. Waits up to `wait` s for a first tick."""
+        deadline = time.perf_counter() + wait
+        while True:
+            pos = self.position
+            if pos is not None or not self.playing() or time.perf_counter() > deadline:
+                break
+            time.sleep(0.005)
+        if pos is None:
+            return None, None
+        bar, step, due = pos
+        step_len = 60.0 / self.bpm / 4.0
+        bar, at = bar + 1, due + (patterns.STEPS - step) * step_len
+        while at - time.perf_counter() < margin:
+            bar, at = bar + 1, at + patterns.STEPS * step_len
+        return bar, at
+
+    def arm_listen(self):
+        self.note_log = collections.deque(maxlen=8192)
+
+    def disarm_listen(self):
+        """Stop logging notes; returns what was logged [(time, channel, note, velocity)]."""
+        log_, self.note_log = self.note_log, None
+        return list(log_ or ())
+
+    def listen_roles(self):
+        """{track: role} of what plays now, kit labels included (for the listen's kick and per-track checks)."""
+        with self._lock:
+            roles = self._roles_playing() if self.pattern is not None else {}
+            for t, (role, _) in self._kit_tracks.items():
+                roles.setdefault(t, role)
+            return roles
+
+    def record_listen(self, result):
+        from .listen import summary
+        with self._lock:
+            self.last_listen = summary(result)
+
+    def safety_status(self):
+        """The v0.7.0 rails for whiplash_status (caller holds _lock)."""
+        heard = self.last_listen
+        return {"max_ramps": MAX_RAMPS, "ramps_running": len(self._ramps), "cc_rate_max": CC_RATE_MAX,
+                "cc_per_tick": self.cc_budget(), **self.rails,
+                "loudness_guard": bool(heard and heard.get("clipping"))}
+
+    def listen_status(self):
+        heard = self.last_listen
+        if heard is None:
+            return None
+        out = {k: v for k, v in heard.items() if k != "at"}
+        out["age_s"] = round(time.time() - heard["at"], 1)
+        return out
 
     # ---- parameters ----------------------------------------------------
     def _target(self, param, cc):
@@ -1356,13 +1497,15 @@ class Engine:
             return min(spec.max, max(spec.min, number)), True
         return number, False
 
-    def set_param(self, track, value, param=None, cc=None, nrpn=None):
+    def set_param(self, track, value, param=None, cc=None, nrpn=None, force=False):
         """Send one parameter change. Exactly one of param / cc / nrpn selects the target.
 
         param and cc take a 7-bit value (0-127); named params clamp into their own range
         (e.g. tune 4-124). nrpn takes the full 14-bit value (0-16383), always split as
         MSB = value >> 7, LSB = value & 127. Cancels a running ramp on the same track/CC.
+        force: past the loudness guard (a level/volume/overdrive increase after a listen heard clipping).
         """
+        force = check_flag(force, "force")
         mido = __import__("mido")
         track = check_track(track)
         ch = track - 1
@@ -1392,6 +1535,7 @@ class Engine:
         else:
             value, clamped = self._value(value, spec)
         with self._lock:
+            forced = self._guard([(track, number, value, None)], force)
             ramp = self._ramps.pop((track, number), None)
             self._restore.pop((track, number), None)  # the user took over a cutoff a filter_swap would put back
             self._cc(mido, ch, number, value)
@@ -1406,11 +1550,14 @@ class Engine:
             out["cancelled_ramp"] = ramp.id
         if hold_note:
             out.update(HOLD_NOTE_INFO)
+        if forced:
+            out["guard"] = GUARD_FORCED
         return out
 
-    def ramp(self, track, to, param=None, cc=None, start=None, beats=None, bars=None, curve="linear"):
+    def ramp(self, track, to, param=None, cc=None, start=None, beats=None, bars=None, curve="linear", force=False):
         """Ramp a CC from start to `to` over beats or bars, advanced on the sequencer clock."""
         track = check_track(track)
+        force = check_flag(force, "force")
         number, spec = self._target(param, cc)
         if spec is not None and spec.discrete:
             raise WhiplashError(f"{spec.name} is a switch; use whiplash_set_param")
@@ -1450,6 +1597,11 @@ class Engine:
                 start, from_clamped = self._value(start, spec, "from")
                 if number == HOLD_CC and start >= HOLD_NOTE:
                     start, from_clamped = HOLD_NOTE - 1, True
+            if (track, number) not in self._ramps and len(self._ramps) >= MAX_RAMPS:
+                self.rails["ramps_refused"] += 1
+                raise WhiplashError(f"{MAX_RAMPS} ramps are already running (the safety cap): cancel some with "
+                                    "cancel: '<ramp_id>' or 'all', or wait for them to finish")
+            forced = self._guard([(track, number, to, start)], force)
             replaced = self._ramps.pop((track, number), None)
             self._restore.pop((track, number), None)
             self._ramp_seq += 1
@@ -1465,6 +1617,8 @@ class Engine:
             out["clamped"] = True
         if number == HOLD_CC and (to_clamped or from_clamped):
             out["hold_note"] = HOLD_RAMP_NOTE
+        if forced:
+            out["guard"] = GUARD_FORCED
         return out
 
     def cancel_ramps(self, which):
@@ -2309,6 +2463,8 @@ class Engine:
                 "progression": self.progression_status(),
                 "arrangement": self.arrangement_status(),
                 "mix": self.mix_status(),
+                "listen": self.listen_status(),
+                "safety": self.safety_status(),
                 "routing": self.routing() if self._kit_tracks or self._parts else None,
                 "parts": {str(t): {"placed_by": p.source, "bars": p.bars_written} for t, p in sorted(self._parts.items())},
                 "tracks": self.tracks_summary(), "roles_assumed": not self._kit_tracks,

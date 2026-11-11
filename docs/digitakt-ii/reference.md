@@ -635,7 +635,7 @@ Consequences in the code:
 ## 9. Transport, clock, tempo, patterns, songs
 
 - **Clock receive** ([M] p. 77): the unit follows the incoming 24-PPQN clock for tempo. Its delay time, LFO sync and pattern speed then track Whiplash's BPM.
-- **Clock timing on the computer side** (2026-11-11, [docs/testing/clock-jitter.md](../testing/clock-jitter.md); measured on Linux and CI runners, **not** on a unit): Whiplash schedules ticks on an absolute grid, so a late tick never shifts the ones after it; after a stall the overdue ticks go out back to back. The manual doesn't say how the unit smooths an uneven incoming clock (§15.3 Q18).
+- **Clock timing on the computer side** (2026-11-11, [docs/testing/clock-jitter.md](../testing/clock-jitter.md); measured on Linux and CI runners, **not** on a unit): Whiplash schedules ticks on an absolute grid, so a late tick never shifts the ones after it; after a stall the overdue ticks go out back to back. The manual doesn't say how the unit smooths an uneven incoming clock (§15.3 Q22).
 - **Transport receive:**
   - **Start** starts the unit's sequencer from the top, playing the selected pattern, song or chain with all its trigs.
   - **Stop** stops it.
@@ -736,6 +736,14 @@ Whiplash visualiser implications:
 - What it captures is the single USB OUT pair, which is normally MAIN. That's why per-track meters have to be MIDI-derived, unless USB OUT is set to specific tracks.
 - With INT TO MAIN = AUTO, the main/headphone outs might go quiet while the stream is active. HW: check whether a capture-only stream (computer recording, sending nothing) counts as "streaming".
 
+`whiplash_listen` implications (v0.7.0, added 2026-11-11; nothing here is hardware-verified):
+- It needs the same USB CONFIG = **USB AUDIO/MIDI** ([M] 14.8.1, p. 83). In OVERBRIDGE or USB MIDI mode the unit offers no class-compliant audio input, so the listen finds no "Digitakt" input and says so.
+- It hears the single **USB OUT** pair ([M] 14.6, p. 80-81). With USB OUT = MAIN that is the main mix, effects included; with L:T / R:T it is one or two tracks, which carry no effects (§14 above). Per-track findings in a MAIN capture are inferred from note timing, not measured per track.
+- **PRE/POST FADER** decides whether TRACK LEVEL (CC 95, `whiplash_mix`) changes what USB OUT carries when it is set to tracks. Interpretation: on MAIN the level always counts, because MAIN is after the mixer. HW (§15.3 Q19).
+- The input's device name is expected to contain "Digitakt" (Whiplash matches it case-insensitively, the same rule as the MIDI port). The exact name on macOS and Linux is unconfirmed. HW (§15.3 Q18).
+- The sections cited here don't state the USB audio sample rate or bit depth. Whiplash opens the input at the rate the computer reports for it and analyses 44.1 or 48 kHz alike (Q18 asks what the unit offers).
+- Kick offsets include the MIDI-out → sample → USB-audio-in round trip. The size of that latency on the unit is unknown. HW (§15.3 Q20).
+
 ---
 
 ## 15. Implications for Whiplash
@@ -780,6 +788,9 @@ Status key: ✅ matches the manual, ⚠️ right but with a caveat worth knowing
 | 32 | v0.6.2 transitions (`transition.py`, `engine._transition_plan`) send only CC 74 (`filter_freq`) as ramps, plus Whiplash's own drops and fills | ✅ / ⚠️ | No new message type and no new CC number. `filter_swap` ramps CC 74 on every outgoing track except kick and bass down to 30 over N bars, the switch lands on the bar line as before (no Stop/Start, §9), then CC 74 ramps back to the value Whiplash last sent (or `filter_from`) over one bar. Stop mid-transition sends that value once per track with the panic. `drop_swap` and the riser's fill send no CC; the riser ramps CC 74 20 → 127 on fx-labelled tracks and leaves it there until the kit is reloaded (§2.2). What a falling CC 74 sounds like depends on the FLTR machine (§4.2): HW, §15.3 Q18. |
 | 33 | v0.6.2 `whiplash_mix` sends TRACK LEVEL CC 95 and PAN CC 90 on the track's own channel ([M] Appendix B, B.1 and B.5, p. 109-110; [G] agrees, §8.1), never their NRPNs (the addresses disagree, §8.3) | ✅ / ⚠️ | Both are in `ccmap` (`track_level`, `pan`) and neither is in `BLOCKED_CCS`. Only values that differ from the last one Whiplash sent go out, on the bar line or as a clocked ramp. Track LEVEL is part of the kit (§2.1), so a mix changes the kit's working copy until it is reloaded; Whiplash never saves it. [G] gives TRACK LEVEL a default of 100, so the `flat` preset uses 100. Whether the unit's LEVEL and PAN follow the CCs on screen: HW, §15.3 Q16. |
 
+| 34 | v0.7.0 `whiplash_listen` captures the unit's USB audio (`listen.py`) and sends nothing to the unit | ✅ / ⚠️ | No new message type, no CC: a listen only reads an audio input. It needs USB CONFIG = USB AUDIO/MIDI and hears the USB OUT pair (§14; [M] p. 80-81, p. 83). The optional extra (numpy, sounddevice) is imported only inside a listen. Whether the input is named "Digitakt", what the round-trip latency is, and whether INT TO MAIN = AUTO silences the main outs during a capture-only stream are HW (§15.3 Q7, Q18, Q20). |
+| 35 | v0.7.0 safety rails: at most 48 ramps at once, ramp CCs capped at 1,000/s and 16 per clock tick, and a loudness guard on TRACK LEVEL (CC 95), AMP VOLUME (CC 89) and OVERDRIVE (CC 57) after a listen hears clipping (`engine.py`) | ✅ | Pure restrictions: they only ever send fewer CCs, later, never different numbers. A held-back ramp CC goes out on a later tick with the ramp's current value, and every ramp still ends on its exact end value. CC 89 is the AMP page's VOL and CC 57 the FX page's OVER (§5.2, §5.3; [M] p. 110; [G]). The master overdrive and compressor are on the FX CONTROL channel, which Whiplash never addresses (§15.2), so the guard can't cover them. Whether 1,000 CCs/s is gentle enough for the unit is HW (§15.3 Q21). |
+
 ### 15.2 Things Whiplash must keep never doing
 
 These rules are enforced in code; don't relax them:
@@ -797,7 +808,7 @@ These follow from the manual, and no tool does them today:
 
 ### 15.3 Open hardware questions
 
-Check these on the unit, and record the result in this file with a date:
+Check these on the unit, and record the result in this file with a date (Q7 also covers `whiplash_listen`: does a capture-only stream count as "streaming" for INT TO MAIN = AUTO?):
 1. SETTINGS > MIDI CONFIG > CHANNELS factory values for FX CONTROL CH, AUTO CHANNEL and PRG CHG IN CH (§7.3).
 2. Notes 48 / 60 / 72 on a track channel with TUNE 64. Does 60 equal the [TRIG] key's pitch? Does the KB octave setting change anything on a track channel? What is the usable note range there?
 3. Which mute mode CC 94 and CC 110 drive (green global vs magenta pattern).
@@ -815,7 +826,11 @@ Check these on the unit, and record the result in this file with a date:
 15. Filter swap (v0.6.2, §15.1 #32): "switch to breaks with a filter swap over 4 bars". With the default low-pass filter machine, do the outgoing highs close smoothly over 4 bars (CC 74 → 30), does breaks land on the one with no click, and does the cutoff reopen over one bar? Is 30 too dark or too open? On a high-pass FLTR machine, what does it sound like?
 16. Mix (v0.6.2, §15.1 #33): does the unit's track LEVEL (and the mixer page) follow CC 95, and PAN follow CC 90, on the right track and only that one? Does a recalled mix land exactly on the bar line? Is a 4-bar CC 95 ramp smooth (no zipper noise)?
 17. Riser (v0.6.2): on a track labelled riser or sweep, does a CC 74 ramp 20 → 127 (exp) over 4 bars sound like a riser into the switch, and does the drum fill land on the last bar before it?
-18. Clock following (2026-11-11, §9, [docs/testing/clock-jitter.md](../testing/clock-jitter.md)): does the unit's tempo readout stay steady while Whiplash plays from the Hermes gateway, and is there an audible hiccup or tempo wobble after an occasional late tick (a 5-75 ms stall, then the overdue ticks back to back)? [M] p. 77 doesn't say how CLOCK RECEIVE smooths the incoming clock.
+18. Listen input name (v0.7.0, §15.1 #34): with USB CONFIG = USB AUDIO/MIDI, what is the Digitakt II's audio input called on macOS (Audio MIDI Setup) and on Linux (ALSA)? Does it contain "Digitakt"? How many input channels and which sample rate does it offer?
+19. Listen and the mixer (v0.7.0): with USB OUT = MAIN, does lowering TRACK LEVEL (CC 95) with `whiplash_mix` lower `lufs_ish` on the next listen? With USB OUT set to one track (L:T), does PRE/POST FADER change that?
+20. Round trip (v0.7.0): `whiplash_listen` on a four-on-the-floor kick. What `kick.median_offset_ms` and `spread_ms` come back? Is the offset steady across listens (latency), and is the spread a few ms?
+21. CC rate (v0.7.0, §15.1 #35): with 16 tracks ramping filter, level and pan at once (48 ramps) at 300 BPM, does the unit keep up (no stuck values, no lag in the notes)?
+22. Clock following (2026-11-11, §9, [docs/testing/clock-jitter.md](../testing/clock-jitter.md)): does the unit's tempo readout stay steady while Whiplash plays from the Hermes gateway, and is there an audible hiccup or tempo wobble after an occasional late tick (a 5-75 ms stall, then the overdue ticks back to back)? [M] p. 77 doesn't say how CLOCK RECEIVE smooths the incoming clock.
 
 ---
 
