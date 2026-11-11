@@ -7,7 +7,7 @@ This is one ordered session for Phil on the Air, with Hermes and a Digitakt II o
 - the Digitakt reference fixes,
 - the restyled visualiser,
 - v0.5.1 `whiplash_write_part` (written melodies, rhythms and note lengths),
-- and a placeholder for v0.5.2, which is still being built.
+- and the v0.5.2 fixes from the v0.5.0 review: transpose on tracks 9-16, All Notes Off on the channels written parts use, and `amp_hold` 127 (NOTE) only when asked for explicitly.
 
 **Nothing in this file is verified yet.** The test suite runs on fake and virtual ports only. As you go, tick Pass or Fail and jot a note. Afterwards, record each result in [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md) with who tested it, the date and the OS version (CLAUDE.md rule). Each check names the reference section or open question (§15.3 Qn) it settles.
 
@@ -15,7 +15,7 @@ This is one ordered session for Phil on the Air, with Hermes and a Digitakt II o
 - **Part A (about 10 min)** is the smoke test, including one written melody. If it passes, the demo is safe; stop there if time is short.
 - **Part B** covers written parts (v0.5.1) in depth. They are the newest code, so they come first among the deeper checks.
 - **Parts C-I** go deeper, most important first.
-- **Part J** is for v0.5.2. Skip it until that PR is merged.
+- **Part J** covers the v0.5.2 fixes.
 - **Part K** unplugs the cable, so it comes last.
 
 Type the prompts as written; *italic* text in a prompt is a placeholder. If Hermes picks a different tool or argument than expected, note it: that's useful too.
@@ -29,7 +29,7 @@ Type the prompts as written; *italic* text in a prompt is a placeholder. If Herm
 ```bash
 git -C ~/whiplash pull          # symlinked checkout; or: hermes plugins update whiplash
 hermes gateway restart          # required: the gateway keeps old plugin code until it restarts
-hermes plugins list             # whiplash -> enabled (v0.5.1, 16 tools)
+hermes plugins list             # whiplash -> enabled (v0.5.2, 16 tools)
 ```
 
 A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code.
@@ -265,7 +265,7 @@ Generated parts send note-off at 0.8 of their gate, so the difference is audible
 - [ ] Recorded. MODE: ____ HOLD: ____
 
 ### E2. HOLD = NOTE vs a fixed hold
-- **Type:** *"Set amp hold on track 8 to 127."* (On the unit, HOLD should show NOTE. Once v0.5.2 is in, say *"to NOTE"* instead; see J3.) Then *"Set amp hold on track 8 to 20."*
+- **Type:** *"Set amp hold on track 8 to 127."* (On the unit, HOLD should show NOTE. Since v0.5.2, only exactly 127 or *"to note"* sends NOTE, and the result says `hold: "NOTE"`; see J4.) Then *"Set amp hold on track 8 to 20."*
 - **Expect:** at 127, the pad holds for its note length, then decays. At 20, every hit has the same short hold whatever the note length.
 - [ ] Pass · [ ] Fail. Notes:
 
@@ -365,7 +365,7 @@ CC 19 switching slots was heard on Nov 11; the rest is new.
 - [ ] Pass · [ ] Fail. Notes:
 
 ### G7. Panic with All Notes Off (§15.3 Q5)
-- **Setup:** breaks playing (the pad has 16-step gates). Set `amp_hold` 127 (NOTE; *"to NOTE"* after v0.5.2) on track 8 so its notes are held.
+- **Setup:** breaks playing (the pad has 16-step gates). Set `amp_hold` on track 8 to note (*"set amp hold on track 8 to note"*) so its notes are held.
 - **Type:** *"Stop"* in the middle of a pad note.
 - **Expect:** the pad cuts at once. Whiplash sends per-note note-offs and also CC 123. Whether CC 123 alone silences notes can't be separated from the note-offs here, so record only that the stop was clean.
 - [ ] Pass · [ ] Fail. Notes:
@@ -441,30 +441,44 @@ CC 19 switching slots was heard on Nov 11; the rest is new.
 
 ---
 
-## J. v0.5.2 fixes (placeholder; do once it is merged)
+## J. v0.5.2 fixes (PR #11; the v0.5.0 review findings)
 
-Another agent is fixing these from the v0.5.0 review (PR #10). After the merge: pull, run **`hermes gateway restart`**, and adjust the prompts to the final README if the merged API differs.
+**Setup:**
+- Select an empty pattern on the unit.
+- Check that AUTO CHANNEL and FX CONTROL CH are not on channels 10-12.
+- Leave slots 1-3 alone.
 
-### J1. Transpose on tracks 9-16
-- **Type:** *"Write a melody on track 10: C5 E5 G5, quarter notes"*, then *"Transpose track 10 up an octave."*
-- **Expect:** the melody moves up an octave on the next bar.
-- **Then type:** *"Transpose track 12 up 5"*, with nothing on track 12.
-- **Expect:** a warning or refusal, not a silent `success`.
+### J1. Transpose applies to a written part on track 10
+- **Type:** *"Play techno at 124."* Then *"On track 10, play C5 on every 8th note."* Then *"Transpose track 10 up an octave."*
+- **Expect:** from the next bar, track 10's line jumps up an octave with the same rhythm. The result shows `transpose: 12` and pitch C6.
 - [ ] Pass · [ ] Fail. Notes:
 
-### J2. All Notes Off on channels 1-16 (§15.3 Q5)
-- **Setup:** HOLD = NOTE on track 10. *"Write track 10 as one long C5, length 16."*
-- **Type:** *"Stop"* mid-note.
-- **Expect:** the note cuts at once. Whiplash sends per-note note-offs plus CC 123 on channels 1-16.
+### J2. Transpose on an empty track is refused
+- **Type:** *"Transpose track 11 up 5 semitones."* Track 11 has no part.
+- **Expect:** Hermes reports an error ("plays nothing … write one with whiplash_write_part first"), and nothing changes in the beat.
 - [ ] Pass · [ ] Fail. Notes:
 
-### J3. amp_hold 127 (NOTE) only when asked for explicitly
-- **Type:** *"Set amp hold on track 8 to 200."*
-- **Expect:** it clamps to a fixed hold, and the unit's HOLD does **not** show NOTE.
-- **Type:** *"Ramp amp hold on track 8 from 60 to 127 over 2 bars."*
-- **Expect:** it ends on a fixed hold, not NOTE.
-- **Type:** *"Set amp hold on track 8 to NOTE."*
-- **Expect:** the unit shows NOTE, and the result says so.
+### J3. Stop silences tracks 9-16 too (§15.3 Q5)
+- **Setup:** keep J1's part playing on track 10, and give it a long sound: *"Set amp_hold on track 10 to note"* and *"amp_decay 127 on track 10."*
+- **Type:** *"Stop."*
+- **Expect:** everything goes silent at once, including track 10.
+- **Optional, with a MIDI monitor:** CC 123 goes out on channels 1-8 and 10 only.
+- [ ] Pass · [ ] Fail. Notes:
+
+### J4. An explicit 127 or "note" sets HOLD = NOTE, and says so (§15.3 Q9)
+- **Type:** *"Set amp_hold on track 6 to 127."*
+- **Expect:** the result says `hold: "NOTE"`, and Hermes tells you it changed the kit's envelope. On the unit, AMP > HOLD shows NOTE.
+- [ ] Pass · [ ] Fail. Notes:
+
+### J5. A ramp stops at 126, not NOTE
+- **Type:** *"Ramp amp_hold on track 6 from 20 to 127 over 4 bars."*
+- **Expect:** the result says the ramp stops at 126 (`hold_note`). Afterwards, the unit's HOLD reads 126, not NOTE, and note lengths no longer change the sound.
+- [ ] Pass · [ ] Fail. Notes:
+
+### J6. 126 is a fixed hold
+- **Type:** *"Set amp_hold on track 6 to 126."*
+- **Expect:** HOLD shows 126.
+- **Afterwards:** reload the kit with [FUNC] + [NO].
 - [ ] Pass · [ ] Fail. Notes:
 
 ---
@@ -503,8 +517,8 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 | Q2 Note 60, 48 and 72 on a track channel; KB octave; range | C1, C2, C3, C6 |
 | Q3 Which mute mode CC 94 drives | G4 |
 | Q4 CC 19 = 0 | F1 |
-| Q5 CC 123 | G7, J2 (partial) |
+| Q5 CC 123 | G7, J3 (partial) |
 | Q6 Default VELOCITY TO VOL and AMP HOLD | E1, G3 |
 | Q7 INT TO MAIN while capturing | H4 / I3 |
 | Q8 SLICE = NOTE, slice 1 | H3 |
-| Q9 Written-part length vs HOLD/MODE (v0.5.1) | B3 (and §15.1 #24: B6) |
+| Q9 Written-part length vs HOLD/MODE; HOLD = NOTE display | B3, J4-J6 (and §15.1 #24: B6) |
