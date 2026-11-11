@@ -1,6 +1,7 @@
 # Hardware test session: Whiplash on a Digitakt II
 
 This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.7.1** that hasn't been checked on a real unit yet, except v0.6.2's transitions and `whiplash_mix` (PR #19): those have their hardware checks in that PR and reference §15.3 Q15-17, and aren't in this file yet:
+- the visualiser's SECTIONS timeline and EAR module (E10-E11, PR "Visualiser: section timeline + listening view"),
 - v0.7.1: the kit scan, `whiplash_scan_kit` (one note per track heard and classified; labels proposed, never applied) (Part W, PR #22's HW 7.1-1 to 7.1-8),
 - v0.7.0: the listening loop, `whiplash_listen` (capture, loudness, kick timing, the loudness guard, the ramp and CC-rate caps) (Part V, PR #20's HW 7.0-1 to 7.0-9),
 - v0.6.1: `whiplash_arrange` (`short_demo`, `club`), fills that follow the kit map (a kick labelled on track 9), `routing` on play results with `routing.vacated`, routing around written parts, settings that follow a relabelled part, queued results that show their own setup, and no extra Stop before a fresh Start (Part R, PR #17's HW 6.1-1 to 6.1-9),
@@ -434,6 +435,27 @@ Written parts sit around C5 (note 60 = native pitch). They carry across pattern 
   - *"Clear the progression"*: the cells go, `NO PROGRESSION` shows, the key stays. *"Stop"*: the KEY module disappears.
   - *"Play techno"* (no key given): the module reads `F MINOR` with a `HOME` tag. *"Switch to breaks in A minor on the next bar"*: `NEXT KEY A MINOR @N` until the switch.
 - [ ] Pass · [ ] Fail. Highlight on the one: ____
+
+### E10. Section timeline (SECTIONS)
+- **Setup:** do this during R1 (Part R, below), visualiser open in Safari, then again in Chrome, window at least 1100 px wide.
+- **Expect:**
+  - Before the arrangement: no SECTIONS module while stopped; once playing without one, `NO ARRANGEMENT` and the next 16 bars. A drop with a fill (A6) shows a solid square (fill) and a hollow box (drop) on its bar.
+  - After `short_demo`: one block per section (`INTRO BUILD DROP ... OUTRO`) with its first bar above it, `N SECTIONS · M BARS · STOPS @X` in the header, and a playhead line moving left to right.
+  - The section playing is inverted (white). `NOW BUILD · 2/4` counts bars; `NEXT DROP @N` has four LEDs that fill in the last bar. The new block lights and the module flashes **on the one**, with the change you hear, not a beat late.
+  - The build's kick drop and fill show under its last bar once the build starts.
+  - The run stops by itself at the bar in `STOPS @X`, and the module disappears.
+- [ ] Pass · [ ] Fail. Section change on the one (Safari / Chrome): ____ / ____
+
+### E11. What Whiplash heard (EAR)
+- **Setup:** do this during V1 and V4 (Part V, below), visualiser open. Then once more with CONNECT AUDIO on.
+- **Expect:**
+  - Before any listen: `OFF` with `LISTENING NEEDS NUMPY + SOUNDDEVICE` if they aren't installed, else `IDLE` with `NO LISTEN YET`.
+  - During a listen: `LISTENING` and a moving pattern in the left half; the beat doesn't change.
+  - After it: four LED columns (LOW LMID MID HIGH) with their %, matching the `bands` in Hermes's reply. `LUFS`, `PK`, `GRID %` and `KICK +N MS` match the reply too. The header shows the listen's first bar, its length and how long ago (`12S AGO`). A white cable runs from MASTER OUT's jack to the EAR.
+  - V4 (clipping): `CLIP` in the readout and the GUARD LED blinking. After a clean listen it goes off.
+  - After two minutes the numbers dim (stale). A failed listen (e.g. V6's unplug) shows `LAST LISTEN FAILED` and keeps the last numbers.
+  - With CONNECT AUDIO on: the right half shows `LIVE` and 24 bars moving with the music (kick on the left, hats on the right), and the EAR cable turns solid. Without it: `LIVE OFF · PRESS A`.
+- [ ] Pass · [ ] Fail. Bands match the reply: ____
 
 ### E9. Close
 - **Type:** *"Close the visualiser."*

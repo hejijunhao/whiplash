@@ -117,6 +117,23 @@ body.nocables #cables { display: none; }
 .chd { margin-top: 6px; font-size: 10px; color: var(--mid2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 12px; }
 .chd b { color: var(--hi); font-weight: normal; }
 
+/* section timeline (v0.6.1 arrangement): the song on bar lines, the playhead, what is scheduled ahead */
+#tl { grid-column: span 2; }
+#tlBox { position: relative; height: 78px; background: var(--dark); border: 2px solid var(--mid); }
+#tlCv { position: absolute; inset: 0; width: 100%; height: 100%; }
+#tlFoot { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 8px; min-height: 14px; }
+#tlNext { display: inline-flex; gap: 6px; align-items: center; color: var(--hi); font-size: 11px; text-transform: uppercase; }
+#tlEvents { color: var(--mid2); font-size: 11px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+
+/* EAR (v0.7.0 listening loop): what the last whiplash_listen heard, plus a live spectrum from CONNECT AUDIO */
+#earBox { position: relative; height: 96px; background: var(--dark); border: 2px solid var(--mid); }
+#earCv { position: absolute; inset: 0; width: 100%; height: 100%; }
+#earRead { display: flex; gap: 4px 12px; flex-wrap: wrap; margin-top: 8px; min-height: 14px; font-size: 11px; }
+#earRead b { color: var(--hi); font-weight: normal; }
+#earRead span { color: var(--mid2); white-space: nowrap; }
+#earNote { margin-top: 6px; min-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ear.stale #earBox, #ear.stale #earRead { opacity: 0.55; }
+
 /* track modules */
 #tracks, #tracksHi { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 40px 24px; align-content: start; }
 .trk .tb { display: grid; grid-template-columns: 26px minmax(0, 1fr) 52px; gap: 8px; align-items: start; }
@@ -223,6 +240,7 @@ body.nocables #cables { display: none; }
   #captions.off { display: none; }
   #rack { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 16px; gap: 28px 16px; }
   #tape { grid-column: 1 / -1; }
+  #tl, #ear { grid-column: 1 / -1; }
 }
 @media (max-width: 640px) {
   #rack { grid-template-columns: minmax(0, 1fr); }
@@ -278,7 +296,7 @@ body.nocables #cables { display: none; }
 
       <section class="mod" id="master">
         <i class="screw tl"></i><i class="screw tr"></i><i class="screw bl"></i><i class="screw br"></i>
-        <div class="mhead"><canvas class="px" data-px="MASTER OUT" data-s="2"></canvas><span class="sp"></span><span class="lbl-txt" id="msgCount"></span></div>
+        <div class="mhead"><canvas class="px" data-px="MASTER OUT" data-s="2"></canvas><span class="sp"></span><span class="lbl-txt" id="msgCount"></span><span class="jack" id="mstOut" title="USB OUT (main mix): what whiplash_listen records"></span></div>
         <div id="vuBox"><canvas id="vu"></canvas></div>
         <div id="srcLine">MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO</div>
         <div id="inJacks"></div>
@@ -287,6 +305,24 @@ body.nocables #cables { display: none; }
           <button id="audioBtn" class="btn">CONNECT AUDIO</button>
           <select id="audioDev" class="hidden" title="audio input"></select>
         </div>
+      </section>
+
+      <section class="mod hidden" id="tl">
+        <i class="screw tl"></i><i class="screw tr"></i><i class="screw bl"></i><i class="screw br"></i>
+        <div class="mhead"><canvas class="px" data-px="SECTIONS" data-s="2"></canvas><span class="role" id="tlName"></span>
+          <span class="sp"></span><span class="lbl-txt" id="tlMeta"></span><i class="led big" id="tlLed" title="section change"></i></div>
+        <div id="tlBox"><canvas id="tlCv" role="img"></canvas></div>
+        <div id="tlFoot"><span class="lbl-txt" id="tlNow"></span><span id="tlNext"></span><span id="tlEvents"></span></div>
+      </section>
+
+      <section class="mod" id="ear">
+        <i class="screw tl"></i><i class="screw tr"></i><i class="screw bl"></i><i class="screw br"></i>
+        <div class="mhead"><span class="jack sm" id="earIn" title="USB audio in"></span><canvas class="px" data-px="EAR" data-s="2"></canvas>
+          <span class="role" id="earState"></span><span class="sp"></span>
+          <canvas class="px" data-px="GUARD" data-s="1" data-c="mid"></canvas><i class="led big" id="guardLed" title="loudness guard: the last listen heard clipping"></i></div>
+        <div id="earBox"><canvas id="earCv" role="img"></canvas></div>
+        <div id="earRead"></div>
+        <div class="lbl-txt" id="earNote"></div>
       </section>
 
       <section class="mod hidden" id="harm">
@@ -432,6 +468,8 @@ function onState(frame) {
   renderTransport();
   renderTracks();
   renderHarmony();
+  renderTimeline();
+  renderEar();
   renderLog();
   $("chatSrc").textContent = frame.chat_source === "hooks" ? "HOOKS" : "STATE.DB" + (frame.chat_error ? " (UNAVAILABLE)" : "");
   $("msgCount").textContent = `MSG ${S.messages_sent}`;
@@ -796,6 +834,239 @@ function chordLine(L, bar) {
   if (L.chd.innerHTML !== html) { L.chd.innerHTML = html; L.chd.title = (MODE_TITLE[hm.tag] || hm.mode) + (hm.active ? "" : ` · starts at bar ${hm.next_at + 1}`); }
 }
 
+// ---- section timeline (v0.6.1 arrangement) ------------------------------------------------
+// S.timeline.arrangement: whiplash_arrange's sections on absolute bar lines for the cycle the playhead is in
+// (null without one). S.timeline.events: fills, drops, the queued switch and its transition already scheduled.
+// The current section is looked up from the extrapolated playhead, like the chord, so it flips on the bar.
+const tl = { sig: null, idx: null, drawn: null };
+const EV_WORD = { fill: "FILL", drop: "DROP", switch: "SWITCH", transition: "TX" };
+function sectionAt(A, bar) {   // index into A.sections for an absolute bar, wrapping a looping arrangement
+  if (bar < A.cycle) return null;
+  let off = bar - A.cycle;
+  if (off >= A.total) { if (!A.loop) return null; off %= A.total; }
+  for (let i = 0; i < A.sections.length; i++) if (off < A.sections[i].end - A.cycle) return i;
+  return null;
+}
+function evText(ev) {
+  const at = "@" + (ev.bar + 1);
+  if (ev.kind === "switch") return `SWITCH> ${ev.pattern} ${at}`;
+  if (ev.kind === "transition") return `TX ${ev.transition} ${at}+${ev.bars}`;
+  return `${EV_WORD[ev.kind] || ev.kind} ${ev.tracks.join(" ")} ${at}` + (ev.kind === "drop" && ev.bars > 1 ? `+${ev.bars}` : "");
+}
+function renderTimeline() {
+  const TL = S.playing ? S.timeline : null, box = $("tl");
+  if (!TL) { if (!box.classList.contains("hidden")) { box.classList.add("hidden"); layoutDirty = true; } tl.sig = null; return; }
+  if (box.classList.contains("hidden")) { box.classList.remove("hidden"); layoutDirty = true; }
+  const A = TL.arrangement;
+  $("tlName").textContent = A ? A.name : "";
+  $("tlName").classList.toggle("kit", !!A);
+  $("tlMeta").textContent = A ? `${A.sections.length} SECTIONS · ${A.total} BARS · ${A.loop ? "LOOPS" : "STOPS @" + (A.stops_at === null ? A.start + A.total + 1 : A.stops_at + 1)}`
+    + (A.skipped ? ` · ${A.skipped} SKIPPED` : "") : "";
+  $("tlEvents").textContent = TL.events.length ? TL.events.slice(0, 4).map(evText).join(" · ") : (A ? "" : "NO ARRANGEMENT · ASK HERMES FOR ONE (CLUB, SHORT DEMO)");
+  $("tlCv").setAttribute("aria-label", A ? A.sections.map((x) => `${x.name} bars ${x.start + 1}-${x.end}`).join(", ") : "no arrangement");
+  const sig = JSON.stringify([A, TL.events]);
+  if (sig !== tl.sig) { tl.sig = sig; tl.drawn = null; }
+  tickTimeline(playheadAbs(performance.now()), performance.now(), true);
+}
+function tickTimeline(ph, now, force) {
+  const TL = S && S.playing ? S.timeline : null;
+  if (!TL) return;
+  const A = TL.arrangement, bar = ph === null ? S.bar : Math.floor(ph / STEPS);
+  if (A) {
+    const idx = sectionAt(A, bar);
+    if (idx !== tl.idx) {
+      if (tl.idx !== null && idx !== null && !force) {   // a new section just started, on the bar line
+        flash($("tl")); $("tlLed").classList.add("on"); setTimeout(() => $("tlLed").classList.remove("on"), 160);
+      }
+      tl.idx = idx;
+    }
+    const sec = idx === null ? null : A.sections[idx];
+    const into = sec ? ((bar - A.cycle) % A.total) - (sec.start - A.cycle) : 0;
+    $("tlNow").textContent = sec ? `NOW ${sec.name} · ${into + 1}/${sec.bars}` : bar < A.start ? `STARTS @${A.start + 1}` : "ENDED";
+    let nextName = null, nextAt = null;
+    if (sec) {
+      nextAt = bar - into + sec.bars;
+      const n = idx + 1 < A.sections.length ? idx + 1 : (A.loop ? 0 : null);
+      nextName = n === null ? "END" : A.sections[n].name;
+    } else if (bar < A.start) { nextName = A.sections[0].name; nextAt = A.start; }
+    const beatsLeft = ph === null || nextAt === null ? 99 : Math.ceil((nextAt * STEPS - ph) / 4);
+    const cue = beatsLeft <= 4 ? [0, 1, 2, 3].map((i) => `<i class="led${i < 4 - Math.max(0, beatsLeft) ? " on" : ""}"></i>`).join("") : "";
+    const tx = sec && sec.transition ? ` · TX ${esc(sec.transition)}` : "";
+    const html = nextName ? `NEXT ${esc(nextName)} @${nextAt + 1}${tx} ${cue}` : "";
+    if ($("tlNext").innerHTML !== html) $("tlNext").innerHTML = html;
+  } else { tl.idx = null; $("tlNow").textContent = `BAR ${bar + 1}`; $("tlNext").innerHTML = ""; }
+  drawTimeline(ph === null ? bar * STEPS : ph, force);
+}
+function drawTimeline(ph, force) {
+  const cv = $("tlCv"), [ctx, w, h] = fit(cv);
+  const TL = S.timeline, A = TL.arrangement, bar = Math.floor(ph / STEPS);
+  // the window: the whole arrangement cycle, or the next TL.ahead bars from the current bar without one
+  let x0, span;
+  if (A) { x0 = A.cycle; span = A.total; } else { x0 = bar; span = Math.min(TL.ahead, 16); }
+  const pad = 4, iw = w - pad * 2, ppb = iw / span;
+  const xOf = (b) => pad + Math.round(((b - x0) * ppb) / 2) * 2;
+  let phBar = ph / STEPS;
+  if (A && A.loop && phBar >= A.cycle + A.total) phBar = A.cycle + ((phBar - A.cycle) % A.total);
+  const phX = Math.max(pad, Math.min(w - pad, Math.round(xOf(phBar) / 2) * 2));
+  const key = `${w}|${h}|${phX}|${tl.idx}|${tl.sig}`;
+  if (!force && key === tl.drawn) return;
+  tl.drawn = key;
+  ctx.clearRect(0, 0, w, h);
+  const top = 12, sh = 26, ey = 44, eh = 12, ry = 62;
+  if (A) {
+    A.sections.forEach((sec, i) => {
+      const a = xOf(sec.start), b = xOf(sec.end) - 2, cur = i === tl.idx, past = tl.idx !== null && i < tl.idx;
+      const nxt = tl.idx === null ? i === 0 : i === (tl.idx + 1 < A.sections.length ? tl.idx + 1 : (A.loop ? 0 : -1));
+      ctx.fillStyle = cur ? C.hi : past ? C.off : C.panel;
+      ctx.fillRect(a, top, Math.max(2, b - a), sh);
+      ctx.fillStyle = cur ? C.hi : nxt ? C.hi : C.mid;   // border: solid, dashed for the next section
+      for (let x = a; x < b; x += 2) if (!nxt || (x / 2) % 2 === 0) { ctx.fillRect(x, top, 2, 2); ctx.fillRect(x, top + sh - 2, 2, 2); }
+      for (let y = top; y < top + sh; y += 2) if (!nxt || (y / 2) % 2 === 0) { ctx.fillRect(a, y, 2, 2); ctx.fillRect(b - 2, y, 2, 2); }
+      const room = Math.floor((b - a - 6 + 1) / 4);   // characters that fit at scale 1
+      const name = String(sec.name).toUpperCase().slice(0, Math.max(0, room));
+      if (name) drawPx(ctx, name, a + 4 + (name.length * 4 - 1) / 2, top + 8, 1, cur ? C.bg : past ? C.dim : C.mid2);
+      const len = String(sec.bars);
+      if ((b - a) > (len.length * 4 + 6) && sh > 16) drawPx(ctx, len, a + 4 + (len.length * 4 - 1) / 2, top + 18, 1, cur ? C.panel : C.dim);
+      const lab = String(sec.start + 1);
+      if (b - a >= lab.length * 4 + 4 || cur) drawPx(ctx, lab, a + (lab.length * 4 - 1) / 2, 4, 1, cur ? C.hi : C.mid2);
+      if (sec.transition) {   // a transition runs over this section's last bars into the next: a checker notch
+        ctx.fillStyle = cur ? C.bg : C.hi;
+        for (let y = top + 2; y < top + sh - 2; y += 2) for (let x = b - 8; x < b - 2; x += 2) if (((x + y) / 2) % 2 === 0) ctx.fillRect(x, y, 2, 2);
+      }
+    });
+  } else {
+    for (let b = 0; b <= span; b += 4) drawPx(ctx, String(x0 + b + 1), Math.min(w - 8, xOf(x0 + b) + 4), 4, 1, C.mid2);
+    ctx.fillStyle = C.off;
+    ctx.fillRect(pad, top, iw, sh);
+    drawPx(ctx, "NO ARRANGEMENT", w / 2, top + sh / 2, 1, C.dim);
+  }
+  // events: fills (solid), drops (hollow span), the queued transition (checker) and switch (tall bar)
+  for (const ev of TL.events) {
+    if (ev.bar + Math.max(1, ev.bars) <= x0 || ev.bar >= x0 + span) continue;
+    const a = Math.max(pad, xOf(ev.bar)), b = Math.min(w - pad, xOf(ev.bar + Math.max(1, ev.bars))) - 2, wd = Math.max(2, b - a);
+    ctx.fillStyle = C.hi;
+    if (ev.kind === "fill") ctx.fillRect(a, ey, wd, eh);
+    else if (ev.kind === "drop") { ctx.fillRect(a, ey, wd, 2); ctx.fillRect(a, ey + eh - 2, wd, 2); ctx.fillRect(a, ey, 2, eh); ctx.fillRect(a + wd - 2, ey, 2, eh); }
+    else if (ev.kind === "transition") { for (let y = ey; y < ey + eh; y += 2) for (let x = a; x < a + wd; x += 2) if (((x + y) / 2) % 2 === 0) ctx.fillRect(x, y, 2, 2); }
+    else if (ev.kind === "switch") ctx.fillRect(a, top - 2, 4, ey + eh - top + 2);
+  }
+  // ruler: a dot per bar when there is room, a tick every 4
+  ctx.fillStyle = C.mid;
+  for (let b = 0; b <= span; b++) {
+    if (ppb < 4 && b % 4) continue;
+    ctx.fillRect(xOf(x0 + b), ry, 2, b % 4 ? 2 : 6);
+  }
+  // playhead
+  ctx.fillStyle = C.hi;
+  ctx.fillRect(phX - 1, top - 4, 2, h - top);
+  ctx.fillRect(phX - 3, top - 6, 6, 2);
+}
+
+// ---- EAR (v0.7.0 listening loop) -------------------------------------------------------------
+// S.listen.last: what the last whiplash_listen heard on the unit's USB OUT (main mix): its four-band balance,
+// loudness and timing. A listen is a few bars, on request: it is a snapshot, not a live feed, so the page says
+// how old it is. The right half is a real live spectrum only while CONNECT AUDIO is on (the browser's own
+// capture of the same input); otherwise it says it is off. Nothing here is guessed from MIDI.
+const ear = { spec: null, peaks: new Float32Array(24), lastDraw: 0 };
+const BAND_PX = { low: "LOW", low_mid: "LMID", mid: "MID", high: "HIGH" };
+function listenAge(E) {
+  const ts = E.last && E.last.ts;
+  if (!ts || !S.server_time) return null;
+  return Math.max(0, S.server_time - ts + (performance.now() - lastFrameWall) / 1000);
+}
+function fmtAge(s) { return s < 90 ? `${Math.round(s)}S AGO` : s < 5400 ? `${Math.round(s / 60)}M AGO` : `${Math.round(s / 3600)}H AGO`; }
+function renderEar() {
+  const E = S.listen;
+  if (!E) return;
+  const last = E.last, state = $("earState");
+  $("guardLed").classList.toggle("on", !!E.guard);
+  $("guardLed").classList.toggle("blink", !!E.guard && !REDUCED);
+  if (E.running) state.textContent = "LISTENING";
+  else if (last) state.textContent = last.silent ? "HEARD SILENCE" : "HEARD";
+  else state.textContent = E.installed ? "IDLE" : "OFF";
+  state.classList.toggle("kit", !!E.running);
+  const bits = [];
+  if (last) {
+    const L = last.loudness || {}, O = last.onsets || {}, K = last.kick || {};
+    if (L.lufs_ish !== null && L.lufs_ish !== undefined) bits.push(`<span>LUFS <b>${esc(L.lufs_ish)}</b></span>`);
+    if (L.peak_dbfs !== null && L.peak_dbfs !== undefined) bits.push(`<span>PK <b>${esc(L.peak_dbfs)}</b>${L.clipping ? ' <b class="inv">CLIP</b>' : ""}</span>`);
+    if (O.on_grid_pct !== null && O.on_grid_pct !== undefined) bits.push(`<span>GRID <b>${esc(O.on_grid_pct)}%</b></span>`);
+    if (O.swing_estimate) bits.push(`<span>SWG~ <b>${esc(O.swing_estimate)}</b></span>`);
+    if (last.kick && K.median_offset_ms !== null) bits.push(`<span>KICK <b>${K.median_offset_ms >= 0 ? "+" : ""}${esc(K.median_offset_ms)}MS</b>${K.spread_ms !== null ? " ±" + esc(Math.round(K.spread_ms / 2 * 10) / 10) : ""}${K.missed ? ` ${esc(K.missed)} MISSED` : ""}</span>`);
+    if (last.low_end && last.low_end.masking) bits.push(`<span><b class="inv">KICK MASKED</b></span>`);
+    if (last.quiet_tracks && last.quiet_tracks.length) bits.push(`<span>QUIET <b>${esc(last.quiet_tracks.join(" "))}</b></span>`);
+  }
+  const html = bits.join("");
+  if ($("earRead").innerHTML !== html) $("earRead").innerHTML = html;
+  let note;
+  if (E.error) note = "LAST LISTEN FAILED: " + E.error.error;
+  else if (E.running) note = "CAPTURING THE NEXT BARS · THE BEAT IS NOT TOUCHED";
+  else if (last) note = (last.notes && last.notes[0]) || (last.summary_only ? "SUMMARY ONLY (HEARD BEFORE THE VIEW OPENED)" : "USB OUT · MAIN MIX · NOT STORED");
+  else if (!E.installed) note = "LISTENING NEEDS NUMPY + SOUNDDEVICE (WHIPLASH[LISTEN]) · EVERYTHING ELSE WORKS";
+  else note = "NO LISTEN YET · ASK HERMES TO LISTEN TO THE MIX";
+  $("earNote").textContent = note.toUpperCase();
+  $("earNote").title = note;
+  layoutDirty = layoutDirty || $("earIn").classList.contains("patched") !== !!last;
+  $("earIn").classList.toggle("patched", !!last);
+}
+function drawEar(now) {
+  if (!S || !S.listen) return;
+  if (!audio.an && now - ear.lastDraw < 250) return;   // static unless the live spectrum runs
+  ear.lastDraw = now;
+  const E = S.listen, last = E.last, age = listenAge(E);
+  $("ear").classList.toggle("stale", !!(last && age !== null && age > 120));
+  const [ctx, w, h] = fit($("earCv"));
+  ctx.clearRect(0, 0, w, h);
+  const half = Math.floor(w * 0.46 / 2) * 2, base = h - 14, top = 14, mh = base - top;
+  // left: HEARD, the four bands of the last listen as segmented LED columns (dB share of the 20 Hz-20 kHz energy)
+  const head = E.running ? "LISTENING" : last ? (last.from_bar !== null && last.from_bar !== undefined ? `@${last.from_bar + 1} ` : "") + (last.bars ? `${last.bars}BAR ` : "") + (age !== null ? fmtAge(age) : "") : "NO LISTEN";
+  drawPx(ctx, head, half / 2 + 2, 6, 1, E.running ? C.hi : C.mid2);
+  const lit0 = (k) => k > 0.15;
+  const bands = last && last.bands, cw = Math.floor((half - 8) / 4 / 2) * 2;
+  ["low", "low_mid", "mid", "high"].forEach((name, i) => {
+    const x = 4 + i * cw, band = bands ? bands.find((b) => b.band === name) : null;
+    const k = band && band.db !== null ? clamp01((band.db + 30) / 30) : 0;   // -30 dB share .. all of it
+    for (let y = base - 2, n = 0; y >= top; y -= 4, n++) {
+      const lit = band && (base - y) / mh <= k + 1e-6 && k > 0;
+      ctx.fillStyle = lit ? C.hi : C.off;
+      if (E.running && !REDUCED) ctx.fillStyle = (Math.floor(now / 120) + n + i) % 6 === 0 ? C.mid : C.off;
+      ctx.fillRect(x + 2, y, cw - 6, 2);
+    }
+    drawPx(ctx, BAND_PX[name], x + cw / 2 - 1, h - 6, 1, C.mid2);
+    if (band && band.pct !== null) drawPx(ctx, `${Math.round(band.pct)}%`, x + cw / 2 - 1, Math.max(top + 2, top + Math.round(mh * (1 - k)) - 4), 1, lit0(k) ? C.mid2 : C.dim);
+  });
+  ctx.fillStyle = C.mid;
+  for (let y = 2; y < h - 2; y += 4) ctx.fillRect(half + 2, y, 2, 2);   // divider
+  // right: LIVE, the browser's own capture (CONNECT AUDIO), 24 log-spaced bins 40 Hz-16 kHz with peak hold
+  const lx = half + 8, lw = w - lx - 4;
+  drawPx(ctx, audio.an ? "LIVE" : "LIVE OFF", lx + lw / 2, 6, 1, audio.an ? C.hi : C.dim);
+  if (!audio.an) {
+    drawPx(ctx, "PRESS A", lx + lw / 2, top + mh / 2, 1, C.dim);
+    ear.peaks.fill(0);
+    return;
+  }
+  const an = audio.an, nb = ear.peaks.length;
+  if (!ear.spec || ear.spec.length !== an.frequencyBinCount) ear.spec = new Uint8Array(an.frequencyBinCount);
+  an.getByteFrequencyData(ear.spec);
+  const sr = audio.ctx.sampleRate, binHz = sr / an.fftSize, bw = Math.max(2, Math.floor(lw / nb / 2) * 2);
+  for (let i = 0; i < nb; i++) {
+    const f0 = 40 * Math.pow(16000 / 40, i / nb), f1 = 40 * Math.pow(16000 / 40, (i + 1) / nb);
+    let m = 0;
+    for (let b = Math.floor(f0 / binHz); b <= Math.min(ear.spec.length - 1, Math.ceil(f1 / binHz)); b++) m = Math.max(m, ear.spec[b]);
+    const k = m / 255;
+    ear.peaks[i] = Math.max(k, ear.peaks[i] - 0.012);
+    const x = lx + i * bw;
+    for (let y = base - 2; y >= top; y -= 4) {
+      ctx.fillStyle = (base - y) / mh <= k ? C.hi : C.off;
+      ctx.fillRect(x, y, bw - 2, 2);
+    }
+    ctx.fillStyle = C.mid2;
+    ctx.fillRect(x, Math.round((base - 2 - ear.peaks[i] * mh) / 2) * 2, bw - 2, 2);
+  }
+  drawPx(ctx, "40", lx + 4, h - 6, 1, C.mid2);
+  drawPx(ctx, "16K", lx + lw - 6, h - 6, 1, C.mid2);
+}
+
 // ---- transport visuals ---------------------------------------------------------------
 let reelAngle = 0;
 function drawTape(ph, dt) {
@@ -942,6 +1213,7 @@ function layoutCables() {
   const rack = $("rack"), svg = $("cables"), base = rack.getBoundingClientRect();
   svg.setAttribute("width", rack.scrollWidth); svg.setAttribute("height", rack.scrollHeight);
   const want = [{ key: "clk", from: $("clkOut"), to: $("clkIn"), track: 0 }];
+  if (S && S.listen && S.listen.last) want.push({ key: "ear", from: $("mstOut"), to: $("earIn"), track: -1 });
   for (const [t, L] of tracks) want.push({ key: "t" + t, from: L.jack, to: IN_JACKS[t], track: t });
   for (let t = 1; t <= 16; t++) IN_JACKS[t].classList.toggle("patched", tracks.has(t));
   while (cables.length > want.length) cables.pop().path.remove();
@@ -959,7 +1231,8 @@ function drawCables(now, dt) {
   if (layoutDirty) layoutCables();
   for (const cab of cables) {
     const L = tracks.get(cab.track);
-    const quiet = L ? !audible(L.data, S ? S.bar : 0) : !(S && S.playing);
+    const quiet = cab.track === -1 ? !(S && S.listen && S.listen.running) && !audio.an
+      : L ? !audible(L.data, S ? S.bar : 0) : !(S && S.playing);
     cab.path.classList.toggle("quiet", quiet);
     cab.wob *= Math.exp(-dt * 5);
     const wob = REDUCED ? 0 : cab.wob * Math.sin(now / 1000 * 22 + cab.phase);
@@ -1115,6 +1388,8 @@ function frame(now) {
     }
   }
   tickHarmony(ph, now);
+  if (S && S.playing && S.timeline) tickTimeline(ph, now, false);
+  drawEar(now);
   drawTape(ph, dt);
   drawHub(now);
   drawVu(dt, now);
