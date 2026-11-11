@@ -183,12 +183,26 @@ def test_snapshot_new_fields_are_quiet_on_a_generated_drum_track(fake):
     assert lane["pitch"] is None and lane["amp"] is None  # a kick has no range to show
 
 
+def test_snapshot_shows_kit_labels_and_slot_labels(fake):
+    eng, _ = fake
+    eng.label_tracks(tracks={"7": "tuned cymbal", "5": "pad"}, slots={"11": "synth Phil likes"})
+    pretend_playing(eng, P["techno"])
+    eng.set_param(7, 11, param="sample_slot")
+    lanes = {lane["track"]: lane for lane in view.snapshot(eng)["lanes"]}
+    assert lanes[7]["kit"] == {"role": "cymbal", "label": "tuned cymbal"} and lanes[7]["role"] == "tuned cymbal"
+    assert lanes[7]["sample_slot"] == 11 and lanes[7]["slot_label"] == "synth Phil likes"
+    assert lanes[1]["kit"] is None and lanes[1]["slot_label"] is None and lanes[1]["role"] == "kick"
+    five = lanes[5]  # labelled pad: a module even if no generated part was routed to it
+    assert five["kit"]["role"] == "pad" and five["role"] == "pad"
+    json.dumps(lanes)
+
+
 def test_page_handles_the_v05_fields_and_their_absence():
     """The page shows WR / TRN / LEN / HOLD tags, a roll for written parts and a 9-16 row, and never
     dereferences a field an older frame (or a generated drum lane) leaves out."""
     script = view.PAGE.read_text()
     script = script[script.index("<script>"):]
-    for marker in ("WR</span>", "TRN ", "LEN ", "HLD NOTE", "drawRoll(", '"tracksHi"', '"hiHead"'):
+    for marker in ("WR</span>", "TRN ", "LEN ", "HLD NOTE", "drawRoll(", '"tracksHi"', '"hiHead"', "NO PART", "kit map: "):
         assert marker in script, marker
     for line in script.splitlines():  # nested reads of optional fields sit behind a guard on the same line
         for field in ("pitch", "amp", "length"):

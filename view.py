@@ -158,6 +158,8 @@ def snapshot(engine, now=None):
         ramps.setdefault(ramp["track"], []).append(ramp)
     in_use = {t for t, bars in work.items() if any(bars)}
     in_use |= {t for t, bars in (queued["pattern"].bars.items() if queued else ()) if any(bars)}
+    kit, kit_slots = st.get("kit_tracks") or {}, st.get("kit_slots") or {}
+    in_use |= set(kit)  # a labelled track gets a module even while it waits for a written part
     in_use |= st["muted"] | st["hw_muted"] | set(st["drops"]) | set(st["density"]) | set(ramps) | set(params) | set(slots)
     in_use |= {t for ts in st["fills"].values() for t in ts} | set(fills_now)
     future_fills = {t for b, ts in st["fills"].items() if b > bar for t in ts}
@@ -181,11 +183,15 @@ def snapshot(engine, now=None):
         lengths = sorted({h[3] for b in loop for h in b}) if written else []
         drop = st["drops"].get(track)
         lane = {
-            "track": track, "role": roles.get(track) or next_roles.get(track) or ("cc only" if not bars else ""),
+            "track": track, "role": (kit[track][1] if track in kit else
+                                       roles.get(track) or next_roles.get(track) or ("cc only" if not bars else "")),
             "steps": steps, "loop": loop, "melodic": melodic,
             "written": written, "transpose": shift, "pitch": pitch,
             "length": [lengths[0], lengths[-1]] if lengths else None,
             "amp": _amp(track - 1, st["cc_values"]),
+            # whiplash_label_tracks: the user's label (role is then that label, not an assumption)
+            "kit": {"role": kit[track][0], "label": kit[track][1]} if track in kit else None,
+            "slot_label": kit_slots.get(slots.get(track)),
             "muted": track in st["muted"], "hw": track in st["hw_muted"],
             "drop": {"from": drop[0], "back": drop[1]} if drop else None,
             "fill": "now" if track in fills_now else "next" if track in future_fills else None,

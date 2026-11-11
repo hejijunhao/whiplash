@@ -2,17 +2,62 @@
 
 ## Unreleased
 
-Visualiser catches up with v0.5.x. Page and `view.py` only: no engine, tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
+Visualiser catches up with v0.5.x. Mostly the page and `view.py`. The only engine change is one read-only line: `Engine.view_state()` also copies the slot labels (`kit_slots`). There are no tool or schema changes, and the view still sends nothing. Not tested on a real Digitakt II or in a live Hermes session yet.
 
 Added
 - **Written parts on the rack.** A track playing a `whiplash_write_part` part gets a `WR` tag, and its 16-step strip becomes a small piano roll: each note at its pitch, as long as its `length` in steps. A `LEN` tag gives the length (or range). It is dashed when Whiplash has sent neither `amp_mode` 1 nor `amp_hold` 127 on that track, since the unit may then not end the sound on note-off (reference §5.2). The module flashes inverted when a part lands.
 - **Transpose and range.** A `TRN +12` tag on transposed tracks, and the note range (e.g. `C5-G5`) under the note readout, both including the live transpose. Bars other than the sequencer's current one now carry their notes and lengths, so the note readout and roll stay right across the loop.
 - **Amp envelope.** `HLD NOTE`, `ADSR` or `AHD` tags show what Whiplash last sent on CC 80 / CC 87 (not what the kit is set to).
+- **Kit map labels** (v0.5.3 `whiplash_label_tracks`). A labelled track shows the user's label as its role in white, with the vocabulary role in the tooltip. Assumed roles stay gray. The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until a part is written.
 - **Tracks 9-16** get their own row under 1-8 when they play, headed `TRK 9-16 · WRITTEN PARTS · CHECK AUTO / FX CONTROL CH`, so 1-8 never reflow.
-- Snapshot lane fields: `written`, `transpose`, `pitch` (`low`/`high` + names or `null`), `length` (`[min, max]` steps for written parts, else `null`) and `amp` (`{mode, hold_note}` or `null`). `loop` hits are now `[step, velocity, note, length]` (was `[step, velocity]`). All come from `Engine.view_state()` as it already was.
+- Snapshot lane fields: `written`, `transpose`, `pitch` (`low`/`high` + names or `null`), `length` (`[min, max]` steps for written parts, else `null`) and `amp` (`{mode, hold_note}` or `null`), `kit` (`{role, label}` or `null`) and `slot_label`. `loop` hits are now `[step, velocity, note, length]` (was `[step, velocity]`).
 
 Fixed
 - The view named notes in scientific numbering (60 = C4), one octave off from Whiplash's Elektron numbering (60 = C5) used by `whiplash_write_part`, status and the reference. It now uses `patterns.note_name`.
+
+## 0.5.3
+
+The v0.5 plan's P1 batch (items 7-10), answering Phil's live Hermes feedback from Nov 11 2026: wrong track roles for his kit, 5-40 s turns with many `tool_describe` round trips, and no tech house. 17 tools. Nothing here has been tested on a real Digitakt II yet.
+
+Added
+- **Kit map: `whiplash_label_tracks`** (plan item 7). It records what the user says each track holds (`tracks: {"7": "tuned cymbal", "5": "pad"}`) and what slots hold (`slots: {"11": "synth Phil likes"}`).
+  - **Vocabulary.** Free text is matched to one of kick, snare, rim, clap, closed hat, open hat, cymbal, perc, bass, pad, stab, chord, lead, fx, other. Explicit `{role, label}` also works. `null` removes a label; calls merge.
+  - **Patterns follow the map** (`kitmap.route`). Each generated part goes:
+    1. to the track labelled with its role,
+    2. else to a close role (rim/snare, chord to pad, stab to lead, open hat to cymbal),
+    3. else to its default track, unless the user labelled that track as something else,
+    4. else it is dropped.
+
+    Cymbal and fx tracks never get a melodic part. Labelled tracks with nothing routed stay silent until `whiplash_write_part`. Parts keep the native register.
+  - **When it applies.** While playing, a change re-routes at the next bar line and keeps swing, humanize and density. Otherwise it applies at the next start.
+  - **Lifetime.** The map survives `whiplash_stop` and pattern switches. `reset: true` or a gateway restart clears it. It lives in memory only: no file and no MIDI.
+  - **Results.** `whiplash_status` and play results show the label as `tracks[n].role` (no "(assumed)") with `kit_role`, `slot_label` for a labelled slot, `kit`, and `roles_assumed: false` once anything is labelled. `whiplash_select_sample`, `whiplash_set_param` `sample_slot` and the play `setup` echo carry `slot_label`. The label result has `routing` (`parts`, `dropped`, `silent_until_written`). The visualiser's lanes use the labels.
+  - Validated before anything changes. Whiplash still never reads sample names (that needs SysEx).
+- **One-call start: `tracks` on `whiplash_play_pattern`** (item 8). For example `{"6": {"slot": 9, "tune": 64, "transpose": -12, "mute": false}}`.
+  - Slot (CC 19) and tune (CC 16) go out once each, slot first. On a fresh start they are sent before MIDI Start and the first note. When the call is queued they are sent at the switch bar, before that bar's notes, together with the mutes.
+  - A setup CC replaces a running ramp on the same param.
+  - `transpose` merges with the top-level `transpose`, and conflicting values are refused.
+  - The whole call is validated first, so a bad entry changes nothing.
+  - The result echoes `setup` with when it applied and the slot labels.
+- **`techhouse` genre** (item 9) at 126 BPM with 56% swing. It has four on the floor, an offbeat open hat, 16th hats with three-level accents, a rolling off-beat bass around A4 (never on the kick, register unchanged), a sparse stab and perc.
+  - Aliases `tech house`, `tech-house` and `tech_house`. Spacing and case are ignored.
+  - Moods `funky`, `bouncy`, `rolling` and `peak time`.
+  - An unknown genre's error lists the closest matches.
+
+Changed
+- **Shorter tool descriptions** (item 10). Tool descriptions went from 7,302 to about 2,700 characters, even with one more tool. All descriptions, params included, went from 11,357 to about 6,300. The full schema JSON went from 18,108 to about 13,900 bytes.
+  - The detail moved into the `whiplash:digitakt` skill.
+  - The safety caveats stay in the descriptions: pass on `overlap_warning` and the virtual-port warning, HOLD = NOTE and `envelope: "note"` only when the user agrees, `length_audible`, can't list samples, stop as panic, and the read-only view.
+  - A test caps the total size, and the size of each tool's description.
+- The skill gains a "fast path" (label, then start with `tracks` in one call), the kit map rules, and the material moved out of the tool descriptions: switch behaviour, mutate actions, ramps, stop and the virtual port. The "roles are assumptions" section is replaced.
+- `kit_note` points the agent at `whiplash_label_tracks`.
+- Version 0.5.3 in `pyproject.toml`, `plugin.yaml` and `docs/catalog-entry.yaml`. `whiplash_label_tracks` is added to `provides_tools` in both manifests.
+- Reference §15.1 #26-27 and §15.3 Q10-11 cover the kit map and setup timing.
+
+Open decisions (plan recommendations taken)
+- The kit map lives in memory only. Persistence (item 13, `~/.hermes/whiplash/kitmap.json`) still needs Phil's OK.
+- No sample names from the unit (SysEx stays blocked).
+- `cymbal` is added to the plan's vocabulary, because the plan's own cymbal rule and Phil's kit need it.
 
 ## 0.5.2
 

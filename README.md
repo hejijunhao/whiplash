@@ -14,23 +14,36 @@ Every tool is prefixed `whiplash_` so it can't collide with another plugin's too
 | --- | --- |
 | `whiplash_list_midi_ports` | Lists MIDI ports and whether a Digitakt II is connected. |
 | `whiplash_list_params` | The named Digitakt II parameters, grouped (track, src, filter, amp, fx, lfo), with CC, range, centre and aliases. |
-| `whiplash_play_pattern` | Starts a beat by `genre` (`deephouse` 122 BPM, `soul` 86, `techno` 130, `breaks` 132) or `mood` (groovy, chill, dark, energetic, ...). Optional `bpm` (30-300), `bars` (1-512; omit to loop), `port`, `send_transport` (default `true`; `false` = clock only, see [Transport](#transport-and-the-units-own-pattern)), `transpose` (`{"6": -12, "7": 5}`, semitones per track). While something plays, the new pattern is **queued and swaps in on the next bar line** without stopping the clock. Every result carries an `overlap_warning` and a per-track `tracks` summary with each line's `pitch` (see [Pitch](#pitch-and-register)). |
+| `whiplash_play_pattern` | Starts a beat by `genre` (`deephouse` 122 BPM, `soul` 86, `techno` 130, `breaks` 132, `techhouse` 126; "tech house" and similar spellings work too) or `mood` (groovy, chill, dark, energetic, funky, ...). Optional `bpm` (30-300), `bars` (1-512; omit to loop), `port`, `send_transport` (default `true`; `false` = clock only, see [Transport](#transport-and-the-units-own-pattern)), `transpose` (`{"6": -12, "7": 5}`, semitones per track), and `tracks` to set the kit up in the same call: `{"6": {"slot": 9, "tune": 64, "transpose": 12, "mute": false}}`. Slot and tune CCs go out just before the first bar, or at the switch bar when queued; everything is validated first. While something plays, the new pattern is **queued and swaps in on the next bar line** without stopping the clock. Every result carries an `overlap_warning` and a per-track `tracks` summary with each line's `pitch` (see [Pitch](#pitch-and-register)). |
 | `whiplash_set_param` | Instant sound change on one track: a named param (sent as CC, clamped into its range), a raw `cc`, or a raw `nrpn: [msb, lsb]`. `amp_hold` clamps to 0-126; HOLD = NOTE (CC 80 = 127) goes out only for `value: "note"` or exactly 127, and the result says `hold: "NOTE"`. |
 | `whiplash_select_sample` | Switches which sample a track plays, by `slot` 0-127 among the samples **already loaded in the project's sample pool** (Sample Slot Select, CC 19). Same as `whiplash_set_param` with `param: "sample_slot"`. Whiplash can't list, preview or load samples; see [Sample select](#sample-select). |
+| `whiplash_label_tracks` | Records what the user says each track holds (`tracks: {"7": "tuned cymbal", "5": "pad"}`, matched to a role vocabulary) and what sample slots hold (`slots: {"11": "warm synth"}`). Generated parts then follow the map from the next bar: a kick part goes to the track labelled kick, a cymbal track never gets chords. In memory only: it survives stop and switches; `reset: true` or a gateway restart clears it. See [Kit map](#kit-map). |
 | `whiplash_transpose` | Moves one track's notes by `semitones` or `octaves` (±48 semitones) from the next bar line, keeping the line's intervals. Absolute (0 = back to the pattern). Works on any track that plays, including written parts on 9-16; on a track that plays nothing it is refused (it would do nothing). Carries across pattern switches; `whiplash_stop` resets it. Returns the new `pitch`. Needs a pattern playing. |
 | `whiplash_write_part` | Writes one track's notes, melody or rhythm (tracks 1-16), replacing its generated line from the next bar line. Place hits with one of `rhythm` (`four_on_floor`, `on_kick`, `offbeat_8ths`, `8ths`, `16ths`, `off_16ths`, `syncopated`, `half_time`), `grid` (a 16-cell step mask per bar, `"x..x..x.x..x..x."`), `steps`, `hits` or `lock_to` (copy another track's hits now). `notes` cycle over the hits: Elektron names (`C5` = 60), MIDI numbers, `.` rests, or scale degrees with `key`/`scale`. `length` (16th steps, 0.25-16) is the exact note-off; `velocity`, `bars` (1, 2, 4). `envelope: "note"` also sends HOLD = NOTE (CC 80 = 127). `reset: true` goes back to the generated line. See [Written parts](#written-parts). |
 | `whiplash_ramp_param` | Sweeps a named param (or raw CC) `from` → `to` over `beats` or `bars`, advanced on the MIDI clock. `curve`: linear, exp, log. Returns a ramp id; `cancel: "<id>"` or `"all"`. Ramps on `amp_hold` (CC 80) stop at 126, so a ramp never switches HOLD to NOTE. |
 | `whiplash_mutate` | Live edits to the running pattern: `density` (thin/thicken), `fill`, `swing`, `humanize`, `drop` (with auto-return), `reset`. `density` and `drop` take tracks 1-16; `reset` keeps written parts. |
 | `whiplash_mute_track` / `whiplash_unmute_track` | Live mute. `hardware: true` also flips the unit's own track mute (CC 94). |
 | `whiplash_set_tempo` | Live tempo change (30-300 BPM); the clock follows so the Digitakt's delay/LFOs stay in sync. |
-| `whiplash_stop` | Note-offs, All Notes Off on channels 1-8 plus any channel 9-16 that played a written part, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations, transposes, written parts and any queued switch. Works as a panic button when nothing is playing. |
-| `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `tracks` gives each track in use: role (marked `(assumed)`), the last sample `slot` and `tune` Whiplash sent, `transpose`, `pitch`, mute state, `part` (`generated` or `written`) and last CCs; `parts` lists the written parts. |
+| `whiplash_stop` | Note-offs, All Notes Off on channels 1-8 plus any channel 9-16 that played a written part, transport Stop (skipped in clock-only mode). Resets mutes, ramps, mutations, transposes, written parts and any queued switch; keeps the kit map. Works as a panic button when nothing is playing. |
+| `whiplash_status` | Port, `transport_mode` (`start_stop` or `clock_only`), pattern, BPM, bar, queued switch, mutes, active ramps with progress, mutations, `transpose`, whether output is the silent virtual fallback (and whether a Digitakt has appeared), and `last_error`. `tracks` gives each track in use: role (the user's label, or the pattern's marked `(assumed)`), the last sample `slot` (with its `slot_label`) and `tune` Whiplash sent, `transpose`, `pitch`, mute state, `part` (`generated` or `written`) and last CCs; `parts` lists the written parts. |
 | `whiplash_open_view` | Opens the **live visualiser**, a local web page (`http://127.0.0.1:7341`, or a free port) in the default browser. It shows the beat and the conversation while you keep chatting in the terminal. Optional `port`, and `open_browser: false` to only get the URL. Read-only. |
 | `whiplash_close_view` | Stops the visualiser's local server. The beat keeps playing. |
 
-Track roles (same for all genres): 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords/chops/stabs. Load samples to match. Whiplash can't see what the unit holds, so results mark the roles `(assumed)` and carry a `kit_note` telling the agent to ask.
+Default track roles (same for all genres): 1 kick, 2 rim/snare, 3 clap, 4 closed hat, 5 open hat, 6 bass, 7-8 chords/chops/stabs. Whiplash can't see what the unit holds, so until the user labels the tracks, results mark the roles `(assumed)` and carry a `kit_note` telling the agent to ask.
 
-The plugin also ships a skill, **`whiplash:digitakt`** (`skills/digitakt/SKILL.md`), registered through Hermes' `ctx.register_skill` on builds that have it. It covers pitch and register, sample slots, note length versus AMP MODE/HOLD, the transport overlap, and a checklist for sounds that come out wrong. Tool descriptions point to it.
+### Kit map
+
+Tell Hermes what your tracks hold ("track 7 is a cymbal, track 5 is a pad") and it calls `whiplash_label_tracks`. Each generated part then goes, in order:
+1. to a track labelled with the same role,
+2. else to one with a close role (rim and snare, chord to pad, stab to lead, open hat to cymbal),
+3. else to its default track, if you haven't labelled that track as something else,
+4. else it is dropped.
+
+Labelled tracks that get no part stay silent until you write one. The result's `routing` lists where each part went. Labels live in memory for the session; nothing is written to disk or to the unit, and Whiplash still can't read sample names (that would need SysEx).
+
+Tool descriptions are kept short so Hermes can act without describing every tool first. The detail lives in the bundled skill.
+
+The plugin also ships a skill, **`whiplash:digitakt`** (`skills/digitakt/SKILL.md`), registered through Hermes' `ctx.register_skill` on builds that have it. It covers the kit map and one-call start, pitch and register, sample slots, note length versus AMP MODE/HOLD, the transport overlap, and a checklist for sounds that come out wrong. Tool descriptions point to it.
 
 ### Pitch and register
 
@@ -65,6 +78,7 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
   - **Ramps:** a ramping knob turns in time toward a tick at the target value.
   - **Pitch:** the note range under the note readout (Elektron names, C5 = 60) includes the live transpose, and a `TRN +12` tag shows a transpose. Note names match what `whiplash_write_part` echoes.
   - **Written parts:** a `WR` tag, and the strip becomes a small piano roll: each note at its pitch, running for its length in steps. A `LEN` tag gives the length range. It is dashed when Whiplash has sent neither `amp_mode` 1 (ADSR) nor `amp_hold` 127 on that track, because the unit may then ignore note-off (reference §5.2). `HLD NOTE` or `ADSR`/`AHD` shows what Whiplash last sent for the envelope, not what the kit is set to.
+  - **Kit map:** a track you labelled with `whiplash_label_tracks` shows your label as its role in white (assumed roles stay gray). The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until you write one.
   - **Tracks 9-16:** they play only written parts, so they get their own row under 1-8 with a reminder to keep AUTO / FX CONTROL CH off those channels.
 - **Tape transport:** a bitmap BPM readout that rolls to a new tempo, REC LED, bar and 4-bar loop position, pattern and swing, a queued switch with a beat countdown, and the MIDI port. The virtual fallback shows as an inverted `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
 - **Master VU:** the needle follows an envelope derived from the scheduled hits and track levels, labelled `MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO`. The tape reels turn with the BPM and stop with the transport; the hub pulses on each kick and bar downbeat.
@@ -203,6 +217,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 - **Cleans up on exit.** `whiplash_stop`, every sequencer exit, and a normal Hermes exit (via `atexit`) send note-offs, All Notes Off, and transport Stop, then close the port. A hard kill (`SIGKILL`, power loss) can't be intercepted; press Stop on the unit if that happens.
 - **Visualiser (only when you open it).** `whiplash_open_view` starts a local HTTP server on `127.0.0.1` in two daemon threads (`whiplash-view-http`, `whiplash-view`) and opens the default browser through `webbrowser` on a daemon thread. On macOS that launches the system opener; it's the only process Whiplash ever starts. `whiplash_close_view` and Hermes exit (`atexit`) stop the server.
 - **Reads the conversation.** In-memory observer hooks pass the conversation to the view; nothing is stored. Without hooks, the view reads `~/.hermes/state.db` read-only, and only while the page is open. The page puts the conversation on screen, so mind what's visible when recording. `B` blurs it.
+- **Kit labels stay in memory.** `whiplash_label_tracks` keeps what you tell it in the Hermes process only. It writes no file and sends nothing to the unit.
 - No shell, credentials, or secrets, and no network beyond the localhost page. The only environment variable read is the optional `WHIPLASH_SEND_TRANSPORT` (plus `HERMES_HOME` to find `state.db` in fallback mode).
 
 ## Tests
@@ -211,7 +226,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-273 tests, covering:
+360 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -224,10 +239,11 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
 - written parts: every placement (rhythm presets, grids, steps, hits, `lock_to`/`on_kick`), note names and scale degrees, notes cycling over hits, note-off at `length` x a sixteenth on the timeline, retriggers not cut short, bar landing, carrying over `mutate reset` and switches, `reset: true`, density/drop/fill/mute on a written part, tracks 9-16, bad input leaving the beat and port untouched, `envelope: "note"` sending exactly one CC 80 = 127, and clock jitter with 8 written parts
 - the native register (no generated line far below note 60, whole-octave shifts, drums untouched), transpose on the wire (clamping, bar landing, carry over a switch, reset on stop), the `pitch` block with a sent tune, the per-track status block, `amp_mode`, and the bundled skill (registration, fallback without the API, frontmatter, no stale claims)
 - v0.5.2: transpose on written parts on tracks 9-16 and refusal on silent tracks, All Notes Off on exactly the channels that played (1-8 always, 9-16 only after a note), and `amp_hold` never reaching HOLD = NOTE by clamp or ramp (named or raw CC 80) while `"note"` / 127 sends it with a label
+- v0.5.3: the kit map (role vocabulary, routing onto labelled tracks, fallbacks, no chords on cymbal/fx tracks, re-routing on the bar, lifetime across stop and switches, slot labels in results, bad labels changing nothing), per-track setup on `whiplash_play_pattern` (each CC once, before MIDI Start on a fresh start and at the switch bar when queued, a bad entry rejecting the whole call), the `techhouse` pattern and aliases, and a size budget on tool descriptions that keeps the safety caveats
 - input validation, single panic per stop, exit hook, SysEx refusal
 - the visualiser:
   - the state snapshot and which lanes appear
-  - written parts, transpose, the amp envelope and tracks 9-16 in the snapshot, and the page handling frames without them
+  - written parts, transpose, the amp envelope, kit and slot labels and tracks 9-16 in the snapshot, and the page handling frames without them
   - the sequencer keeping exact time under a flood of snapshots
   - hooks that return `None` and never raise
   - streamed replies that arrive out of order

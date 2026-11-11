@@ -44,6 +44,8 @@ body.nocables #cables { display: none; }
 .mod { position: relative; background: var(--panel); border: 2px solid var(--mid2); padding: 8px 10px 10px; min-width: 0; }
 .mhead { display: flex; align-items: center; gap: 8px; height: 22px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid var(--dark); }
 .mhead .sp { flex: 1; }
+.role.kit { color: var(--hi); }   /* the user's own label (whiplash_label_tracks), not an assumed role */
+.tag.slot { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .role { color: var(--mid2); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .lbl-txt { color: var(--mid2); text-transform: uppercase; font-size: 11px; }
 .led { display: inline-block; width: 4px; height: 4px; background: var(--off); flex: none; }
@@ -524,6 +526,9 @@ function renderTracks() {
 function updateTrack(L, lane) {
   L.data = lane;
   L.role.textContent = lane.role || "";
+  const kit = lane.kit;
+  L.role.classList.toggle("kit", !!kit);
+  L.role.title = kit ? `kit map: ${kit.label} (${kit.role})` : lane.role ? "assumed role: ask Hermes to label the track" : "";
   const bar = S.bar;
   const dropActive = !!(lane.drop && lane.drop.from <= bar && bar < lane.drop.back);
   const tags = [];
@@ -549,7 +554,11 @@ function updateTrack(L, lane) {
     tags.push(`<span class="tag">${at === bar + 1 ? "FILL NEXT" : `FILL @${at + 1}`}</span>`);
   }
   if (lane.fill === "now") tags.push(`<span class="tag on">FILL</span>`);
-  if (lane.sample_slot !== null && lane.sample_slot !== undefined) tags.push(`<span class="tag">SMP ${String(lane.sample_slot).padStart(3, "0")}</span>`);
+  if (lane.sample_slot !== null && lane.sample_slot !== undefined) {
+    const sl = lane.slot_label ? ` ${esc(lane.slot_label)}` : "";
+    tags.push(`<span class="tag slot" title="sample slot${lane.slot_label ? " · kit map: " + esc(lane.slot_label) : ""}">SMP ${String(lane.sample_slot).padStart(3, "0")}${sl}</span>`);
+  }
+  if (kit && !lane.written && !lane.loop.some((b) => b.length)) tags.push(`<span class="tag more" title="labelled, but no generated part fits: silent until whiplash_write_part">NO PART</span>`);
   if (lane.density) tags.push(`<span class="tag">DNS ${lane.density > 0 ? "+" : "-"}${Math.round(Math.abs(lane.density) * 100)}</span>`);
   // controls: LVL fader, FLT/RES/DEC knobs, and a fourth knob for whatever else Whiplash sent (ramps first)
   const rampByCc = {};
