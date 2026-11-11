@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+Added
+- **Offline demo rehearsal** (`scripts/rehearse_demo.py`). Runs the hackathon demo's tool calls (checklist Part A, A1-A9) through the real handlers and engine against a recording port, at real or accelerated clock, with no Digitakt or rtmidi. Writes a Standard MIDI File of everything sent (one track per channel, markers for steps, Start/Stop and bars), a per-step report (tracks sounded, CCs, bar landing, warnings) and every tool result. It fails (exit 1) on SysEx, program change, a blocked CC, a hanging note, clock jitter past the test suite's bound, or any Part A expectation the MIDI can show. `tests/test_rehearsal.py` runs it at 4x in CI. Linked from README and the demo script. Not a hardware test.
+
 ## 0.6.0
 
 The first v0.6 PR: keys, scales and chord progressions (item 1 of [docs/executing/v06-build-plan.md](docs/executing/v06-build-plan.md)), plus the v0.6 plan itself. 18 tools. Nothing here has been tested on a real Digitakt II yet.

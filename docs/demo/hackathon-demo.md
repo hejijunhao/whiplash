@@ -2,6 +2,8 @@
 
 One run of prompts, typed live into Hermes, with the Digitakt II on the table and the visualiser on the projector. It follows the hardware checklist's smoke test ([Part A](../testing/hardware-checklist.md#a-smoke-test-and-demo-path-10-minutes)) prompt for prompt, so **run Part A on the unit before you go on stage**. If A passes, this script is safe. None of this is hardware-verified until that run is recorded in [docs/digitakt-ii/reference.md](../digitakt-ii/reference.md).
 
+**Rehearse first: `uv run python scripts/rehearse_demo.py`** (about 30 s, no unit needed). It makes the same tool calls as the run below against a recording port, writes `demo.mid` and `report.txt`, and must end in `RESULT: PASS` (exit 0). It runs in its own process with its own visualiser port, so it doesn't disturb a running Hermes. It uses project 6's labels below and checks the plugin, not the unit: Part A on the Digitakt is still the real test.
+
 The pitch in one line: *the model makes one validated call; Whiplash's own MIDI clock does the music, so every change lands on the beat however long the model takes to answer.*
 
 The kit lines below are for Phil's project 6 (tracks 7-8 tuned cymbals, slot 9 a dirty bass, slot 11 a synth). For another kit, change only the labels in step 2.
@@ -14,8 +16,9 @@ The kit lines below are for Phil's project 6 (tracks 7-8 tuned cymbals, slot 9 a
 
 ```bash
 git -C ~/whiplash pull            # or: hermes plugins update whiplash
+(cd ~/whiplash && uv run python scripts/rehearse_demo.py -q)  # rehearse; must print RESULT: PASS
 hermes gateway restart            # required after any update; a new chat is not enough
-hermes plugins list               # whiplash enabled, v0.5.3, 17 tools
+hermes plugins list               # whiplash enabled, v0.6.0, 18 tools
 ```
 
 - Start a **new chat** in Hermes, so the kit map and the conversation are empty.

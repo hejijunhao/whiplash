@@ -483,7 +483,8 @@ def test_version_is_0_6_0():
     assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.6.0"
     assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.6.0"
     assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.6.0"
-    assert (ROOT / "CHANGELOG.md").read_text().split("\n## ", 1)[1].startswith("0.6.0")
+    releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
+    assert releases[0].startswith("0.6.0")
     assert "whiplash_set_progression" in yaml.safe_load(open(ROOT / "plugin.yaml"))["provides_tools"]
 
 
