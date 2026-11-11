@@ -144,9 +144,56 @@ def test_snapshot_lanes_follow_what_the_agent_drives(fake):
     assert frame["transport_mode"] in ("start_stop", "clock_only")
     assert lanes[1]["sample_slot"] is None
     assert lanes[11]["role"] == "cc only" and lanes[11]["steps"] == [] and lanes[11]["params"][0]["value"] == 90
-    assert len(lanes[1]["loop"]) == patterns.BARS and lanes[1]["loop"][0][0] == [0, 118]
+    assert len(lanes[1]["loop"]) == patterns.BARS and lanes[1]["loop"][0][0] == [0, 118, 60, 1]
     assert frame["pos"]["bar"] == 0 and frame["pos"]["step"] == 3 and frame["pos"]["age"] >= 0
     json.dumps(frame)
+
+
+def test_snapshot_shows_written_parts_transpose_and_tracks_9_16(fake):
+    eng, _ = fake
+    pretend_playing(eng, P["deephouse"])
+    eng.write_part(6, rhythm="8ths", notes="C5 E5 G5 B5", length=[2, 0.5])
+    eng.write_part(11, steps=[0, 8], notes="A4", length=4, envelope="note")
+    eng.set_transpose(6, 12)
+    eng.set_param(7, 1, param="amp_mode")
+    with eng._lock:
+        events = eng._bar_boundary(0)
+    eng.bar_hits = (0, events, frozenset())
+    frame = view.snapshot(eng)
+    lanes = {lane["track"]: lane for lane in frame["lanes"]}
+    six, eleven = lanes[6], lanes[11]
+    assert six["written"] and six["transpose"] == 12 and six["length"] == [0.5, 2]
+    assert [h[1] for h in six["steps"][:4]] == [72, 76, 79, 83]  # the sequencer's bar, transposed
+    assert six["steps"][0][-1] == "C6" and six["steps"][0][3] == 2  # Elektron names (C5 = 60), length in steps
+    assert six["loop"][1][0] == [0, 100, 72, 2]  # [step, velocity, note + transpose, length]
+    assert six["pitch"] == {"low": 72, "high": 83, "low_name": "C6", "high_name": "B6"}
+    assert six["amp"] is None  # Whiplash sent no envelope mode on 6
+    assert eleven["written"] and eleven["role"] == "" and [h[0] for h in eleven["steps"]] == [0, 8]
+    assert eleven["length"] == [4, 4] and eleven["pitch"]["low_name"] == "A4" and eleven["transpose"] == 0
+    assert eleven["amp"] == {"mode": None, "hold_note": True}  # envelope: "note" sent amp_hold 127
+    assert lanes[7]["amp"] == {"mode": "ADSR", "hold_note": False} and not lanes[7]["written"]
+    json.dumps(frame)
+
+
+def test_snapshot_new_fields_are_quiet_on_a_generated_drum_track(fake):
+    eng, _ = fake
+    pretend_playing(eng, P["techno"])
+    lane = {l["track"]: l for l in view.snapshot(eng)["lanes"]}[1]
+    assert lane["written"] is False and lane["transpose"] == 0 and lane["length"] is None
+    assert lane["pitch"] is None and lane["amp"] is None  # a kick has no range to show
+
+
+def test_page_handles_the_v05_fields_and_their_absence():
+    """The page shows WR / TRN / LEN / HOLD tags, a roll for written parts and a 9-16 row, and never
+    dereferences a field an older frame (or a generated drum lane) leaves out."""
+    script = view.PAGE.read_text()
+    script = script[script.index("<script>"):]
+    for marker in ("WR</span>", "TRN ", "LEN ", "HLD NOTE", "drawRoll(", '"tracksHi"', '"hiHead"'):
+        assert marker in script, marker
+    for line in script.splitlines():  # nested reads of optional fields sit behind a guard on the same line
+        for field in ("pitch", "amp", "length"):
+            if re.search(rf"\blane\.{field}(\.|\[|\.map)", line):
+                assert re.search(rf"lane\.{field} (\?|&&)|lane\.{field}\) |&& lane\.{field}", line), line
 
 
 def test_snapshot_shows_sample_slot_badge_and_clock_only_mode(fake):

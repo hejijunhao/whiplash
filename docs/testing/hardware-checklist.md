@@ -439,6 +439,12 @@ CC 19 switching slots was heard on Nov 11; the rest is new.
 - **Expect:** the page loses its connection, and the beat keeps playing.
 - [ ] Pass · [ ] Fail. Notes:
 
+### I6. v0.5.x on the rack (written parts, transpose, 9-16)
+- **Setup:** reopen the visualiser after I5, deep house playing.
+- **Type:** *"Write a melody on track 6: C5 E5 G5 B5 in 8ths, length 2"*, then *"transpose track 6 up an octave"*, then *"write A4 on steps 1 and 9 of track 11, length 4, envelope note"*.
+- **Expect:** module 6 shows `WR`, a piano-roll strip whose notes match what you hear, `LEN 2`, then `TRN +12` and a range one octave up from the next bar. Track 11 appears in a separate `TRK 9-16` row with `WR` and `HLD NOTE`, and 1-8 don't move.
+- [ ] Pass · [ ] Fail. Notes:
+
 ---
 
 ## J. v0.5.2 fixes (PR #11; the v0.5.0 review findings)
