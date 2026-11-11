@@ -10,20 +10,25 @@ description: >-
   onto a session kit map of what each track holds (tracks 1-16), in any key with chord progressions,
   arranged into song sections (whiplash_arrange: intro, build, drop, outro on bar lines), written melodies
   and rhythms, bar-quantized pattern switches with DJ-style transitions (filter swap, drop swap, riser),
-  track levels and pan with saved mixes (whiplash_mix), named sound parameters, clock-synced parameter ramps, live
+  track levels and pan with saved mixes (whiplash_mix), listening to the unit's real output over USB audio
+  (whiplash_listen: loudness, clipping, band balance, timing and kick offsets as numbers, never audio) with a
+  loudness guard that refuses level increases after clipping, named sound parameters, clock-synced parameter ramps, live
   fills/drops/density/swing/humanize, switching a track among samples already in the project pool, mutes
   and tempo. Disclosure: controls MIDI hardware (MIDI Start also starts the unit's own sequencer; a
   clock-only mode is available), can change which already-loaded sample a track plays, runs a background
   sequencer thread while a pattern plays, and opens a virtual MIDI port named "Whiplash" when no Digitakt
   is connected. Optional visualiser (whiplash_open_view): a read-only local web page served on 127.0.0.1 from
   a background thread, opened in the default browser, showing the beat and the live Hermes conversation
-  (taken from in-memory observer hooks; nothing is stored). Never sends SysEx or program changes; no file
+  (taken from in-memory observer hooks; nothing is stored). whiplash_listen opens an audio input (the Digitakt's
+  USB audio, or WHIPLASH_AUDIO_INPUT) only for the length of one call (at most 24 s), through the optional
+  numpy/sounddevice extra, which needs microphone permission on macOS; the audio is analysed in memory and
+  dropped. Never sends SysEx or program changes; no file
   transfer, project writes, shell or credentials, and no network beyond that localhost page.
 maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.6.2"
+version: "0.7.0"
 readme: true
 platforms: [linux, macos]
 known_issues:
@@ -33,6 +38,7 @@ known_issues:
   - On Linux, python-rtmidi needs the ALSA runtime (libasound2).
   - MIDI Start also starts the Digitakt's own sequencer; select an empty pattern on the unit or use send_transport=false (clock only).
   - Sample select picks a slot in the unit's current sample bank and can't list or preview samples.
+  - whiplash_listen needs the optional [listen] extra (numpy, sounddevice/PortAudio), USB CONFIG = USB AUDIO/MIDI on the unit, and microphone permission on macOS; without them it returns an error with the fix and every other tool works.
 capabilities:
   provides_tools:
     - whiplash_list_midi_ports
@@ -53,6 +59,7 @@ capabilities:
     - whiplash_set_tempo
     - whiplash_stop
     - whiplash_status
+    - whiplash_listen
     - whiplash_open_view
     - whiplash_close_view
   provides_hooks:

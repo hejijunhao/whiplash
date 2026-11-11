@@ -5,6 +5,7 @@ import logging
 
 from . import ccmap
 from . import engine as eng
+from . import listen as _listen
 from . import patterns
 from . import view
 
@@ -175,7 +176,8 @@ def result_bpm(p, pattern):
 @_tool
 def set_param(p):
     ENGINE.ensure_port()
-    out = ENGINE.set_param(p["track"], p["value"], param=p.get("param"), cc=p.get("cc"), nrpn=p.get("nrpn"))
+    out = ENGINE.set_param(p["track"], p["value"], param=p.get("param"), cc=p.get("cc"), nrpn=p.get("nrpn"),
+                           force=p.get("force"))
     label = ENGINE.slot_label(out["value"]) if out.get("param") == "sample_slot" else None
     if label:
         out["slot_label"] = label
@@ -231,7 +233,7 @@ def arrange(p):
 @_tool
 def mix(p):
     return ENGINE.mix(levels=p.get("levels"), pan=p.get("pan"), preset=p.get("preset"), bars=p.get("bars"),
-                      save_as=p.get("save_as"), recall=p.get("recall"))
+                      save_as=p.get("save_as"), recall=p.get("recall"), force=p.get("force"))
 
 
 @_tool
@@ -241,7 +243,8 @@ def ramp_param(p):
     if "to" not in p:
         raise KeyError("to")
     return ENGINE.ramp(p["track"], p["to"], param=p.get("param"), cc=p.get("cc"), start=p.get("from"),
-                       beats=p.get("beats"), bars=p.get("bars"), curve=p.get("curve", "linear"))
+                       beats=p.get("beats"), bars=p.get("bars"), curve=p.get("curve", "linear"),
+                       force=p.get("force"))
 
 
 MUTATIONS = ("density", "fill", "swing", "humanize", "drop", "reset")
@@ -309,6 +312,12 @@ def status(p):
 
 
 @_tool
+def listen(p):
+    """v0.7.0: capture the unit's USB audio for some bars and return compact features (never audio)."""
+    return _listen.listen(ENGINE, bars=p.get("bars"), device=p.get("device"))
+
+
+@_tool
 def open_view(p):
     port = p.get("port")
     if port not in (None, ""):
@@ -330,4 +339,4 @@ def close_view(p):
 HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_pattern, set_param,
                                              select_sample, label_tracks, transpose, write_part, set_progression, arrange,
                                              mix, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
-                                             status, open_view, close_view)}
+                                             status, listen, open_view, close_view)}

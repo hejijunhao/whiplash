@@ -3,7 +3,7 @@
 # not built or published as a wheel, hence no [build-system].
 [project]
 name = "whiplash"
-version = "0.6.2"
+version = "0.7.0"
 description = "Hermes Agent plugin: jam on an Elektron Digitakt II over USB MIDI."
 readme = "README.md"
 license = "MIT"
@@ -14,11 +14,20 @@ dependencies = [
     "python-rtmidi>=1.5,<2",
 ]
 
+# Optional: whiplash_listen (v0.7) captures the Digitakt II's USB audio. Without these the plugin loads and
+# every other tool works; whiplash_listen says how to install them.
+[project.optional-dependencies]
+listen = [
+    "numpy>=1.24,<3",
+    "sounddevice>=0.4.6,<0.6",
+]
+
 [project.urls]
 Repository = "https://github.com/hejijunhao/whiplash"
 
 [dependency-groups]
 dev = [
+    "numpy>=1.24,<3",  # the listen analysis tests; sounddevice is never needed (fake input streams)
     "pytest>=8,<10",
     "pyyaml>=6,<7",
 ]
