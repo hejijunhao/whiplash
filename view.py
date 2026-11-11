@@ -34,6 +34,7 @@ IDLE_HEARTBEAT = 2.0  # seconds between frames when nothing changes and nothing 
 SSE_PING = 15.0
 PAGE = Path(__file__).with_name("view.html")
 CC_NAMES = {p.cc: p.name for p in ccmap.PARAMS.values()}
+CC_MAX = {p.cc: p.max for p in ccmap.PARAMS.values()}  # knob/fader travel on the page
 SAMPLE_SLOT_CC = ccmap.PARAMS["sample_slot"].cc
 HIDDEN_CCS = ccmap.BLOCKED_CCS | {123, eng.MUTE_CC, SAMPLE_SLOT_CC}  # all-notes-off, NRPN plumbing; mute/slot are badges
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -134,7 +135,8 @@ def snapshot(engine, now=None):
         if cc == SAMPLE_SLOT_CC:
             slots[ch + 1] = value
         if cc not in HIDDEN_CCS:
-            params.setdefault(ch + 1, []).append({"name": CC_NAMES.get(cc, f"cc {cc}"), "cc": cc, "value": value})
+            params.setdefault(ch + 1, []).append({"name": CC_NAMES.get(cc, f"cc {cc}"), "cc": cc, "value": value,
+                                                  "max": CC_MAX.get(cc, 127)})
     ramps = {}
     for ramp in st["ramps"]:
         ramps.setdefault(ramp["track"], []).append(ramp)
