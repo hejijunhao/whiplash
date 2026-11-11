@@ -22,7 +22,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import ccmap, chat, patterns
+from . import ccmap, chat, harmony, patterns
 from . import engine as eng
 
 log = logging.getLogger("whiplash")
@@ -117,6 +117,52 @@ def _hits(bar_hits, track):
     return [[s, n, v, g] for s in sorted(bar_hits) for (t, n, v, g, _o) in bar_hits[s] if t == track]
 
 
+MODE_TAGS = {"chords": "CHD", "stack": "STK", "root": "ROOT", "snap": "SNAP"}  # the page's short mode labels
+
+
+def _line(track, bars, bar, pattern_start, hm):
+    """One track's hits for absolute bar `bar`, as the sequencer will build them (before fills, humanize
+    and transpose): the working line, re-voiced for the chord playing in that bar (harmony.apply), or a
+    held tone for a chord track with no line. Pure lookups, outside the engine lock."""
+    _session, _key, prog, modes, ranks, pads = hm
+    hits = bars[(bar - pattern_start) % patterns.BARS] if bars else []
+    if prog is None or bar < prog.start or track not in modes:
+        return hits
+    if track in pads:
+        hits = harmony.pad_line()
+    i = prog.index(bar)
+    return harmony.apply(modes[track], hits, prog.voicings[i], prog.chords[i].root, prog.key, ranks.get(track, 0))
+
+
+def _harmony(st, bar, pattern):
+    """The KEY / CHORDS module: the key, the progression, the chord now and the next change."""
+    session, key, prog, _modes, _ranks, _pads = st["hm"]
+    queued = st["queued"]
+    out = {"key": key.name if key else None, "flats": bool(key and key.flats),
+           "key_source": "set" if session is not None else "pattern" if pattern is not None else None,
+           "next_key": None, "progression": None}
+    if queued:
+        nxt = queued.get("key") or session or harmony.key_of(queued["pattern"].key)
+        if nxt is not None and nxt != key:
+            out["next_key"] = {"key": nxt.name, "at": queued["at"]}
+    if prog is None:
+        return out
+    flats = prog.key.flats
+    started = bar >= prog.start
+    index = prog.index(bar) if started else None
+    into = (bar - prog.start) % prog.bars_per_chord if started else 0
+    next_at = bar + prog.bars_per_chord - into if started else prog.start
+    out["flats"] = flats
+    out["progression"] = {
+        "key": prog.key.name, "bars_per_chord": prog.bars_per_chord, "voicing": prog.voicing,
+        "loop_bars": prog.length, "start": prog.start, "index": index, "next_at": next_at,
+        "next_index": prog.index(next_at),
+        "chords": [{"symbol": c.symbol, "name": c.name, "notes": [harmony.note_label(n, flats) for n in v]}
+                   for c, v in zip(prog.chords, prog.voicings)],
+    }
+    return out
+
+
 def snapshot(engine, now=None):
     """The frame the page renders: plain JSON-able data. Never raises on a consistent engine."""
     now = time.perf_counter() if now is None else now
@@ -132,7 +178,7 @@ def snapshot(engine, now=None):
         "port": {"name": st["port"], "virtual": st["virtual"], "fallback": st["fallback"],
                  "lost": st["port_lost"], "error": st["last_error"]},
         "messages_sent": st["messages_sent"], "pos": None, "lanes": [],
-        "transport_mode": st.get("transport_mode"),
+        "transport_mode": st.get("transport_mode"), "harmony": None,
     }
     position = st["position"]
     if playing and position:
@@ -140,6 +186,11 @@ def snapshot(engine, now=None):
         frame["pos"] = {"bar": p_bar, "step": p_step, "age": round(now - due, 4)}
     if not playing or pattern is None:
         return frame
+    # v0.6.0 keys and progressions: a read-only copy from view_state (older engines have none)
+    hm = st["hm"] = st.get("harmony") or (None, None, None, {}, {}, frozenset())
+    prog, prog_modes = hm[2], hm[3]
+    frame["harmony"] = _harmony(st, bar, pattern)
+    flats = frame["harmony"]["flats"]
 
     work, bar_hits = st["work"], st["bar_hits"]
     current = bar_hits[1] if bar_hits and bar_hits[0] == bar else None
@@ -162,16 +213,23 @@ def snapshot(engine, now=None):
     in_use |= set(kit)  # a labelled track gets a module even while it waits for a written part
     in_use |= st["muted"] | st["hw_muted"] | set(st["drops"]) | set(st["density"]) | set(ramps) | set(params) | set(slots)
     in_use |= {t for ts in st["fills"].values() for t in ts} | set(fills_now)
+    in_use |= set(hm[5]) if prog is not None else set()  # a chord track with no line holds a tone per bar
     future_fills = {t for b, ts in st["fills"].items() if b > bar for t in ts}
 
     for track in sorted(t for t in in_use if 1 <= t <= 16):
         bars = work.get(track, [])
         idx = frame["loop_bar"]
         shift = st["transpose"].get(track, 0)
+        follows = prog is not None and track in prog_modes
+        if follows:  # the loop shows the next four bars as they will play, each in its own chord
+            start = st["pattern_start"]
+            bars = [None] * patterns.BARS
+            for k in range(patterns.BARS):
+                bars[(bar + k - start) % patterns.BARS] = _line(track, work.get(track), bar + k, start, hm)
         steps = _hits(current, track) if current is not None else (
             [[s, eng.clamp_note(n + shift), v, g] for s, n, v, g, _o in bars[idx]] if bars else [])
         notes = {h[1] for b in bars for h in b}
-        melodic = bool(notes - {patterns.DRUM})
+        melodic = bool(notes - {patterns.DRUM}) or follows  # a chord tone can be note 60 too
         written = track in st["parts"]
         # [step, velocity, note, length]: note with the live transpose, length in 16th steps
         loop = [[[h[0], h[2], eng.clamp_note(h[1] + shift), h[3]] for h in b] for b in bars]
@@ -200,11 +258,26 @@ def snapshot(engine, now=None):
             "params": sorted(params.get(track, []), key=lambda p: p["cc"]),
             "ramps": ramps.get(track, []),
             "sample_slot": slots.get(track),
+            "harmony": _lane_harmony(track, work.get(track), steps, shift, bar, st, hm, flats) if follows else None,
         }
         for hit in lane["steps"]:
             hit.append(note_name(hit[1]) if lane["melodic"] else "")
         frame["lanes"].append(lane)
     return frame
+
+
+def _lane_harmony(track, bars, steps, shift, bar, st, hm, flats):
+    """What a track following the progression plays: its mode, the notes in this bar's chord, and the
+    notes it will play in the next chord (from the bar of the next change)."""
+    prog = hm[2]
+    names = lambda notes: [harmony.note_label(n, flats) for n in sorted(set(notes), reverse=True)]
+    started = bar >= prog.start
+    next_at = bar + prog.bars_per_chord - (bar - prog.start) % prog.bars_per_chord if started else prog.start
+    upcoming = _line(track, bars, next_at, st["pattern_start"], hm)
+    mode = hm[3][track]
+    return {"mode": mode, "tag": MODE_TAGS.get(mode, mode.upper()), "active": started,
+            "now": names(h[1] for h in steps), "next": names(eng.clamp_note(h[1] + shift) for h in upcoming),
+            "next_at": next_at}
 
 
 # ---- HTTP ------------------------------------------------------------------

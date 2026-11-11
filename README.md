@@ -136,6 +136,9 @@ Say *"launch the visualiser"*. Hermes calls `whiplash_open_view`, and a page ope
   - **Written parts:** a `WR` tag, and the strip becomes a small piano roll: each note at its pitch, running for its length in steps. A `LEN` tag gives the length range. It is dashed when Whiplash has sent neither `amp_mode` 1 (ADSR) nor `amp_hold` 127 on that track, because the unit may then ignore note-off (reference §5.2). `HLD NOTE` or `ADSR`/`AHD` shows what Whiplash last sent for the envelope, not what the kit is set to.
   - **Kit map:** a track you labelled with `whiplash_label_tracks` shows your label as its role in white (assumed roles stay gray). The `SMP` tag carries the slot's label. A labelled track with no part routed to it still gets a module, tagged `NO PART` until you write one.
   - **Tracks 9-16:** they play written parts, or generated parts the kit map routed there, so they get their own row under 1-8 with a reminder to keep AUTO / FX CONTROL CH off those channels.
+- **Key and chords (v0.6.0):** while a beat plays, a full-width **KEY** module shows the key it plays in (`SET` by `key` or a progression, else the pattern's `HOME` key) and a key queued for the next switch.
+  - **Progression:** after `whiplash_set_progression`, one cell per chord with the numeral as you typed it (case kept: `i` minor, `VI` major), the chord name and its voiced notes. The chord playing is lit, with a square per bar of the chord; the next one is dashed and counts down four beats before the change. The highlight follows the playhead, so it moves on the bar line, not when the next frame arrives.
+  - **Per track:** a track that follows the progression gets a chord line under its strip: its mode (`CHD` chords, `STK` stack, `ROOT` bass roots, `SNAP` lead) and the notes it plays in this chord, then in the next one. Drum, cymbal and fx modules never get one. The strip itself already shows each upcoming bar in its own chord.
 - **Tape transport:** a bitmap BPM readout that rolls to a new tempo, REC LED, bar and 4-bar loop position, pattern and swing, a queued switch with a beat countdown, and the MIDI port. The virtual fallback shows as an inverted `VIRTUAL · SILENT`, and an unplugged device as a flashing `PORT LOST`.
 - **Master VU:** the needle follows an envelope derived from the scheduled hits and track levels, labelled `MIDI FALLBACK · TRIG ENVELOPE · NOT REAL AUDIO`. The tape reels turn with the BPM and stop with the transport; the hub pulses on each kick and bar downbeat.
   - **Real audio:** click **CONNECT AUDIO** (or press `A`) and allow microphone access. The page picks the Digitakt II's USB audio input and turns off echo cancellation, noise suppression and auto-gain so the signal isn't altered. The needle then follows the input's RMS, labelled `AUDIO · <device>`.
@@ -282,7 +285,7 @@ If Hermes started before the Digitakt was plugged in, Whiplash plays into the si
 uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest pyyaml && python -m pytest -q
 ```
 
-551 tests, covering:
+562 tests, covering:
 - manifest, catalog draft and dependency declarations
 - the parameter map against the manual, plus aliases and clamping
 - the device reference's named-param table against `ccmap.py`, so the docs can't drift
@@ -307,11 +310,13 @@ uv sync && uv run pytest -q          # or: pip install mido python-rtmidi pytest
   - mix: one CC per change on the bar line, group words and pan words, ramps and jumps, presets for every genre, save and recall (only what differs, across stop), a section recalling a mix, idle sends, and bad input sending nothing
   - clock jitter with a `filter_swap` and 8 level ramps running, and no SysEx, program change or blocked CC from any of it
 - input validation, single panic per stop, exit hook, SysEx refusal
-- the offline demo rehearsal (`scripts/rehearse_demo.py`, below) at 4x clock: every Part A check passes, the MIDI file holds exactly what was sent, and its checks catch SysEx, program change, blocked CCs and hanging notes
+- the offline demo rehearsal (`scripts/rehearse_demo.py`, below) at 4x clock: every Part A check passes, the MIDI file holds exactly what was sent, and its checks catch SysEx, program change, blocked CCs and hanging notes; with `--v06`, the progression beat (chord changes on the bar, roots on the bass, drums never transposed, nothing on cymbal or fx tracks) passes too, and its checks catch a chord tone on the cymbal or a change a bar early
 - the visualiser:
   - the state snapshot and which lanes appear
   - written parts, transpose, the amp envelope, kit and slot labels and tracks 9-16 in the snapshot, and the page handling frames without them
   - the sequencer keeping exact time under a flood of snapshots
+  - the key, progression, chord now and next change, and per-track chord lines; the strip's upcoming bars matching what the sequencer plays in each chord
+  - a jsdom render of the page with real frames: chord cells, case-kept numerals, the highlight moving on the bar before a new frame arrives, chord lines, and no script errors (CI installs jsdom; locally it skips without it)
   - hooks that return `None` and never raise
   - streamed replies that arrive out of order
   - the read-only `state.db` fallback
@@ -324,12 +329,15 @@ One test does a real virtual-port loopback through rtmidi; it skips where the ma
 ```bash
 uv run python scripts/rehearse_demo.py             # real time, about 30 s
 uv run python scripts/rehearse_demo.py --speed 4   # 4x clock, about 8 s (what CI runs)
+uv run python scripts/rehearse_demo.py --v06       # plus the optional v0.6 progression encore
 ```
 
 No Digitakt, no rtmidi and no MIDI system needed. It runs the tool calls behind the [hackathon demo](docs/demo/hackathon-demo.md) (hardware checklist Part A, A1-A9) through the real tool handlers and engine, with the beat running between calls and each call landing mid-bar. Output goes to a recording port named like the unit. It writes to `<tmp>/whiplash-rehearsal/` (or `--out DIR`):
 - `demo.mid`: everything sent, one track per MIDI channel, with markers for each step, MIDI Start/Stop and every bar. An SMF can't hold real-time bytes, so the clock is kept as timing: events sit at the engine's own musical time and the file plays back at the speed of the demo.
 - `report.txt`: per step, the calls, which tracks sounded, the CCs sent, where each change landed against the bar line, warnings and the checks. Then global checks: no SysEx or program change, no blocked CC, no hanging notes, and clock jitter within the bound `tests/test_v051.py` uses.
 - `results.json`: every tool result, as Hermes would see it.
+
+`--v06` (off by default, so the default run stays the demo) adds the demo's optional encore after Part A: deep house in A minor, i-VI-III-VII, two bars per chord, pads (the synth, slot 11) on track 7. It checks that the progression starts on the next bar, every chord change lands exactly on a bar line, every pad note is a tone of that bar's chord, the bass plays the roots, drums and the tuned cymbal stay on note 60, the fx track gets nothing, and the visualiser's frame shows the key and the chords.
 
 It exits 1 on any violation and 2 if the run crashed. `--speed` scales the engine's clock, not the order or bar timing of the calls. A pass says the plugin does what the demo needs; it says nothing about the unit. That still takes Part A on a real Digitakt II.
 

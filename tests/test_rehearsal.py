@@ -21,14 +21,26 @@ def _load_script():
 rehearse = _load_script()
 
 
+def _rehearse(out, **kwargs):
+    """Run the rehearsal at 4x. Clock jitter is measured in real time, and a shared CI runner (macOS
+    especially) sometimes stalls every process for a few ms: main's own CI hit this (run 43015115037,
+    "tech house: 5.07 ms"). So a run whose only violations are jitter is run once more, and the second
+    run must pass. A jitter regression in the engine reproduces; one noisy burst on the runner doesn't.
+    Any other violation fails at once."""
+    saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
+    for attempt in (1, 2):
+        r = rehearse.Rehearsal(speed=4, out=out / f"try{attempt}", log=lambda *a: None, **kwargs)
+        r.run()
+        report = r.write()
+        assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved  # nothing left patched
+        if not r.violations or not all(w == "global" and " ms over " in v for w, v in r.violations):
+            break
+    return r, report
+
+
 @pytest.fixture(scope="module")
 def rehearsal(tmp_path_factory):
-    saved = (tools.ENGINE, engine.time, view.time, engine.list_ports)
-    r = rehearse.Rehearsal(speed=4, out=tmp_path_factory.mktemp("rehearsal"), log=lambda *a: None)
-    r.run()
-    report = r.write()
-    assert (tools.ENGINE, engine.time, view.time, engine.list_ports) == saved  # nothing left patched
-    return r, report
+    return _rehearse(tmp_path_factory.mktemp("rehearsal"))
 
 
 def test_the_demo_rehearses_clean(rehearsal):
@@ -92,3 +104,62 @@ def test_main_runs_the_cli_and_exits_1_on_a_violation(tmp_path, monkeypatch):
     assert (tmp_path / "demo.mid").exists() and (tmp_path / "results.json").exists()
     with pytest.raises(SystemExit):
         rehearse.main(["--speed", "100"])
+
+
+# ---- optional v0.6 section (--v06): off by default, so the default run stays the demo ----------------
+
+def test_the_v06_section_is_off_by_default(rehearsal):
+    r, report = rehearsal
+    assert r.v06 is False and [s.id for s in r.steps][-1] == "A9c"
+    assert "\nH1  " not in report and "progression (v0.6)" not in report
+    assert "--v06" in rehearse.__doc__
+
+
+@pytest.fixture(scope="module")
+def rehearsal_v06(tmp_path_factory):
+    return _rehearse(tmp_path_factory.mktemp("rehearsal_v06"), v06=True)
+
+
+def test_the_v06_progression_rehearses_clean(rehearsal_v06):
+    r, report = rehearsal_v06
+    assert r.violations == [], report
+    assert report.rstrip().endswith("RESULT: PASS"), report
+    for line in ("slot 11 on track 7", "it starts on the next bar line", "lands exactly on the bar line",
+                 "plays each chord's root", "never transposed", "no notes on the fx track 9",
+                 "the visualiser shows the key and the chords", "progression (v0.6)"):
+        assert line in report, line
+    changes = next(l for l in report.splitlines() if l.strip().startswith("chord changes"))
+    assert "1:0, 3:0, 5:0, 7:0, 9:0" in changes  # i, VI, III, VII, and the wrap back to i, each on the one
+
+
+def test_the_v06_checks_catch_a_chord_on_the_cymbal_and_a_late_change(rehearsal_v06):
+    r, _ = rehearsal_v06
+    sent = list(r.port.sent)
+    try:
+        h1 = next(s for s in r.steps if s.id == "H1")
+        start = h1.results[2][2]["starts_at_bar"]
+        last = next(s for s in reversed(sent) if s.run == 3 and s.msg.type == "clock")
+        for note_on in (mido.Message("note_on", channel=7, note=64, velocity=90),  # a chord tone on the cymbal
+                        mido.Message("note_on", channel=8, note=60, velocity=90)):  # anything on the fx track
+            r.port.sent.append(rehearse.Sent(last.real, last.music, 3, last.clocks, note_on))
+        # a pad note of the next chord (III, bar 5) sounding one bar early, in bar 4
+        early = rehearse.Sent(last.real, last.music, 3, (start + 3) * rehearse.BAR + 5,
+                              mido.Message("note_on", channel=6, note=79, velocity=90))
+        r.port.sent.append(early)
+        r.analyse()
+        text = " ".join(v for w, v in r.violations if w == "H1")
+        assert "note 60" in text and "fx track 9" in text and "tone of that bar's chord" in text
+    finally:
+        r.port.sent[:] = sent
+        r.analyse()
+
+
+def test_main_takes_the_v06_flag(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(self):
+        seen["v06"] = self.v06
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(rehearse.Rehearsal, "run", fake_run)
+    assert rehearse.main(["--v06", "--speed", "16", "--out", str(tmp_path), "-q"]) == 2
+    assert seen == {"v06": True}
