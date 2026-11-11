@@ -1,6 +1,6 @@
 name: whiplash
-version: "0.7.0"
-description: "Jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats routed onto your kit map (tracks 1-16) in any key, chord progressions, song sections (arrange: intro, build, drop, outro), DJ-style transitions (filter swap, drop swap, riser), mix levels and pan with saved mixes, listening to the unit's USB audio (loudness, clipping, kick timing; optional numpy/sounddevice extra, mic permission on macOS) with a loudness guard, bar-quantized switches, written parts, named params, clock-synced ramps, fills/drops/density, sample-slot select, clock-only option, mutes, tempo. No SysEx, ever."
+version: "0.7.1"
+description: "Jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats routed onto your kit map (tracks 1-16) in any key, chord progressions, song sections (arrange: intro, build, drop, outro), DJ-style transitions (filter swap, drop swap, riser), mix levels and pan with saved mixes, listening to the unit's USB audio (loudness, clipping, kick timing; optional numpy/sounddevice extra, mic permission on macOS) with a loudness guard, a kit scan that proposes track labels (stopped beat, one note per track; never applied without your yes), bar-quantized switches, written parts, named params, clock-synced ramps, fills/drops/density, sample-slot select, clock-only option, mutes, tempo. No SysEx, ever."
 author: pgbouncer
 license: MIT
 requires_hermes: ">=0.19"
@@ -28,6 +28,7 @@ provides_tools:
   - whiplash_stop
   - whiplash_status
   - whiplash_listen
+  - whiplash_scan_kit
   - whiplash_open_view
   - whiplash_close_view
 # Visualiser conversation overlay only: in-memory observers that return None (see chat.py).

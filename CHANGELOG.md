@@ -18,9 +18,10 @@ Added
 - **Hardware checklist for v0.6.1:**
   - A3 and A7 now describe `routing` on play results, including `vacated: {"5": 7}` and its note.
   - New Part R (R1-R9, PR #17's HW 6.1-1 to 6.1-9): `short_demo` and `club`, a kick fill on track 9, the build's filter sweep (§15.3 Q14), the vacated-track design question for Phil, transpose following a relabel, queued setup, written parts replacing routed ones, and no extra Stop.
-  - R10 and §0.2 cover clock steadiness (new reference §15.3 Q22) and running `clock_jitter.py` on the Air.
+  - R10 and §0.2 cover clock steadiness (new reference §15.3 Q25) and running `clock_jitter.py` on the Air.
   - New Part V (V1-V9, PR #20's HW 7.0-1 to 7.0-9): the v0.7.0 listening loop. It covers the input name (Q18), kick offset and swing (Q20), bass against kick, clipping and the loudness guard, track level in the listen (Q19), unplug mid-listen, USB MIDI only, outs while capturing (Q7) and the 48-ramp cap at 300 BPM (Q21). The open-question table maps them.
-  - The setup lines now expect v0.7.0 with 21 tools.
+  - New Part W (W1-W8, PR #22's HW 7.1-1 to 7.1-8): the v0.7.1 kit scan. It covers the scan proposing without applying (Q22), accepting with a correction, refusals while the unit's pattern (Q24) or a Whiplash beat plays, unit mutes (Q23), long tails, tracks 9-16, and unplugging mid-scan.
+  - The setup lines now expect v0.7.1 with 22 tools.
 - **Demo:** an optional 30-second arrangement beat that ends the run by itself, gated on R1 and `--v061`. None of this is hardware-verified.
 - **Visualiser: key, scale and chord progression (v0.6.0).** A full-width KEY module shows the key the beat plays in (`SET` or the pattern's `HOME` key) and a key queued for the next switch. After `whiplash_set_progression` it shows one cell per chord: the numeral as typed (case kept), the chord name and its voiced notes. The chord playing is lit with a square per bar, the next chord is dashed with a four-beat countdown, and the highlight moves on the extrapolated playhead, so it changes on the bar line. Each track that follows the progression gets a chord line (`CHD`, `STK`, `ROOT`, `SNAP`) with the notes it plays in this chord and the next. Drum, cymbal and fx tracks never get one. Same flat grayscale pixel-art rack; no new dependencies.
   - The snapshot (`view.snapshot`) gains `harmony` (key, `key_source`, `next_key`, and the progression with `index`, `next_at`, `next_index` and every voiced chord), and lanes gain `harmony` (mode, notes now, notes in the next chord, bar of the change). A following track's `loop` now holds the next four bars as the sequencer will play them, each in its own chord (`harmony.apply`, outside the engine lock), so the page's between-frame extrapolation shows chord changes on time. An empty pad track's held tone gets a module too.
@@ -36,6 +37,28 @@ Changed
   - **Before:** it took the p95 of gap deviation against a 2-bar baseline plus 3 ms, and the test reran once on a jitter-only failure.
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
+
+## 0.7.1
+
+The second v0.7 PR: the kit scan ([docs/executing/v07-build-plan.md](docs/executing/v07-build-plan.md) item 3, roadmap v0.7 feature 3). 22 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, and the plugin imports and runs with no optional dependency installed.
+
+Added
+- **`whiplash_scan_kit(tracks)`** (`scan.py`). With the beat stopped, plays one note per track (all 16, or `tracks`) alone and hears each one through the v0.7.0 capture path:
+  - Each note is MIDI 60 on the track's own channel, velocity 100, held 0.25 s. The next note comes at least 1 s later, and waits up to 1 s more for the last tail to fade below -50 dBFS. Tracks muted in Whiplash are skipped (`skipped_muted`).
+  - Before the first note it listens for 0.4 s. Sound there means the unit's own pattern is probably playing (the v0.4 overlap), so it refuses and sends nothing.
+  - **Classification** of each hit, in the tool call's thread, yielding between tracks. The features are spectral centroid and low-end share (under 150 Hz) over the first 250 ms, decay to -20 dB, hold to -6 dB, attack, whether it still sounds at the window's end, pitchedness (peak of the normalised autocorrelation, 40 Hz-1 kHz) and f0, and a second onset inside the window. Labels: kick, snare/clap, hat (closed or open by decay), perc, bass, pad/chord, lead/stab (lead or stab by decay), fx, silent, and unknown (with a `guess`) under 0.3 confidence.
+  - Returns `proposed`, `features` (with `features_keys`), `flags` (`sound_before`, `other_hits`, `tail_overlap`, each halving that track's confidence), `unexpected_audio` with a note pointing at the unit's own pattern, `current_labels`, `apply_with` (the exact `whiplash_label_tracks` call, without silent or unknown tracks), `applied: false`, `confirm`, and `channel_note` for tracks 9-16.
+  - **Never applies the labels.** The agent shows the proposal and calls `whiplash_label_tracks` only on the user's yes. `Engine.last_scan` keeps the last proposal (read-only).
+- **Refusals before anything is sent:** while a beat plays (MIDI Start: the unit's pattern would play along; clock only: Whiplash's beat would), with no Digitakt on MIDI (virtual port), no Digitakt audio input, a listen or scan already running, bad `tracks`, or without numpy/sounddevice (the install hint).
+- **Clean errors mid-scan.** If the audio input stops (unplugged), the MIDI port fails, or `whiplash_stop` or a fresh play arrives, the scan ends with a clear error and the note playing gets its note-off.
+
+Changed
+- `Engine`: `scan_state()`, `scan_note()` (one note-on/off from the tool thread, refused once a beat started or a stop happened), `record_scan()`, `last_scan`, and a `stops` counter that `stop()` bumps. The sequencer thread is untouched.
+- `whiplash_listen`'s description is shorter. The tool-description budget rises from 3,300 to 3,500 characters (per-tool cap 400 unchanged), params from 8,400 to 8,550 characters and the JSON from 20,100 to 20,400 bytes, for the new tool. `whiplash_scan_kit` has no `device` param, to save space; `WHIPLASH_AUDIO_INPUT` picks the input as for a listen.
+- **CI no longer needs the apt mirror on Ubuntu py3.13.** PyPI has no Linux py3.13 wheel for `python-rtmidi` (1.5.8 stops at cp312), so uv compiled it from source, which needed ALSA headers from apt; the mirror failed about six times on Nov 11. That job now installs everything except rtmidi (`uv sync --no-install-package python-rtmidi`, with `UV_NO_SYNC=1` for the test step) and skips the ALSA step. `[tool.uv] dependency-metadata` in `pyproject.toml` tells uv that rtmidi has no dependencies, so it can resolve without building. The tests use fake ports, and the one real-rtmidi test (`test_virtual_port_end_to_end`) skips without a backend, as it already did on Linux runners. macOS and py3.11 install exactly as before. Runtime dependencies are unchanged: only uv reads `[tool.uv]`, and `plugin.yaml` and `[project].dependencies` still require `mido` and `python-rtmidi`.
+- Version 0.7.1 in `pyproject.toml`, `plugin.yaml`, `docs/catalog-entry.yaml` and `__init__.py`. `whiplash_scan_kit` is in `provides_tools` after `whiplash_listen`, and the manifest and catalog descriptions disclose it. The skill and README gain kit-scan sections, and the reference gains §15.1 #36 and §15.3 Q25-24.
+
+Not touched: `docs/testing/hardware-checklist.md`, `docs/demo/`, `scripts/`, `view.py`, `view.html` (owned by the visualiser agent). The PR lists the new hardware checks.
 
 ## 0.7.0
 

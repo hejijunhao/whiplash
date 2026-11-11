@@ -84,7 +84,7 @@ The sizes are rough: S is under half a day, M is about a day, and L is 2-4 days.
 
 **Status:** split into two PRs ([v07-build-plan.md](v07-build-plan.md)).
 - **v0.7.0** (features 1, 2 and 4: capture, `whiplash_listen`, safety rails) is implemented. Route (a) was chosen on Phil's behalf, reversibly: `sounddevice` + `numpy` as an optional `[listen]` extra, lazily imported. Route (b) stays a later option.
-- **v0.7.1** (feature 3: `whiplash_scan_kit`, labels proposed, never applied) is planned.
+- **v0.7.1** (feature 3: `whiplash_scan_kit`, labels proposed, never applied) is implemented in PR "Whiplash v0.7.1: kit scan (labels proposed, never applied)".
 - None of v0.7 has been tested on hardware yet.
 
 **Goal:** Hermes hears the unit's real output and reasons about it. This also gives the automatic kit scan queued in v0.5 (item 12).

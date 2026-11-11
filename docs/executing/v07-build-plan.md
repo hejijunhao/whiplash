@@ -2,7 +2,7 @@
 
 Status:
 - **v0.7.0 is implemented** in PR "Whiplash v0.7.0: listening loop (capture + listen + safety rails)": items 1, 2 and 4 below. §5 lists the decisions taken.
-- **v0.7.1** (item 3, `whiplash_scan_kit`) is planned, not started.
+- **v0.7.1** (item 3, `whiplash_scan_kit`) is implemented in PR "Whiplash v0.7.1: kit scan (labels proposed, never applied)", branch `feat/v071-scan-kit` cut from `main` at `0c88762`. Its decisions are in §6.
 - Nothing in v0.7 has been tested on a real Digitakt II yet. The hardware checks below are for Phil's Air.
 
 - **Branch:** `feat/v070-listen`, cut from `main` at `1fae9d0` (v0.6.2 merged, PR #19).
@@ -66,12 +66,14 @@ Every claim marked **HW** needs a check on the unit.
 
 The last listen's loudness, peak and clipping go to `whiplash_status.listen` and arm the guard (item 4).
 
-## Item 3 (v0.7.1): `whiplash_scan_kit` (planned)
+## Item 3 (v0.7.1): `whiplash_scan_kit` (implemented)
 
-- With the transport stopped (or clock only), it plays one note on each track 1-16 in turn, alone, and captures each with the item 1 path.
-- It classifies each hit by spectral centroid, decay time, pitchedness (autocorrelation) and low-end energy into the kit-map roles (`kitmap.ROLES`), with a confidence.
-- It returns **proposed** labels and the numbers behind them. It never calls `whiplash_label_tracks` itself: the agent shows the proposal and the user confirms (§5.5).
-- It refuses while a pattern plays with MIDI Start (the unit's own pattern would play on top, [R] §15.1 #11), and sends nothing but notes.
+- **When.** Only with Whiplash's sequencer stopped. It refuses while a beat plays in either mode: with MIDI Start the unit's own pattern runs along ([R] §15.1 #11), and with clock only Whiplash's own beat would sound under each hit. "Clock only" from the plan holds in the sense that the scan sends no Start and no clock, so the unit's sequencer stays stopped (§6.1).
+- **What it plays.** One note 60 (own pitch, [R] §6.1) per track on the track's own channel, velocity 100, held 0.25 s, one track at a time, in the order asked (default 1-16). Notes go out from the tool call's thread through `Engine.scan_note` (under `_lock`, like any send) only while nothing plays and no stop happened since the scan began. The next note comes at least 1 s after the last and waits up to 1 s more for its tail to fall under -50 dBFS (read from the last 50 ms of captured blocks), so tails don't overlap. Tracks muted in Whiplash are skipped.
+- **Capture.** One input stream for the whole scan through item 1's path (`find_input`, `Recorder`, `assemble`; no fallback input), sharing the listen's one-at-a-time lock. 0.4 s before the first note must be quiet; if not, the unit's own pattern is probably running and the scan refuses with nothing sent.
+- **Classification** (`scan.hit_features`, `scan.scores`): spectral centroid and low-end share (< 150 Hz) over 250 ms from the onset, decay to -20 dB, hold to -6 dB, attack to -3 dB, still sounding at the end, pitchedness (normalised autocorrelation, 40 Hz-1 kHz, unbiased) with f0, and a 12 dB re-rise past 60 ms (`other_hits`). Each label gets a 0-1 score from piecewise-linear ramps on those features. Confidence is best × best / (best + second); under 0.3 it is `unknown` with a `guess`. A flagged hit (`sound_before`, `other_hits`, `tail_overlap`) halves its confidence. Two or more stray-sound tracks, or sound before the first note, set `unexpected_audio` with a note naming the unit's own pattern.
+- **Output.** `proposed`, `features` + `features_keys`, `flags`, `notes`, `current_labels`, `apply_with` (`whiplash_label_tracks` arguments, silent and unknown tracks left out), `applied: false`, `confirm`. **Never applied** (§5.5): the tool never calls `label_tracks`; `Engine.last_scan` keeps the proposal read-only for the view.
+- **Failure.** An audio stall of 1 s, a MIDI send failure, or a stop/play mid-scan ends it with a clean error; the sounding note gets its note-off.
 
 ## Item 4 (v0.7.0): safety rails
 
@@ -128,7 +130,37 @@ v0.7.0 → v0.7.1, each cut from `main` after the previous one merges; merge com
 8. **Tool-description budget:** the total cap rises from 3,000 to 3,300 characters for the new tool (the per-tool 400 stays), params to 8,400 and the JSON to 20,100 bytes. Trimming other descriptions again would have cut caveats the tests pin.
 9. **numpy joins the dev dependency group** so CI runs the analysis tests on Linux and macOS; sounddevice never does (fake input streams), so CI needs no audio device.
 
-**Open questions for Phil:**
+## 6. Decisions taken for v0.7.1 (on Phil's behalf; each is reversible)
+
+1. **Refuse whenever a beat plays**, clock-only included: a solo hit over Whiplash's own beat would be misclassified. The plan's "or clock only" is read as "the unit's sequencer stays stopped": the scan itself sends no Start and no clock. *Reversible:* a scan over a clock-only beat could mute every Whiplash track for its duration instead.
+2. **Note 60, velocity 100, gate 0.25 s, ≥ 1 s apart (+ up to 1 s for tails).** At most about 35 s for 16 tracks.
+3. **Confirmation goes through the existing `whiplash_label_tracks`**, with `apply_with` holding its exact arguments. There is no separate apply tool, so no new path can write the kit map.
+4. **Sound before the first note refuses the scan** (nothing sent) instead of producing flagged labels. Sound during the scan only flags and lowers confidence.
+5. **No `device` param** on `whiplash_scan_kit`, to stay near the tool-description budget; `WHIPLASH_AUDIO_INPUT` covers it. The budget still rises by 200 characters of tool text, 150 of params and 300 bytes of JSON (`tests/test_v053.py`).
+6. **Thresholds** (silent under -55 dBFS peak, quiet under -50, the feature ramps) are starting points from synthetic audio, to tune after HW 7.1-1.
+
+### Phil's hardware checks (v0.7.1)
+
+Same setup as v0.7.0 (USB AUDIO/MIDI, USB OUT = MAIN, the extra, microphone permission). Select an **empty pattern** on the unit and keep its sequencer stopped.
+
+| # | Prompt in Hermes | Listen or look for | Reference |
+| --- | --- | --- | --- |
+| HW 7.1-1 | "Stop. Scan my kit." | Each track sounds once, alone, in order 1-16, about 1-2 s apart; nothing else plays. Hermes shows a proposal and **applies nothing** (`whiplash_status` kit unchanged). Note which labels are wrong. | Q22 |
+| HW 7.1-2 | "Yes, but track 7 is a tuned cymbal." | Hermes calls `whiplash_label_tracks` once, with the correction; status shows the labels. | |
+| HW 7.1-3 | Press Play on the unit (a pattern with trigs), then "scan my kit". | Refused before any note: "already making sound … own pattern". Stop the unit and it scans. | Q24 |
+| HW 7.1-4 | While a beat plays: "scan my kit". | Refused with the stop hint; the beat keeps playing. | |
+| HW 7.1-5 | Mute a track on the unit, scan. | That track comes back `silent` with the hint. | Q23 |
+| HW 7.1-6 | Unplug the USB cable mid-scan. | A clean error, no stuck note after replugging. | |
+| HW 7.1-7 | A long pad or reverb tail on one track. | The next note waits for it (up to ~2 s). `tail_overlap` only if it rings past that. | |
+| HW 7.1-8 | "Scan tracks 9 to 16." | Only those tracks sound; `channel_note` about AUTO/FX channels. | §15.1 #23 |
+
+**Open questions for Phil (v0.7.1):**
+- Should a scan be allowed over a clock-only beat, muting Whiplash's tracks for its duration (decision 1)?
+- Is one hit at note 60 enough, or should a melodic track get a second note (an octave up) to tell pads from leads better?
+- Should a confirmed scan also label the slot each track plays (needs the slot, which Whiplash only knows if it sent CC 19)?
+- Is the raised tool-description budget acceptable, or should other descriptions be trimmed further instead?
+
+**Open questions for Phil (v0.7.0):**
 - Should arrangement sections be guarded too (refuse an arrangement whose sections raise levels while the last listen clipped)? v0.7.0 says no.
 - Should a stale listen (say, older than 10 minutes) stop arming the guard? v0.7.0 keeps it until a clean listen.
 - Is 1,000 ramp CCs/s right for the unit (Q21), or should it be lower?

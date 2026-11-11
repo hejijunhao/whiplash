@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: ALSA runtime for python-rtmidi
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.python != '3.13'
         # python-rtmidi's wheel only needs the runtime libasound.so.2. Use the runner image's copy when it has
         # one; otherwise install it, with a hard timeout per attempt (Nov 11 2026: the apt mirrors hung or failed
         # for every run for over an hour, and a hung apt ate the whole 10-minute job).
@@ -42,7 +42,18 @@ jobs:
           done
           echo "::error::no libasound.so.2 on the runner and apt unavailable"; exit 1
       - name: Install dependencies from pyproject.toml
-        run: uv sync
+        # PyPI has no Linux py3.13 wheel for python-rtmidi (1.5.8 stops at cp312), so uv would compile it, which
+        # needs ALSA headers from apt, and the Ubuntu mirrors failed again and again on Nov 11 2026. The tests use
+        # fake and virtual-clock ports, and the one real-rtmidi test skips without a backend, so on Linux py3.13 CI
+        # installs everything but rtmidi (pyproject's [tool.uv] dependency-metadata lets uv resolve it unbuilt)
+        # and stops `uv run` from re-syncing it. macOS and py3.11 install exactly as before.
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ] && [ "${{ matrix.python }}" = "3.13" ]; then
+            uv sync --no-install-package python-rtmidi
+            echo "UV_NO_SYNC=1" >> "$GITHUB_ENV"
+          else
+            uv sync
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
