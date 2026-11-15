@@ -577,7 +577,7 @@ Each row is the groove at energy 3. Levels 1-2 strip it down and levels 4-5 add 
 - **Routing:** with `label_tracks({"9": "kick"})` the kick lane plays on 9 only, and a shaker lane with no perc track shows in `unplaced`.
 - **Energy change:** lands on the next bar line, keeps humanize, density and mutes, and sends no extra Stop or Start.
 - **Fills:** each named fill on its role, and refused on a melodic line, as `mutate.fill` is; `perc.tom_run` falls back to `snare.roll` with no perc track.
-- **Aliases:** `resolve("house")` is deephouse; `"chicago"` and `"classic house"` are house; `"peak time tech house"` is techhouse.
+- **Aliases:** `resolve("house")` is deephouse; `"chicago"`, `"chicago house"` and `"classic house"` are house; the mood `"peak time"` and `"peak time techno"` are techno; `"peak time tech house"` is techhouse. (O3 adds: bare `"minimal"` is `minimal.house`.)
 - **Rehearsal:** the default `scripts/rehearse_demo.py` run is unchanged (no groove argument) and prints `RESULT: PASS`.
 
 ---
@@ -940,7 +940,7 @@ The ontology is **v0.9** (Q-S2). The roadmap's multi-device studio moves to v0.1
 | --- | --- | --- | --- | --- |
 | **O1a: library, harmony, grooves (four genres)** | v0.9.0 | `library.py` + `whiplash_list_library`; `genres.py` records for deephouse, house, techhouse, techno and the compile path (house is the first compiled genre); aliases and the `peak time` change (§1.5); 9th/11th shapes, `shell` and its default rule; the deep house, house, tech house and techno progressions; `set_progression(name)`; key lock with `out_of_key`; lanes marked O1, the eight O1 grooves with five energy levels, curves, `GHOST_VEL`, microtiming and the negative-offset compile; `play_pattern(groove, energy)`, `write_part(groove)`, `mutate energy`, named fills | L | v0.6 harmony, v0.5.1 parts, v0.8.0 undo |
 | **O1b: phrases and taste (four genres)** | v0.9.0 | `harmony.Rel` + mode `phrase`; `bass.rolling_deep`, `bass.octave_pump`, `bass.bouncy`, `bass.offbeat`, `stab.offbeat`; `write_part(phrase)` and `phrase: "genre"`; house compiled with its phrases; `bar_digest`, `changes`, `status(review)`, `status.taste`, `taste_hint`; thresholds for the four genres | M | O1a |
-| O2: harmony intents and keys | v0.9.1 | `set_progression(intent)` (darker, brighter, tension, release), key-only `set_progression` with `lock`, `pedal` mode, `follow: true` on written parts | M | O1 |
+| O2: harmony intents and keys | v0.9.1 | `set_progression(intent)` (darker, brighter, tension, release); **NEW behaviour:** key-only `set_progression` (`key`/`scale` with no chords changes the key; today that errors "give chords"), with `lock`; `pedal` mode, `follow: true` on written parts | M | O1 |
 | O3: the other four genres | v0.9.2 | records, progressions, lanes, grooves and phrases for progressivehouse, melodictechno, minimal (both presets, with the `perc.poly3` approximation) and tropicalhouse; `bass.root_follow`, `bass.rolling_16`, `bass.stab_sparse`, `bass.round_sub`, `bass.descending_walk`, `bass.walking`, `stab.single`, `pad.hold`, the arps, `lead.stutter`, `lead.pentatonic_hook`, `melody.motif`; `soul.classic` and `breaks.classic`; the O3 aliases and moods | M-L | O1 |
 | O4: arrangement grammar | v0.9.3 | `form.py`: section types, energy per section, breakdown styles, `fill_every`, `enter`/`exit`, `then`, the eight forms; `arrange(form)` and `arrange(move, bars)` | M-L | O1 (energy), O3 (all genres' styles) |
 | O5: taste, polish | v0.9.4 | listen data in reviews, threshold tuning from Phil's sessions, hint wording | S | O1b, O4 |
@@ -957,6 +957,54 @@ It adds one tool and extends five, so its budget step is small: tools about 4,25
 ## 10. Decisions
 
 Settled in two rounds, from the research brief and Phil's stated defaults. Phil didn't answer each one himself; anything marked **HW** is a proposed default that still needs his ears (§8).
+
+### 10.1 Decisions for Phil to confirm
+
+One line per question, with the default the spec uses. Phil can confirm or change each by ID; the tables in §10.2 give the rationale and source.
+
+**Scope**
+- Q-S1. Four new tools, or fold key/lock/intents, energy, moves and review into existing verbs? **Default:** one new tool, `whiplash_list_library` (25→26).
+- Q-S2. Ontology as v0.9 (multi-device to v0.10), or v0.8.x? **Default:** v0.9; phases ship as v0.9.0–v0.9.4.
+- Q-S3. In-repo Python tables only, or also a user JSON library later? **Default:** Python tables now; read-only user JSON after v0.9, never shadowing a built-in name.
+
+**Harmony**
+- Q-H1. Are the six deep house progressions right by ear, and which are missing? **Default:** `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`; i–VI–III–VII moves to `house.uplift`. **HW** (O-5).
+- Q-H2. Key lock on by default once a key is set? **Default:** on; `out_of_key` per part; drums never snapped.
+- Q-H3. Should `darker` do both a mode shift and a filter close by default? **Default:** harmony only, never the filter.
+- Q-H4. `shell` as the default voicing for 9th (and 7th/11th) chords on audio tracks? **Default:** `shell` when there are ≤3 one-voice chord tracks; otherwise `close`. **HW** (O-4).
+
+**Groove**
+- Q-G1. Groove names: letters or descriptive names? **Default:** descriptive; letter aliases only for today's patterns (`deephouse.classic` = `deephouse.A`, bit-identical).
+- Q-G2. +0.5-tick clap and −0.25-tick hat: audible and worth it? **Default:** microtiming on except in the classic grooves. **HW** (O-1).
+- Q-G3. Is energy a `mutate` action, a `perform` move, or both? **Default:** `mutate(action: "energy")` while playing, plus a form section key.
+- Q-G4. Ghost velocity 28–40 vs VELOCITY TO VOL? **Default:** `GHOST_VEL` 28–40; fallback 40–55 in one place. **HW** (O-2).
+
+**Phrases**
+- Q-P1. `phrase` on `write_part`, or a separate tool? **Default:** `write_part(phrase)`.
+- Q-P2. Does a phrase replace the genre's bass line by default? **Default:** yes; a phrase replaces that track's line. Each genre has a default bass.
+- Q-P3. A seeded `melody.motif`, or keep leads hand-written? **Default:** leads stay model-written, with key lock; motifs/leads in O3 on request only.
+- Q-P4. Octave-pump retrigger on one audio track? **Default:** octave-pump is the default bass only in classic house. **HW** (O-3).
+
+**Arrangement**
+- Q-A1. Energy moving the music filter: opt-in? **Default:** opt-in, except progressive and melodic-techno forms, which default it on.
+- Q-A2. A move during an arrangement: replace (undoable), queue, or refuse? **Default:** replace from the next bar; `whiplash_undo` restores it.
+- Q-A3. Breakdown: close the bass filter, or drop the bass? **Default:** per genre (§6.2).
+- Q-A4. `then: "continue"` as the default for moves, `stop` for forms? **Default:** yes; warn, do not refuse, if a section is not a multiple of 8 bars.
+
+**Taste**
+- Q-T1. Feedback only, or an opt-in autopilot later? **Default:** feedback only in v0.9; autopilot is later (§11).
+- Q-T2. 16 bars for deep house and 32 for techno as "repetitive"? **Default:** tech house 8; tropical, progressive and melodic 16; deep house and house 32; techno and minimal 64.
+- Q-T3. Should `taste_hint` ride on tool results? **Default:** one line, only when a threshold first fires; full review via `status(review)`.
+- Q-T4. Do the user's knob moves count as change? **Default:** yes, and ramps too.
+
+**Aliases**
+- Q-alias-house. Keep bare "house" meaning deep house in v0.9? **Default:** yes (unchanged). Remapping the bare word is a later, explicit decision (§11).
+- Q-alias-chicago. How should classic/Chicago house be named? **Default:** `"classic house"`, `"chicago"` and `"chicago house"` resolve to the new `house` genre.
+- Q-alias-peak-time. Keep the mood "peak time" as tech house, or move it to techno? **Default:** it now means techno; the changelog must note the change.
+- Q-alias-peak-time-tech-house. How is the old meaning kept? **Default:** `"peak time tech house"` still means tech house.
+- Q-alias-minimal. Bare "minimal" = which preset? **Default:** `minimal.house`.
+
+### 10.2 Decision tables
 
 **Scope:**
 
