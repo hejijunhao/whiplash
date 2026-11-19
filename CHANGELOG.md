@@ -42,6 +42,39 @@ Changed
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
 
+## 0.9.0
+
+Ontology v1, part 1 of 2 (O1a: library, harmony, grooves; [docs/executing/ontology-o1a-build-plan.md](docs/executing/ontology-o1a-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §9). Tools take musical names and intent, and the plugin does the theory and the timing from in-repo tables. Four genres end to end: deep house, classic/Chicago house, tech house and techno. O1b (phrase generators, taste feedback) completes v0.9.0. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks.
+
+Added
+- **`whiplash_list_library(kind, genre?, tag?)`**, the one new tool (26 tools): named genres, progressions, grooves, lanes and fills, with tags, `about` and `source`, at most 40 per call. Read-only; works with nothing playing. Phrases, forms and moves are valid kinds that are empty until O1b and O4.
+- **One naming scheme** (`library.py`): `<genre>.<name>` and `<role>.<name>`. Lookups take any case, spaces, `-` or `_`, a missing genre prefix, natural phrases ("deep house shuffle groove", "chicago jack") and letter aliases (`deephouse.A`). Unknown names answer with the closest matches and the `whiplash_list_library` hint. Names are never schema enums.
+- **Genre records** (`genres.py`) for the four genres, and the compile path: **classic house** (`house`, 123 BPM, swing 52%) is the first genre built from tables: the `house.jack` groove, an octave-bounce bass and off-beat piano stabs over i–III–♭II–i (Am C B♭ Am). In O1a its bass and stabs are baked into notes; O1b's phrase generators replace them.
+- **Grooves** (`grooves.py`): 21 drum lanes (each with a velocity curve and optional microtiming), eight grooves at five energy levels (`deephouse.classic`/`.A`, `deephouse.shuffle`, `house.jack`, `house.eighths`, `techhouse.classic`/`.A`, `techhouse.rolling`, `techno.classic`/`.A`, `techno.rolling`), velocity curves, ghost notes (`GHOST_VEL` 28-40) and accents.
+  - **Microtiming:** per-hit offsets in clock ticks (a clap +0.75 tick late, hats −0.25 early). A negative offset compiles onto the previous step, swing-aware; on step 0 it is clamped and reported. The sequencer plays them with its existing per-hit offset; no clock change.
+  - **Classic grooves are today's patterns:** at energy 3 they are the registered pattern object itself, and carry no microtiming at any level.
+- **`whiplash_play_pattern(groove, energy)`:** a named groove at energy 1-5 (default 3). A bare name takes the genre's groove (`"shuffle"`, `"A"`); a full name also picks the genre. The result adds `groove: {name, energy, lanes, swing}` and `unplaced` (lanes with no track on this kit, never silently dropped).
+- **`whiplash_mutate(action: "energy", amount: 1-5 | "up" | "down")`:** the same groove at another level from the next bar, through the relabel path, so swing, humanize, density, mutes, ramps, written parts and the progression carry over. A plain deep house, tech house or techno beat counts as its classic groove at energy 3.
+- **Named fills:** `whiplash_mutate(action: "fill", fill: "snare.flam_roll")`. Nine fills: the five v0.6.1 shapes, named (`kick.sit_out`, `snare.roll`, `clap.push`, `hat.ratchet`, `open.clear`), plus `snare.flam_roll`, `kick.double`, `hat.open_choke` and `perc.tom_run` (notes 60, 57, 53 on a perc track; `snare.roll` when there is none). `fill: true` plays the groove's own fills.
+- **`whiplash_write_part(groove: "hat.offbeat_shuffle")`:** a named lane as a sixth placement, with its own velocities and microtiming. Refused on a melodic track.
+- **Named progressions** (`progressions.py`): 17 sourced progressions (deep house 6, house 5, tech house 2, techno 4) and **`whiplash_set_progression(name)`**. Given arguments override the entry. A progression in another scale plays on the session root in its own scale, except major ↔ minor, which use the relative key (`"key": "C major (relative of A minor)"`); the session key doesn't move.
+- **Chord shapes:** `min9`, `maj9`, `9`, `min11`, `11`, `6`, `m6`, `7sus4` (and `m(maj9)`), as numerals (`i9`, `IVmaj9`, `VII7sus4`) and names (`Am9`, `Fmaj9`, `Dm11`).
+- **`shell` voicing** (root, 3rd, 7th). Library 7th/9th/11th chords voice `shell` on three or fewer one-voice chord tracks, else `close`; a given voicing wins, and typed chords keep `close`. Pad tracks play the colour tones on top (the 9th first).
+- **Key lock** (on once a key plays): explicit notes on melodic tracks (bass, pad, stab, chord, lead) snap to the key (the progression's while one plays). The result lists `snapped: [{from, to}]`; `out_of_key: true` keeps a deliberate chromatic note, and a part written in its own `key` keeps its notes. Drum, cymbal, fx and unlabelled tracks are never snapped.
+- **Mix preset `house`** for classic house; `auto` reads a groove pattern's genre.
+- **Tests:** `tests/test_v090.py` (library, records, house compile, shapes and shell, progressions, key lock, lane and groove integrity, equivalence with today's patterns, microtiming, ghosts, routing, energy, named fills, budget).
+- **Docs:** checklist Part O (O1-O7), reference §15.1 #38 and §15.3 Q32-37 (all open; nothing verified), the skill's "Named things first" path, README, roadmap.
+
+Changed
+- **`house` still means deep house.** The new classic/Chicago house genre is `classic house`, `chicago` or `chicago house`; its id is `house`, which only names it inside library entries (`house.jack`). A future version may remap the bare word. The `genre` enum offers `chicago`.
+- **The mood `peak time` now picks techno.** It used to pick tech house; say `peak time tech house` for the old choice. New: `peak time techno`, and the mood `jacking` (classic house).
+- **Key lock is on by default:** `whiplash_write_part(track: 7, notes: ["C#5"])` in A minor now plays C5 and says so. Pass `out_of_key: true` for the old behaviour.
+- Pattern hits may carry a fifth field, the offset in ticks (groove lanes); `mutate.working()` keeps it.
+- Version 0.9.0. Tool-description caps: tools 4,250 characters (was 4,100), params 9,900 (was 9,300), JSON 23,500 bytes (was 22,000); 26 tools.
+
+Unchanged (demo-safe)
+- `whiplash_play_pattern(genre: "deephouse")` with no groove, and `groove: "deephouse.classic"` / `"deephouse.A"` at energy 3, play today's pattern bit for bit; so do `techhouse.classic` and `techno.classic` (tested on `bar_events`, bars 0-3). Typed `set_progression(chords)` calls voice as before. Part A of the hardware checklist is unchanged.
+
 ## 0.8.0
 
 The first v0.8 PR: play along ([docs/executing/v08-build-plan.md](docs/executing/v08-build-plan.md) items 1, 2, 4 and 5; roadmap v0.8 features 1, 2, 4, and the in-memory half of 3). 25 tools. Nothing here has been tested on a real Digitakt II yet. The demo path (hardware checklist Part A) is unchanged, `scripts/rehearse_demo.py` still prints `RESULT: PASS`, the plugin imports and runs with no optional dependency installed, and nothing new runs unless one of the new tools is called.

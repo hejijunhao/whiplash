@@ -28,8 +28,8 @@ def rng(seed, *parts):
 
 
 def working(pattern):
-    """Working copy of a Pattern: track -> [bar0 hits, bar1, ...] with offset 0."""
-    return {track: [[(s, n, v, g, 0.0) for s, n, v, g in bar] for bar in bars]
+    """Working copy of a Pattern: track -> [bar0 hits, bar1, ...]. Offsets are 0 unless a groove lane set one."""
+    return {track: [[(h[0], h[1], h[2], h[3], h[4] if len(h) > 4 else 0.0) for h in bar] for bar in bars]
             for track, bars in pattern.bars.items()}
 
 
@@ -78,7 +78,14 @@ def density(bars, amount, seed, track):
     return [fn(bar, abs(amount), rng(seed, "density", track, i)) for i, bar in enumerate(bars)]
 
 
-def fill(role, hits):
+# v0.9.0 named fills (grooves.FILLS) -> the shape they play. The first five are the v0.6.1 shapes, named.
+NAMED_SHAPES = {"kick.sit_out": "kick", "snare.roll": "snare", "clap.push": "clap", "hat.ratchet": "closed hat",
+                "open.clear": "open hat", "snare.flam_roll": "flam", "kick.double": "double",
+                "hat.open_choke": "choke", "perc.tom_run": "toms"}
+TOM_NOTES = (60, 57, 53)  # perc.tom_run: native pitch down to the v0.5 floor (60 - NATIVE_FLOOR)
+
+
+def fill(role, hits, name=None):
     """A one-bar fill for a drum role (kick, snare/rim, clap, closed hat, open hat; cymbal, perc).
 
     role is a kit role, or a default-layout track number 1-5 (1 kick, 2 snare, 3 clap, 4 closed hat, 5 open
@@ -87,7 +94,10 @@ def fill(role, hits):
     """
     if any(h[1] != patterns.DRUM for h in hits):
         return list(hits)
-    shape = FILL_SHAPES.get(TRACK_ROLES.get(role) if isinstance(role, int) else role)
+    if name is not None:
+        shape = NAMED_SHAPES.get(name)
+    else:
+        shape = FILL_SHAPES.get(TRACK_ROLES.get(role) if isinstance(role, int) else role)
     note = hits[0][1] if hits else patterns.DRUM
     early = [h for h in hits if h[0] < 12]
     if shape == "kick":  # kick sits out the last beat: tension before the one
@@ -102,6 +112,20 @@ def fill(role, hits):
         return early + rat
     if shape == "open hat":  # open hat out of the way of the roll
         return early
+    if shape == "flam":  # v0.9.0: a roll of flams, a quiet grace hit then the main hit ~0.75 tick later
+        roll = []
+        for s in range(8, 16):
+            vel = 40 + (s - 8) * 11
+            roll += [(s, note, max(12, vel // 2), 0.5, 0.0), (s, note, vel, 1, 0.75)]
+        return [h for h in hits if h[0] < 8] + roll
+    if shape == "double":  # v0.9.0: extra kicks on 14 and 15 into the one
+        used = {h[0] for h in hits}
+        return sorted(list(hits) + [(s, note, v, 1, 0.0) for s, v in ((14, 100), (15, 112)) if s not in used])
+    if shape == "choke":  # v0.9.0: a long open hat on 12, choked by a short one on 14
+        return early + [(12, note, 92, 2, 0.0), (14, note, 110, 0.5, 0.0)]
+    if shape == "toms":  # v0.9.0: a falling tom run on the last six 16ths (pitched: only on a note-60 perc line)
+        run = [(s, TOM_NOTES[(s - 10) // 2], 80 + (s - 10) * 6, 1, 0.0) for s in range(10, 16)]
+        return [h for h in hits if h[0] < 10] + run
     return list(hits)
 
 

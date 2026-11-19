@@ -119,13 +119,10 @@ def assert_rails(port):
 
 # ---- packaging -------------------------------------------------------------------------------------------------
 
-def test_version_is_0_8_0():
-    assert whiplash.__version__ == "0.8.0"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.8.0"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.8.0"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.8.0"
+def test_version_is_0_8_0():  # v0.9.0 pins the exact number in test_v090.py
+    assert whiplash.__version__ >= "0.8.0"
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.8.0")
+    assert any(r.startswith("0.8.0") for r in releases)
 
 
 def test_new_tools_follow_scan_kit_everywhere():
@@ -135,7 +132,7 @@ def test_new_tools_follow_scan_kit_everywhere():
                      list(schemas.SCHEMAS), list(tools.HANDLERS)):
         i = manifest.index("whiplash_scan_kit")
         assert manifest[i + 1:i + 4] == new
-        assert manifest[i + 4:] == ["whiplash_open_view", "whiplash_close_view"]
+        assert manifest[i + 4:] == ["whiplash_list_library", "whiplash_open_view", "whiplash_close_view"]  # v0.9.0
     skill = (ROOT / "skills" / "digitakt" / "SKILL.md").read_text()
     readme = (ROOT / "README.md").read_text()
     for name in new:

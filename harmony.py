@@ -30,7 +30,7 @@ CHORD_BOTTOM = CHORD_LOW - 12  # 41: the lowest note an open voicing may reach
 CHORD_HIGH = 79
 MAX_CHORDS = 16
 BARS_PER_CHORD_MAX = 16
-VOICINGS = ("close", "root", "open", "power")
+VOICINGS = ("close", "root", "open", "power", "shell")
 MODES = ("chords", "stack", "root", "snap", "off")
 ROLE_MODES = {"chord": "chords", "pad": "chords", "stab": "chords", "bass": "root", "lead": "snap"}
 NEVER = frozenset({"kick", "snare", "rim", "clap", "closed hat", "open hat", "cymbal", "perc", "fx"})
@@ -47,22 +47,30 @@ DEGREES = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7}
 SHAPES = {"maj": (0, 4, 7), "min": (0, 3, 7), "dim": (0, 3, 6), "aug": (0, 4, 8), "sus2": (0, 2, 7),
           "sus4": (0, 5, 7), "7": (0, 4, 7, 10), "min7": (0, 3, 7, 10), "maj7": (0, 4, 7, 11),
           "minmaj7": (0, 3, 7, 11), "dim7": (0, 3, 6, 9), "m7b5": (0, 3, 6, 10), "add9": (0, 4, 7, 14),
-          "madd9": (0, 3, 7, 14), "5": (0, 7)}
+          "madd9": (0, 3, 7, 14), "5": (0, 7),
+          # v0.9.0 (ontology O1a): 9ths, 11ths, 6ths and 7sus4. "11" (dominant) and "minmaj9" keep the case rule total.
+          "min9": (0, 3, 7, 10, 14), "maj9": (0, 4, 7, 11, 14), "9": (0, 4, 7, 10, 14), "minmaj9": (0, 3, 7, 11, 14),
+          "min11": (0, 3, 7, 10, 14, 17), "11": (0, 4, 7, 10, 14, 17), "6": (0, 4, 7, 9), "m6": (0, 3, 7, 9),
+          "7sus4": (0, 5, 7, 10)}
 SHAPE_SUFFIX = {"maj": "", "min": "m", "dim": "dim", "aug": "aug", "sus2": "sus2", "sus4": "sus4", "7": "7",
                 "min7": "m7", "maj7": "maj7", "minmaj7": "m(maj7)", "dim7": "dim7", "m7b5": "m7b5", "add9": "add9",
-                "madd9": "madd9", "5": "5"}
+                "madd9": "madd9", "5": "5", "min9": "m9", "maj9": "maj9", "9": "9", "minmaj9": "m(maj9)",
+                "min11": "m11", "11": "11", "6": "6", "m6": "m6", "7sus4": "7sus4"}
 # Roman numeral suffix -> (shape for an upper-case numeral, shape for a lower-case one)
 ROMAN_SUFFIX = {"": ("maj", "min"), "7": ("7", "min7"), "maj7": ("maj7", "minmaj7"), "M7": ("maj7", "minmaj7"),
                 "Δ": ("maj7", "minmaj7"), "Δ7": ("maj7", "minmaj7"), "°": ("dim", "dim"), "o": ("dim", "dim"),
                 "dim": ("dim", "dim"), "°7": ("dim7", "dim7"), "o7": ("dim7", "dim7"), "dim7": ("dim7", "dim7"),
                 "ø": ("m7b5", "m7b5"), "ø7": ("m7b5", "m7b5"), "m7b5": ("m7b5", "m7b5"), "+": ("aug", "aug"),
                 "aug": ("aug", "aug"), "sus": ("sus4", "sus4"), "sus2": ("sus2", "sus2"), "sus4": ("sus4", "sus4"),
-                "add9": ("add9", "madd9"), "5": ("5", "5")}
+                "add9": ("add9", "madd9"), "5": ("5", "5"), "9": ("9", "min9"), "maj9": ("maj9", "minmaj9"),
+                "11": ("11", "min11"), "6": ("6", "m6"), "7sus4": ("7sus4", "7sus4")}
 NAME_SUFFIX = {"": "maj", "maj": "maj", "M": "maj", "m": "min", "min": "min", "7": "7", "m7": "min7",
                "min7": "min7", "maj7": "maj7", "M7": "maj7", "Δ": "maj7", "Δ7": "maj7", "mmaj7": "minmaj7",
                "m(maj7)": "minmaj7", "dim": "dim", "°": "dim", "o": "dim", "dim7": "dim7", "°7": "dim7", "o7": "dim7",
                "m7b5": "m7b5", "ø": "m7b5", "ø7": "m7b5", "aug": "aug", "+": "aug", "sus": "sus4", "sus2": "sus2",
-               "sus4": "sus4", "add9": "add9", "madd9": "madd9", "5": "5"}
+               "sus4": "sus4", "add9": "add9", "madd9": "madd9", "5": "5", "m9": "min9", "min9": "min9",
+               "maj9": "maj9", "M9": "maj9", "9": "9", "m11": "min11", "min11": "min11", "11": "11", "6": "6",
+               "m6": "m6", "7sus4": "7sus4"}
 
 
 class HarmonyError(ValueError):
@@ -105,6 +113,8 @@ class Progression:
     key: Key
     start: int  # absolute bar where the first chord lands
     overrides: dict = field(default_factory=dict)  # track -> mode the user asked for
+    colours: tuple = ()  # v0.9.0 shell voicing: per chord, the tones pad tracks play on top (harmony.colours)
+    library: str = None  # v0.9.0: the library entry it came from (progressions.PROGRESSIONS), if any
 
     @property
     def length(self):
@@ -177,7 +187,7 @@ def parse_chord(symbol, key):
         acc, numeral, suffix = m.groups()
         if suffix not in ROMAN_SUFFIX:
             raise HarmonyError(f"can't read chord {symbol!r}: after the numeral use one of "
-                               "7, maj7, dim (°), dim7, ø, aug (+), sus2, sus4, add9, 5")
+                               "7, maj7, 9, maj9, 11, 6, dim (°), dim7, ø, aug (+), sus2, sus4, 7sus4, add9, 5")
         upper = numeral.isupper()
         shape = ROMAN_SUFFIX[suffix][0 if upper else 1]
         steps = _seven(key)
@@ -242,9 +252,33 @@ def check_modes(tracks):
 
 # ---- voicing ---------------------------------------------------------------
 
+def has_seventh(shape):
+    """True for a 7th, 9th or 11th chord: the shapes the shell voicing is for (v0.9.0)."""
+    return len(shape) >= 4 and any(x in (10, 11) for x in shape)
+
+
+def shell_tones(shape):
+    """(root, 3rd, 7th) offsets of a 7th/9th/11th shape (a sus chord's 4th or 2nd stands in for the 3rd), or None."""
+    if not has_seventh(shape):
+        return None
+    third = next((x for x in (3, 4, 5, 2) if x in shape), None)
+    seventh = next(x for x in (10, 11) if x in shape)
+    return (0, third, seventh) if third is not None else (0, seventh)
+
+
+def colour_order(shape):
+    """The tones a shell leaves out, most colourful first (9th, 11th, 13th/6th, 5th): what a pad adds on top."""
+    shell = {x % 12 for x in (shell_tones(shape) or ())}
+    rest = [x for x in shape if x % 12 not in shell]
+    rank = {2: 0, 5: 1, 9: 2, 7: 3}
+    return tuple(sorted(rest, key=lambda x: (rank.get(x % 12, 4), x)))
+
+
 def _shapes(chord, voicing):
     """[(lowest note's pitch class, offsets from it)] the voicing may use."""
     iv = chord.shape
+    if voicing == "shell":  # root, 3rd and 7th only (v0.9.0), voice-led like close; other chords voice close
+        iv = shell_tones(iv) or iv
     if voicing == "power":
         fifth = iv[2] if len(iv) > 2 else iv[-1]
         return [(chord.root, (0, fifth, 12))]
@@ -283,7 +317,7 @@ def _voice_one(chord, voicing, prev):
         return abs(statistics.median(notes) - CENTER)
 
     def score(notes):
-        if prev is None or voicing != "close":
+        if prev is None or voicing not in ("close", "shell"):
             return (centre(notes), notes)
         if len(notes) == len(prev):
             move = sum(abs(a - b) for a, b in zip(notes, prev))
@@ -293,8 +327,25 @@ def _voice_one(chord, voicing, prev):
     return min(cands, key=score)
 
 
+def colours(chords, full):
+    """Per chord: the full close voicing's notes a shell leaves out, most colourful first (the 9th first).
+
+    full is voice(chords, "close"). A pad track plays these on top of shell-voiced chord tracks (v0.9.0); a chord
+    with nothing left out (a triad) gives its whole voicing, top voice first, as chords mode would.
+    """
+    out = []
+    for chord, notes in zip(chords, full):
+        order = colour_order(chord.shape) if has_seventh(chord.shape) else ()
+        picked = []
+        for offset in order:
+            pc = (chord.root + offset) % 12
+            picked += [n for n in notes if n % 12 == pc and n not in picked]
+        out.append(tuple(reversed(picked)) or tuple(notes))  # stored so chords mode's top-first read starts on the 9th
+    return tuple(out)
+
+
 def voice(chords, voicing="close"):
-    """Chords -> one tuple of notes per chord, low to high, near native pitch; close voicings are voice-led."""
+    """Chords -> one tuple of notes per chord, low to high, near native pitch; close and shell are voice-led."""
     out, prev = [], None
     for chord in chords:
         notes = _voice_one(chord, voicing, prev)
@@ -398,6 +449,23 @@ def modes(pattern, kit_tracks, overrides, written, work):
     ranks = {t: i for i, t in enumerate(chord_tracks)}
     pads = frozenset(t for t, m in out.items() if m in ("chords", "stack") and not any(work.get(t) or []))
     return out, ranks, pads
+
+
+def chord_track_count(mode_map, pattern, kit_tracks):
+    """How many one-voice chord or stab tracks voice a progression (pads not counted): the shell rule's count."""
+    return sum(1 for t, m in mode_map.items() if m == "chords" and role_of(t, pattern, kit_tracks) != "pad")
+
+
+def colour_ranks(mode_map, ranks, pattern, kit_tracks):
+    """-> (pad tracks that play colour tones, ranks). With a shell progression, chord and stab tracks rank among
+    themselves over the shell, and pad tracks among themselves over the colour tones (the 9th first)."""
+    chords = [t for t, m in sorted(mode_map.items()) if m == "chords"]
+    pads = [t for t in chords if role_of(t, pattern, kit_tracks) == "pad"]
+    rest = [t for t in chords if t not in pads]
+    out = dict(ranks)
+    out.update({t: i for i, t in enumerate(rest)})
+    out.update({t: i for i, t in enumerate(pads)})
+    return frozenset(pads), out
 
 
 def pad_line():

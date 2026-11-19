@@ -1,6 +1,6 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, playing along with the user (their knob moves, ramps that yield, call and response, undo), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - named grooves, energy levels and progressions from the library, the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, playing along with the user (their knob moves, ramps that yield, call and response, undo), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
@@ -12,6 +12,34 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 1. When the user says what their tracks hold ("track 7 is a cymbal, track 5 is a pad"), call `whiplash_label_tracks(tracks: {"7": "cymbal", "5": "pad"})` straight away. Labelled slots too: `slots: {"11": "synth Phil likes"}`.
 2. Start the beat **and** fit it to the kit in the same call: `whiplash_play_pattern(genre: "deephouse", tracks: {"6": {"slot": 9, "transpose": 12}, "8": {"mute": true}})`. Each entry takes `slot` (0-127), `tune` (64 = none), `transpose` (semitones) and `mute`.
 3. Read the result, pass on its `overlap_warning` (and any `warning`), and answer. Don't follow up with separate select_sample / transpose / mute calls for things `tracks` already did.
+
+## Named things first (v0.9.0): list, pick, combine
+
+Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does the timing and the harmony.
+1. **List** what exists: `whiplash_list_library(kind: "groove", genre: "house")`. Kinds: `genre`, `progression`, `groove`, `lane`, `fill` (phrases, forms and moves come in later versions). `tag` filters (`warm`, `dark`, `jacking`; for lanes a role, `perc`).
+2. **Pick** by name. Names are `<genre>.<name>` or `<role>.<name>`; any case, spaces or `-` work, and a bare name works when it is unambiguous (`"gospel"`, `"shuffle"`). An unknown name answers with the closest matches.
+3. **Combine** in as few calls as possible:
+   - "Chicago house, jack groove, energy 3": `whiplash_play_pattern(groove: "house.jack", energy: 3)`. A full groove name picks its genre.
+   - "Deep house gospel chords": `whiplash_set_progression(name: "deephouse.gospel")`.
+   - "Busier" / "bring it down" while playing: `whiplash_mutate(action: "energy", amount: "up")` (or 1-5, `"down"`).
+   - "A flam roll into the next bar": `whiplash_mutate(action: "fill", fill: "snare.flam_roll")`.
+   - "Shuffled hats on track 10": `whiplash_write_part(track: 10, groove: "hat.offbeat_shuffle")` (a named lane).
+
+**The house words, plainly:** bare "house" still means **deep house**. Classic/Chicago house is `chicago`, `chicago house` or `classic house` (`genre: "chicago"`); its library prefix is `house.` (`house.jack`). The mood "peak time" means **techno** now; "peak time tech house" keeps tech house.
+
+**The four genres** (more in later versions):
+- **Deep house** (`deephouse`, 122): warm m7/m9 vamps, swung 8th hats, a late clap. Grooves `deephouse.classic` (= `A`, today's beat), `deephouse.shuffle`. Progressions: `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`.
+- **Classic house** (`chicago`, 123): jacking 4/4, a late jacked clap, off-beat piano stabs, an octave-bounce bass over Am C B♭ Am. Grooves `house.jack`, `house.eighths`. Progressions: `piano_stab`, `mixed_shuffle`, `uplift`, `jack_vamp`, `minor_twist`.
+- **Tech house** (`techhouse`, 126): 16th hats pushed early, a bouncy bass; change something every 8 bars. Grooves `techhouse.classic`, `techhouse.rolling`. Progressions: `one_note`, `dark_two`.
+- **Techno** (`techno`, 130): kick-led, one chord or a dark two-chord vamp. Grooves `techno.classic`, `techno.rolling`. Progressions: `pedal`, `phrygian`, `dark_vamp`, `sus_stab`.
+
+**What comes back:**
+- `groove: {name, energy, lanes, swing}`. `unplaced` lists lanes with no track on this kit (deep house has no perc track by default): tell the user, and offer to label one (`{"8": "perc"}`) and call again.
+- Energy 1 is kick and one hat, 2 adds the backbeat and closed hat, 3 is the genre's full groove, 4 adds hits and ghosts, 5 is the busiest. An energy change lands on the next bar and keeps everything else. `soul` and `breaks` have no levels yet.
+- A library progression in another scale plays in the relative key or in its own mode on the session root: read `key` back ("C major, the relative of A minor").
+- Library 7th/9th/11th chords voice `shell` (root, 3rd, 7th) on up to three chord tracks (`voicing_rule` says why); a labelled pad adds the 9th (`pad_tones`). Pass `voicing` to override.
+- **Key lock:** notes you write on a bass, chord, pad, stab or lead track snap to the key playing, and the result lists `snapped`. Say so. For a deliberate chromatic note pass `out_of_key: true`. A part written in its own `key` keeps its notes. Drums are never snapped.
+- Microtiming (a late clap, pushed hats) and ghost notes are part of every non-classic groove. `whiplash_mutate humanize` adds on top. Whether they are audible on the unit is untested.
 
 ## Kit map (`whiplash_label_tracks`)
 
@@ -195,6 +223,14 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Wrong rhythm", "make it 4/4", "lock to the kick" | `whiplash_write_part` with `rhythm` or `lock_to`, not density |
 | "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`, or `key: "current"`) |
 | "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern`, then `whiplash_set_progression` |
+| "Deep house chords", "something gospel", "a Chicago groove" | `whiplash_list_library`, then `name` on `whiplash_set_progression` or `groove` on `whiplash_play_pattern` |
+| "unknown groove / progression / lane" error | read its `closest:` names, or `whiplash_list_library(kind: ...)`; never guess a name twice |
+| "energy needs a groove" | add `groove` (`"A"` is the genre's classic) |
+| "has no energy levels yet" (soul, breaks) | switch to a genre with grooves, or use `density` |
+| `unplaced` in a play or energy result | that kit has no track for the lane: offer a label (`{"8": "perc"}`), then call again |
+| "is a clap part; track 6 ..." (a lane on a melodic track) | put the lane on a drum or perc track |
+| A written note came out different (`snapped`) | key lock: `out_of_key: true` if the user wants the chromatic note |
+| "Play house" sounds like deep house | expected: bare "house" is deep house; `genre: "chicago"` for classic house |
 | "Make it a whole track", "intro, build, drop", "90 seconds" | `whiplash_arrange` (`preset: "short_demo"`, `seconds`) |
 | "Switch with a filter swap", "drop the bass then switch", "riser into the drop" | `transition` on `whiplash_play_pattern` (or a section) |
 | filter_swap refused: "hasn't sent filter_freq" | ask the user, then `filter_from` (127 if the filters are open) |

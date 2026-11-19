@@ -24,6 +24,8 @@ PRESETS = {
     "techno": {**_BASE, "kick": 120, "bass": 108, "closed hat": 92, "pad": 90, "chord": 90},
     "techhouse": {**_BASE, "kick": 118, "bass": 112, "clap": 102, "perc": 96},
     "deephouse": {**_BASE, "kick": 112, "bass": 108, "rim": 88, "chord": 100, "pad": 100},
+    # v0.9.0: classic/Chicago house (ontology O1a): a forward kick and clap, the piano stabs up front
+    "house": {**_BASE, "kick": 116, "bass": 106, "clap": 104, "stab": 102, "chord": 100},
     "breaks": {**_BASE, "kick": 110, "snare": 112, "closed hat": 94, "bass": 106},
     "soul": {**_BASE, "kick": 106, "snare": 108, "closed hat": 86, "bass": 104, "chord": 102, "pad": 102},
 }
@@ -89,7 +91,8 @@ def name(value, what="save_as"):
 def preset(value, genre):
     """A preset word -> (name, {role: level}). 'auto' (and friends) picks the genre playing, else flat."""
     word = str(value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
-    word = {"techhouse": "techhouse", "deephouse": "deephouse", "house": "deephouse", "hiphop": "soul",
+    word = {"techhouse": "techhouse", "deephouse": "deephouse", "house": "deephouse", "chicago": "house",
+            "chicagohouse": "house", "classichouse": "house", "hiphop": "soul",
             "breakbeat": "breaks", "dnb": "breaks"}.get(word, word)
     if word in PRESET_WORDS:
         word = PRESET_WORDS[word] or (genre if genre in PRESETS else "flat")

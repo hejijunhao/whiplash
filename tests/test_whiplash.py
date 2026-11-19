@@ -83,7 +83,7 @@ def test_register_is_fast_and_lazy():
 
 
 def test_every_tool_is_namespaced():
-    assert len(tools.HANDLERS) == 25  # v0.7.0: listen; v0.7.1: scan_kit; v0.8.0: play_along, follow, undo
+    assert len(tools.HANDLERS) == 26  # v0.7.0: listen; v0.7.1: scan_kit; v0.8.0: play_along, follow, undo; v0.9.0: list_library
     assert all(name.startswith("whiplash_") for name in tools.HANDLERS)
 
 
@@ -108,8 +108,9 @@ def test_patterns_valid(name):
     for track, bars in p.bars.items():
         assert len(bars) == patterns.BARS
         for bar in bars:
-            for step, note, vel, gate in bar:
+            for step, note, vel, gate, *offset in bar:  # v0.9.0: a groove lane's hit may carry its offset in ticks
                 assert 0 <= step < 16 and 16 <= note <= 84 and 1 <= vel <= 127 and gate >= 1
+                assert all(0 <= o < 2 * engine.TICKS_PER_STEP for o in offset)
 
 
 def test_resolve_genre_mood_and_errors():
