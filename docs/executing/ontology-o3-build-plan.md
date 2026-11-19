@@ -57,11 +57,12 @@ Researchable questions decided here from the spec and the research brief; the PR
 9. **`lead.pentatonic_hook`** resolves chord-relative like every phrase: its tones are R, 3, 5, 9 and the octave of each chord, which is the major pentatonic over a major chord and stays consonant over the others (key lock keeps it in key). It is seeded over 2 bars and repeats, so it reads as a hook.
 10. **`melody.motif`** is written in scale steps from each chord's root: chord tones (0, 2, 4, 7 steps) on 0/4/8/12 and passing steps between, seeded; bar 2 repeats it, bar 3 sequences it up a step, bar 4 answers it (the first half, then down to R), as `jam.reply`'s answer does.
 11. **`perc.poly3`** hits every 3rd step over the 64-cell loop, so it repeats every 4 bars (bar 4 matches bar 1): the spec's approximation of 3 against 4.
-12. **Library names for minimal.** The two presets share the `minimal` prefix (`minimal.house_shuffle`, `minimal.stab_m7`). `library.resolve` reads "minimal house shuffle" and "minimal shuffle"; `list_library(genre: "minimal techno")` lists the shared minimal progressions and phrases plus that preset's grooves.
+12. **Energy on a plain compiled genre.** `play_pattern(genre: "progressive")` with no `groove` plays the record's default groove at energy 3, so `mutate energy` works from it (O1a asked for a `groove` on classic house; that refusal becomes a success, and nothing that played before changes).
+13. **Library names for minimal.** The two presets share the `minimal` prefix (`minimal.house_shuffle`, `minimal.stab_m7`). `library.resolve` reads "minimal house shuffle" and "minimal shuffle"; `list_library(genre: "minimal techno")` lists the shared minimal progressions and phrases plus that preset's grooves.
 
 ## 4. Tools and budget
 
-No new tool and no new argument. `whiplash_play_pattern`'s `genre` enum gains the five new ids and its mood list the new moods; that is the whole description growth, and the caps (`tests/test_v053.py::test_description_size_budget`) rise only as far as that needs, inside the spec's final targets (tools 4,350, params 10,300, JSON 24,000 bytes). The PR states the measured values. 26 tools, unchanged.
+No new tool and no new argument. `whiplash_play_pattern`'s `genre` enum gains the five new ids. To stay inside the spec's final targets (tools 4,350, params 10,300, JSON 24,000 bytes) with room for O4, its mood description lists one mood per genre instead of all of them (an unknown mood's error still lists every one), and `whiplash_mix`'s preset enum keeps the pre-O3 presets (the new genres' presets come through `auto`). Measured: tools 4,300, params 10,049, JSON 23,919 bytes, all under the O2 caps, so the caps (`tests/test_v053.py::test_description_size_budget`) don't move. 26 tools, unchanged.
 
 ## 5. Tests (fake and virtual ports only)
 
@@ -78,15 +79,14 @@ New `tests/test_v092.py`:
 
 ## 6. Phil's hardware checks (O3)
 
-From spec §8 (O-5 for the O3 progressions) plus O3's own. They go into `docs/testing/hardware-checklist.md` Part O and `reference.md` §15.3 as open questions. No result is claimed.
+From spec §8 (O-5 for the O3 progressions) plus O3's own. They go into `docs/testing/hardware-checklist.md` Part O (O14-O17) and `reference.md` §15.1 #41 and §15.3 (Q44-48) as open questions. No result is claimed.
 
 | # | Check | Listen for |
 | --- | --- | --- |
-| HW O-5 (O3 half) | By ear: the progressive, melodic techno, minimal and tropical progressions (§3.2.1) | each loop sounds like its genre on Phil's kit; list the ones to drop or revoice |
-| HW O-13 | "progressive house", then energy 1 to 5 | functional 124 BPM drums, off-beat stabs over the circle, the bass follows each chord; each level lands on the one |
-| HW O-14 | "melodic techno", then `write_part(lead track, phrase: "lead.stutter")` | stripped drums, rolling 16th bass, a held pad; the stutter follows the chords |
-| HW O-15 | "minimal", then "minimal techno" | four elements at most, space, the clap every other bar, the poly perc audibly against the kick |
-| HW O-16 | "tropical house" | soft drums, shaker and bongos at 108, bright C major pad, round sub; nothing harsh |
+| HW O-5, second half (checklist O14) | By ear: the progressive, melodic techno, minimal and tropical progressions (§3.2.1) | each loop sounds like its genre on Phil's kit; list the ones to drop or revoice |
+| Checklist O15 | "progressive house", then energy 1 to 5 | functional 124 BPM drums, off-beat stabs over the circle, the bass follows each chord; each level lands on the one |
+| Checklist O16 | "melodic techno", then `write_part(lead track, phrase: "lead.stutter")` | stripped drums, rolling 16th bass, a held pad; the stutter follows the chords and retriggers cleanly |
+| Checklist O17 | "minimal", "minimal techno", then "tropical house" | four elements at most, space, the clap every other bar, the poly perc against the kick; tropical soft drums, shaker and bongos at 108, a bright C major pad, round sub |
 
 ## 7. Order and merging
 

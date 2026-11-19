@@ -65,6 +65,42 @@ GENRES = {g.name: g for g in (
           "130 BPM, kick-led, one chord or a dark two-chord vamp, off-beat bass, plateaus", "§5",
           {"progression": "techno.pedal", "bass": "bass.offbeat", "chords": "stab.offbeat",
            "chords_density": 0.25}),
+    # O3 (v0.9.2): compiled from their tables, like classic house.
+    Genre("progressivehouse", "progressive", 124, 0.50, (9, "minor"), "progressivehouse.functional",
+          "progressivehouse.circle", "bass.root_follow", "stab.offbeat",
+          {1: "kick", 2: "rim", 3: "clap", 4: "closed hat", 5: "open hat", 6: "bass", 7: "chord stab",
+           8: "chord stab"},
+          "kick_bass_out", "progressive_journey", {"unchanged_bars": 16, "busy_drums": 5},
+          frozenset({"progressivehouse", "journey", "lush", "patient"}),
+          "124 BPM, lush 7th/sus chords, long filtered builds, drumless breakdowns", "§4",
+          {"breakdown_chords": "pad.hold"}),
+    Genre("melodictechno", "melodic", 124, 0.50, (9, "minor"), "melodictechno.stripped", "melodictechno.cinematic",
+          "bass.rolling_16", "pad.hold",
+          {1: "kick", 2: "rim", 3: "clap", 4: "closed hat", 5: "open hat", 6: "bass", 7: "pad", 8: "perc"},
+          "kick_bass_out", "melodic_journey", {"unchanged_bars": 16, "busy_drums": 6},
+          frozenset({"melodictechno", "cinematic", "emotional", "dark"}),
+          "124 BPM, cinematic minor chords every two bars, rolling 16th bass, stutter leads", "§8",
+          {"lead": "lead.stutter"}),
+    Genre("minimal.house", "minimal", 126, 0.57, (9, "minor"), "minimal.house_shuffle", None, "bass.stab_sparse",
+          "stab.single",
+          {1: "kick", 2: "rim", 3: "clap", 4: "closed hat", 5: "open hat", 6: "bass", 7: "stab", 8: "perc"},
+          "subtract_one", "minimal_long", {"unchanged_bars": 64, "busy_drums": 4},
+          frozenset({"minimal", "sparse", "hypnotic"}),
+          "126 BPM, 3-4 drum elements, space, microtiming, one change per phrase, little harmony", "§6",
+          {"progression": "minimal.stab_m7"}),
+    Genre("minimal.techno", "minimal", 128, 0.53, (9, "minor"), "minimal.techno_kick", None, "bass.offbeat", None,
+          {1: "kick", 2: "rim", 3: "clap", 4: "closed hat", 5: "open hat", 6: "bass", 8: "perc"},
+          "subtract_one", "minimal_long", {"unchanged_bars": 64, "busy_drums": 4},
+          frozenset({"minimal", "sparse", "hypnotic", "techno"}),
+          "128 BPM, kick-led, 3-4 drum elements, a polymetric perc, no chords", "§6",
+          {"progression": "minimal.fifth"}),
+    Genre("tropicalhouse", "tropical", 108, 0.53, (0, "major"), "tropicalhouse.soft", "tropicalhouse.pop",
+          "bass.round_sub", "pad.hold",
+          {1: "kick", 2: "rim", 3: "clap", 4: "closed hat", 5: "open hat", 6: "bass", 7: "pad", 8: "bongo"},
+          "reduce_drums", "tropical_song", {"unchanged_bars": 16, "busy_drums": 5},
+          frozenset({"tropicalhouse", "sunny", "summer", "beach", "bright"}),
+          "108 BPM, major pop harmony, soft drums, shakers and mallets, hooks instead of big drops", "§7",
+          {"lead": "lead.pentatonic_hook"}),
 )}
 
 def melodic_lines(record):
@@ -87,15 +123,15 @@ def melodic_lines(record):
 def compile(record):
     """A compiled genre -> its registered Pattern: the default groove at energy 3 over its phrase lines."""
     melodic = melodic_lines(record)
-    base = patterns.Pattern(record.name, record.bpm, record.swing,
-                            {t: r for t, r in record.roles.items() if t in melodic}, melodic, key=record.key)
+    # The whole layout goes in (drum roles too), so a perc lane lands on the genre's perc track (track 8).
+    base = patterns.Pattern(record.name, record.bpm, record.swing, dict(record.roles), melodic, key=record.key)
     groove = grooves.GROOVES[record.groove]
     pattern, _ = grooves.compile(groove, 3, base, name=record.name)
     return patterns.Pattern(record.name, record.bpm, record.swing, {**record.roles, **pattern.roles},
                             pattern.bars, key=record.key, genre=record.name)
 
 
-COMPILED = ("house",)
+COMPILED = ("house", "progressivehouse", "melodictechno", "minimal.house", "minimal.techno", "tropicalhouse")
 for _name in COMPILED:
     _record = GENRES[_name]
     patterns.RAW[_name] = compile(_record)

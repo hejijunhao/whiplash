@@ -2445,9 +2445,13 @@ class Engine:
         if self._groove is not None:
             return self._groove
         raw = self._raw_pattern
-        if raw is None or raw.family not in grooves.CLASSIC or raw is not patterns.PATTERNS.get(raw.family):
+        if raw is None or raw is not patterns.PATTERNS.get(raw.family):
             return None
-        return {"name": grooves.CLASSIC[raw.family], "energy": 3, "genre": raw.family}
+        if raw.family in grooves.CLASSIC:
+            return {"name": grooves.CLASSIC[raw.family], "energy": 3, "genre": raw.family}
+        if raw.family in genres.COMPILED:  # v0.9.2: a compiled genre is its record's default groove at energy 3
+            return {"name": genres.GENRES[raw.family].groove, "energy": 3, "genre": raw.family}
+        return None
 
     def _groove_record(self):
         info = self._groove_info()
@@ -2497,9 +2501,11 @@ class Engine:
             if info is None:
                 family = self._raw_pattern.family if self._raw_pattern is not None else "this pattern"
                 raise WhiplashError(f"{family} has no energy levels yet; pick a genre with grooves "
-                                    f"({', '.join(sorted(grooves.CLASSIC) + ['house'])}) or whiplash_list_library("
+                                    f"({', '.join(grooves.with_levels())}) or whiplash_list_library("
                                     "kind: 'groove')")
             groove = grooves.GROOVES[info["name"]]
+            if len(groove.levels) == 1:
+                raise WhiplashError(grooves.one_level(groove))
             current = self._energy_next["groove"]["energy"] if self._energy_next else info["energy"]
             if word == "up":
                 if current >= 5:
@@ -2810,8 +2816,9 @@ class Engine:
             name = pattern.family if pattern is not None else "this beat"
             raise WhiplashError(f"{name} has no genre phrases; name one, see whiplash_list_library(kind: 'phrase')")
         if role == "lead":
-            raise WhiplashError("leads stay model-written (write notes; key lock keeps them in key). Lead phrases "
-                                "arrive in O3, on request only")
+            raise WhiplashError("leads stay model-written (write notes; key lock keeps them in key), or name a lead "
+                                "phrase on request: arp.chord_up, arp.chord_updown, arp.chord_seeded, lead.stutter, "
+                                "lead.pentatonic_hook, melody.motif")
         if role == "bass":
             name, what, dens = (record.bass if record.bass != "hand" else record.recommends.get("bass")), "bass", None
         elif role in ("chord", "stab", "pad"):
@@ -2821,8 +2828,8 @@ class Engine:
             raise WhiplashError(f"phrase 'genre' needs a bass, chord, stab or pad track; this one plays {role}. Name a "
                                 "phrase instead, see whiplash_list_library(kind: 'phrase')")
         if name not in phrases.PHRASES:
-            raise WhiplashError(f"{record.name}'s {what} phrase {name or '(none)'} isn't in the library yet (it arrives "
-                                "in O3); name another, see whiplash_list_library(kind: 'phrase')")
+            raise WhiplashError(f"{record.name} has no {what} phrase (it plays without one); name a phrase, see "
+                                f"whiplash_list_library(kind: 'phrase', tag: '{role}')")
         return phrases.PHRASES[name], dens
 
     def _write_phrase(self, track, phrase, density, seed, register, envelope):
@@ -3102,6 +3109,10 @@ class Engine:
             if entry is not None:
                 out["library"] = {"name": entry.name, "about": entry.about, "source": entry.source,
                                   "chords": entry.chords, "scale": entry.scale}
+                if entry.bass:  # v0.9.2: written for a bass phrase; Whiplash doesn't rewrite the bass by itself
+                    out["library"]["bass"] = entry.bass
+                    out["bass_hint"] = (f"{entry.name} is written over {entry.bass}: whiplash_write_part(track: <the "
+                                        f"bass track>, phrase: '{entry.bass}')")
             if rule_note:
                 out["voicing_rule"] = rule_note
             if self._prog_full:

@@ -16,6 +16,7 @@ from . import harmony
 TAGS = frozenset({
     "classic", "hypnotic", "soulful", "warm", "jazzy", "gospel", "afro", "rolling", "deep tech", "piano", "bright",
     "uplift", "organ", "jacking", "twist", "sparse", "dark", "phrygian", "stab", "minor", "major", "dorian",
+    "circular", "patient", "prydz-like", "restrained uplift", "cinematic", "conservative", "sunny", "wistful",
 })
 GENRE_TAGS = frozenset({"deephouse", "house", "techhouse", "techno", "progressivehouse", "melodictechno",
                         "minimal", "tropicalhouse"})
@@ -28,7 +29,7 @@ class Prog:
     bars_per_chord: int
     voicing: str | None  # None: the default rule (shell for 7th/9th/11th on <= 3 chord tracks, pads full; else close)
     scale: str  # the scale it is written in
-    bass: str | None  # a phrase it is written for (O3: bass.descending_walk), else None
+    bass: str | None  # a phrase it is written for (bass.descending_walk), else None
     tags: frozenset
     brightness: int  # -2 (darkest) .. +2, for the O2 intents
     tension: int  # 0 (static vamp) .. 3 (dominant pull)
@@ -84,6 +85,32 @@ PROGRESSIONS = {p.name: p for p in (
        voicing="close"),
     _p("techno.sus_stab", "isus2", 4, "minor", {"stab"}, -1, 0, "§5 Brizm", "One sus2 stab chord",
        voicing="close"),
+    # Progressive house (research §4: 7ths, 9ths, sus4, not triads; long releases). O3.
+    _p("progressivehouse.circle", "i7 iv7 VIIsus4 IIImaj7", 2, "minor", {"circular"}, 0, 1,
+       "§4 BeatKey (voicings by ear)", "Am7 Dm7 Gsus4 Cmaj7: a circular loop of 7ths and a sus4"),
+    _p("progressivehouse.long_two", "i7 iv7", 4, "minor", {"patient"}, -1, 1,
+       "§4 BeatKey (held for 64 bars while texture builds)", "Am7 to Dm7, four bars each: patient, the texture builds"),
+    _p("progressivehouse.phrygian_turn", "i bII i V7", 2, "minor", {"dark", "phrygian"}, -2, 3, "§4 BeatKey",
+       "Am Bb Am E7: a dark phrygian turn with a dominant pull home"),
+    _p("progressivehouse.descending", "i9", 4, "minor", {"prydz-like"}, -1, 1,
+       "§4 BeatKey (Am-Am/G-Fmaj7-E7 as a bass walk)",
+       "Am9 held over a descending bass walk (A G F E): write bass.descending_walk on the bass track",
+       bass="bass.descending_walk"),
+    # Melodic techno (research §8, Q-H1 challenge: sourced material only). O3.
+    _p("melodictechno.cinematic", "iadd9 VImaj7 III VIIsus2", 2, "minor", {"cinematic"}, 0, 1,
+       "§8 NI (i-VI-III-VII, chords every two bars, add9/maj7/sus2)",
+       "Am(add9) Fmaj7 C Gsus2: cinematic minor chords, two bars each"),
+    _p("melodictechno.held_vamp", "i9 VImaj7", 4, "minor", {"conservative"}, -1, 0, "§8 NI, Soundtrap; Phil default",
+       "Am9 to Fmaj7, four bars each: the chords hold while the lead moves"),
+    # Minimal (research §6: by default no progression; when present, one stab). O3.
+    _p("minimal.stab_m7", "i7", 4, "minor", {"stab"}, -1, 0, "§6 Brizm", "One m7 stab chord"),
+    _p("minimal.stab_sus2", "isus2", 4, "minor", {"stab"}, 0, 0, "§6 Brizm", "One sus2 stab chord"),
+    _p("minimal.fifth", "i5", 4, "minor", {"stab"}, -1, 0, "§6 Brizm", "One root-and-fifth stab"),
+    # Tropical house (research §7: pop house, maj7/9 for a brighter pad; home C major). O3.
+    _p("tropicalhouse.pop", "Imaj7 V vi7 IVmaj7", 2, "major", {"sunny"}, 2, 1, "§7 Melodigging (2 bars by ear)",
+       "Cmaj7 G Am7 Fmaj7: the sunny I-V-vi-IV pop loop"),
+    _p("tropicalhouse.pop_minor", "vi7 IVmaj7 Imaj7 V", 2, "major", {"wistful"}, 1, 1, "§7 Melodigging",
+       "Am7 Fmaj7 Cmaj7 G: the same loop from the vi, wistful"),
 )}
 
 

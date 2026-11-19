@@ -28,7 +28,17 @@ PRESETS = {
     "house": {**_BASE, "kick": 116, "bass": 106, "clap": 104, "stab": 102, "chord": 100},
     "breaks": {**_BASE, "kick": 110, "snare": 112, "closed hat": 94, "bass": 106},
     "soul": {**_BASE, "kick": 106, "snare": 108, "closed hat": 86, "bass": 104, "chord": 102, "pad": 102},
+    # v0.9.2 (ontology O3), by ear: progressive's stabs and pad forward; melodic techno's pad and lead carry it;
+    # minimal's few elements sit evenly with a quiet rim; tropical's drums soft and its pad and hook up front.
+    "progressivehouse": {**_BASE, "kick": 116, "bass": 108, "stab": 100, "chord": 100, "pad": 100},
+    "melodictechno": {**_BASE, "kick": 116, "bass": 108, "pad": 102, "lead": 102, "closed hat": 86},
+    "minimal.house": {**_BASE, "kick": 114, "bass": 104, "rim": 84, "perc": 96},
+    "minimal.techno": {**_BASE, "kick": 118, "bass": 106, "rim": 84, "perc": 94},
+    "tropicalhouse": {**_BASE, "kick": 104, "clap": 92, "closed hat": 84, "perc": 90, "pad": 104, "lead": 104},
 }
+# The presets the whiplash_mix schema lists by name. The O3 genres' presets (v0.9.2) are reached through "auto" (the
+# genre playing) or by name in code, which keeps the tool-description budget for O4.
+SCHEMA_PRESETS = ("flat", "techno", "techhouse", "deephouse", "house", "breaks", "soul")
 PRESET_WORDS = {"auto": None, "genre": None, "current": None, "default": None, "reset": "flat", "unity": "flat"}
 
 
@@ -93,7 +103,10 @@ def preset(value, genre):
     word = str(value).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
     word = {"techhouse": "techhouse", "deephouse": "deephouse", "house": "deephouse", "chicago": "house",
             "chicagohouse": "house", "classichouse": "house", "hiphop": "soul",
-            "breakbeat": "breaks", "dnb": "breaks"}.get(word, word)
+            "breakbeat": "breaks", "dnb": "breaks", "progressive": "progressivehouse", "melodic": "melodictechno",
+            "tropical": "tropicalhouse", "minimal": "minimal.house", "minimalhouse": "minimal.house",
+            "minimal.house": "minimal.house", "minimaltechno": "minimal.techno",
+            "minimal.techno": "minimal.techno"}.get(word, word)
     if word in PRESET_WORDS:
         word = PRESET_WORDS[word] or (genre if genre in PRESETS else "flat")
     if word not in PRESETS:

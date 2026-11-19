@@ -244,8 +244,7 @@ def test_thicken_ghost_on_a_phrase_keeps_a_rel_and_resolves(eng):
 def test_phrase_genre_per_genre(eng):
     pretend_playing(eng, P["deephouse"])
     assert eng.write_part(6, phrase="genre")["phrase"] == "bass.rolling_deep"
-    with pytest.raises(engine.WhiplashError, match="pad.hold.*O3"):
-        eng.write_part(7, phrase="genre")
+    assert eng.write_part(7, phrase="genre")["phrase"] == "pad.hold"  # v0.9.2 (O3): the recommended pad exists now
     eng.stop()
     pretend_playing(eng, P["techhouse"])
     out = eng.write_part(7, phrase="genre")

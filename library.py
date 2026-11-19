@@ -21,6 +21,12 @@ GENRE_WORDS = {
     "classic house": "house", "chicago house": "house", "chicago": "house", "house": "house",
     "tech house": "techhouse", "techhouse": "techhouse", "tech": "techhouse",
     "techno": "techno", "peak time techno": "techno",
+    # v0.9.2 (O3). The two minimal presets share the library prefix "minimal" (minimal.house_shuffle, minimal.fifth).
+    "progressive house": "progressivehouse", "progressivehouse": "progressivehouse", "progressive": "progressivehouse",
+    "prog house": "progressivehouse", "prog": "progressivehouse",
+    "melodic techno": "melodictechno", "melodictechno": "melodictechno", "melodic": "melodictechno",
+    "minimal house": "minimal.house", "minimal techno": "minimal.techno", "minimal": "minimal.house",
+    "tropical house": "tropicalhouse", "tropicalhouse": "tropicalhouse", "tropical": "tropicalhouse",
 }
 FILLER = {"groove", "grooves", "progression", "progressions", "chords", "chord", "lane", "lanes", "fill", "fills",
           "the", "a", "an", "feel", "beat", "pattern", "loop", "style", "genre", "please", "with", "some", "in"}
@@ -28,6 +34,21 @@ FILLER = {"groove", "grooves", "progression", "progressions", "chords", "chord",
 
 class LibraryError(ValueError):
     pass
+
+
+def prefixes(genre):
+    """The name prefixes a genre's entries may use, most specific first: minimal.house -> minimal.house_, minimal."""
+    if not genre:
+        return ()
+    if "." in genre:
+        family, preset = genre.split(".", 1)
+        return (f"{genre}.", f"{family}.{preset}_", f"{family}.")
+    return (f"{genre}.",)
+
+
+def family_of(genre):
+    """minimal.house -> minimal: the prefix both minimal presets share (other ids are their own)."""
+    return genre.split(".", 1)[0] if genre else genre
 
 
 def _tables():
@@ -89,14 +110,15 @@ def resolve(kind, text, genre=None):
             return found(aliases[candidate])
     if kind == "groove" and key in ("a", "classic") and hint_genre in grooves.CLASSIC:  # a bare letter alias
         return found(grooves.CLASSIC[hint_genre])
-    if "." in key:  # "deep_house.shuffle", "Chicago.jack"
+    if "." in key:  # "deep_house.shuffle", "Chicago.jack", "minimal_techno.kick"
         head, rest = key.split(".", 1)
         canon = GENRE_WORDS.get(head.replace("_", " "), head.replace("_", ""))
         for g in (canon, "deephouse" if canon == "house" else None):
-            if g and f"{g}.{rest}" in by_lower:
-                return found(by_lower[f"{g}.{rest}"])
-            if g and f"{g}.{rest}".lower() in aliases:
-                return found(aliases[f"{g}.{rest}".lower()])
+            for pre in prefixes(g):
+                if f"{pre}{rest}" in by_lower:
+                    return found(by_lower[f"{pre}{rest}"])
+                if f"{pre}{rest}".lower() in aliases:
+                    return found(aliases[f"{pre}{rest}".lower()])
     words = [w for w in _norm(raw.replace(".", " ")).split() if w not in FILLER]
     phrase = " ".join(words)
     genre_word = None
@@ -125,8 +147,9 @@ def resolve(kind, text, genre=None):
     if rest_key:
         if hint_genre:
             for g in (hint_genre, "deephouse" if genre_word == "house" else None):
-                if g and f"{g}.{rest_key}" in by_lower:
-                    return found(by_lower[f"{g}.{rest_key}"])
+                for pre in prefixes(g):
+                    if f"{pre}{rest_key}" in by_lower:
+                        return found(by_lower[f"{pre}{rest_key}"])
         suffix = [n for n in names if n.split(".", 1)[-1].lower() == rest_key or n.lower() == rest_key]
         if len(suffix) == 1:
             return found(suffix[0])
@@ -151,6 +174,14 @@ def _genre_of(entry):
 
 def _tags(entry):
     return set(getattr(entry, "tags", ()) or ())
+
+
+def _in_genre(entry, genre_id):
+    """An entry belongs to a genre by its own genre or a tag; a minimal preset also gets the shared minimal entries
+    (minimal.fifth, the phrases tagged minimal), but not the other preset's grooves."""
+    own, tags, family = _genre_of(entry), _tags(entry), family_of(genre_id)
+    return (own == genre_id or genre_id in tags or own == family
+            or (own in (None, family) and family in tags))
 
 
 def summary(kind, entry):
@@ -212,7 +243,7 @@ def entries(kind, genre=None, tag=None):
     genre_id = None
     if genre not in (None, ""):
         genre_id = GENRE_WORDS.get(_norm(genre), _norm(genre).replace(" ", ""))
-        rows = [e for e in rows if _genre_of(e) == genre_id or genre_id in _tags(e)]
+        rows = [e for e in rows if _in_genre(e, genre_id)]
     if tag not in (None, ""):
         word = _norm(tag)
         rows = [e for e in rows if word in {_norm(t) for t in _tags(e)}

@@ -6,7 +6,7 @@ thread on copies of them.
 
 What counts as change (Q-T4, the same for every genre): a scheduled change landing, a user knob move, any bar on
 which a ramp runs, and an arrangement section starting. "Repetitive" is genre-relative (Q-T2): the thresholds are
-the genre records' `taste` (research §1, §2, §3, §5); soul and breaks take the spec's default.
+the genre records' `taste` (research §1-8); soul and breaks take the spec's default.
 """
 import statistics
 
@@ -17,7 +17,9 @@ WINDOW = 8  # bars a metric looks back over by default
 REVIEW_MIN, REVIEW_MAX = 4, 32
 VEL_BUCKET = 8  # fingerprints compare velocity in buckets of 8
 DEFAULT = {"unchanged_bars": 16, "busy_drums": 6}  # soul, breaks (spec §7.2)
-NAMES = {"deephouse": "deep house", "house": "classic house", "techhouse": "tech house", "techno": "techno"}
+NAMES = {"deephouse": "deep house", "house": "classic house", "techhouse": "tech house", "techno": "techno",
+         "progressivehouse": "progressive house", "melodictechno": "melodic techno", "minimal.house": "minimal house",
+         "minimal.techno": "minimal techno", "tropicalhouse": "tropical house"}
 HATS = frozenset({"closed hat", "open hat"})
 # Named next steps per genre, each a library entry (a lane, a fill, a phrase): hints name moves, never rewrite.
 SUGGEST = {
@@ -25,6 +27,11 @@ SUGGEST = {
     "house": {"lane": "rim.syncopated", "fill": "snare.roll", "phrase": "stab.offbeat"},
     "techhouse": {"lane": "perc.woodblock", "fill": "kick.sit_out", "phrase": "bass.bouncy"},
     "techno": {"lane": "perc.rolling", "fill": "kick.sit_out", "phrase": "bass.offbeat"},
+    "progressivehouse": {"lane": "perc.shaker_16", "fill": "snare.roll", "phrase": "pad.hold"},
+    "melodictechno": {"lane": "hat.offbeat_open", "fill": "snare.roll", "phrase": "lead.stutter"},
+    "minimal.house": {"lane": "perc.poly3", "fill": "hat.open_choke", "phrase": "stab.single"},
+    "minimal.techno": {"lane": "perc.conga_offbeats", "fill": "kick.sit_out", "phrase": "bass.stab_sparse"},
+    "tropicalhouse": {"lane": "perc.bongo", "fill": "snare.roll", "phrase": "lead.pentatonic_hook"},
 }
 FALLBACK_SUGGEST = {"lane": "perc.conga_offbeats", "fill": "snare.roll"}
 

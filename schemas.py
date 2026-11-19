@@ -3,7 +3,7 @@ from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
 from .arrange import GROUPS, PRESETS, RAMPS_MAX, SECONDS_MAX, SECONDS_MIN, SECTION_BARS_MAX, SECTIONS_MAX
-from .mixer import MIX_BARS_MAX, PRESETS as MIX_PRESETS
+from .mixer import MIX_BARS_MAX, SCHEMA_PRESETS as MIX_SCHEMA_PRESETS
 from .transition import BARS_MAX as TX_BARS_MAX, KINDS as TX_KINDS
 from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
@@ -15,6 +15,9 @@ from .engine import INTENT_WORDS
 from .progressions import HOWS
 
 # v0.9.0: bare "house" still means deep house (patterns.ALIASES), so the enum offers "chicago" for classic house.
+# One mood per genre (v0.9.2: the full list outgrew the budget); an unknown word's error lists them all.
+MOOD_EXAMPLES = ("warm", "jacking", "bouncy", "dark", "journey", "cinematic", "sparse", "sunny", "chill", "happy")
+assert set(MOOD_EXAMPLES) <= set(MOODS)
 GENRES = sorted({g for g in PATTERNS if _resolve_genre(g).name == g} | {"chicago"})
 from .jam import MODES as FOLLOW_MODES
 
@@ -54,7 +57,7 @@ SCHEMAS = {
                         "Roles follow whiplash_label_tracks." + SKILL),
         "parameters": {"type": "object", "properties": {
             "genre": {"type": "string", "enum": GENRES, "description": "Pattern genre (chicago = classic house)"},
-            "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
+            "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(MOOD_EXAMPLES)}"},
             "bpm": {"type": "number", "minimum": BPM_MIN, "maximum": BPM_MAX,
                     "description": "Default: the genre's"},
             "bars": {"type": "integer", "minimum": 1, "maximum": BARS_MAX, "description": "Stop after N bars; omit to loop until stop"},
@@ -247,7 +250,7 @@ SCHEMAS = {
         "parameters": {"type": "object", "properties": {
             "levels": {**MIX_MAP, "description": 'Track or group -> 0-127, e.g. {"6": 95, "hats": 90}'},
             "pan": {**MIX_MAP, "description": "Track or group -> 0-127 (64 centre), or left, right, hard left..."},
-            "preset": {"type": "string", "enum": [*MIX_PRESETS, "auto"], "description": "Levels by role; auto = genre"},
+            "preset": {"type": "string", "enum": [*MIX_SCHEMA_PRESETS, "auto"], "description": "Levels by role; auto = genre"},
             "bars": {"type": "integer", "minimum": 0, "maximum": MIX_BARS_MAX, "description": "Ramp length; 0 = on the bar"},
             "save_as": {"type": "string"},
             "recall": {"type": "string"},
