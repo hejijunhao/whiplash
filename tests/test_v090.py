@@ -12,8 +12,8 @@ import pytest
 import yaml
 
 import whiplash
-from whiplash import (engine, genres, grooves, harmony, kitmap, library, mutate, parts, patterns, progressions,
-                      schemas, tools)
+from whiplash import (engine, genres, grooves, harmony, kitmap, library, mutate, parts, patterns, phrases,
+                      progressions, schemas, tools)
 from conftest import STRICT_TIMING
 from test_live import bar_events, pretend_playing
 from test_whiplash import FakePort, make_engine
@@ -50,13 +50,13 @@ def drums(events, tracks=(1, 2, 3, 4, 5, 8)):
 
 # ---- version, tools, budget -----------------------------------------------
 
-def test_version_is_0_9_1():  # v0.9.1 (ontology O2)
-    assert whiplash.__version__ == "0.9.1"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.1"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.1"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.1"
+def test_version_is_0_9_2():  # v0.9.2 (ontology O3)
+    assert whiplash.__version__ == "0.9.2"
+    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.2"
+    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.2"
+    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.2"
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.9.1") and releases[1].startswith("0.9.0")
+    assert releases[0].startswith("0.9.2") and releases[1].startswith("0.9.1")
 
 
 def test_list_library_is_the_one_new_tool():
@@ -247,7 +247,7 @@ def test_pad_carries_the_ninth_over_shell_chord_tracks(eng):
 def test_every_progression_parses_in_all_keys_and_voices_in_range():
     for prog in progressions.PROGRESSIONS.values():
         assert prog.tags - {prog.genre} <= progressions.TAGS | progressions.GENRE_TAGS, prog.name
-        assert prog.source and prog.about and prog.bass is None
+        assert prog.source and prog.about and (prog.bass is None or prog.bass in phrases.PHRASES)  # v0.9.2: O3 names one
         assert -2 <= prog.brightness <= 2 and 0 <= prog.tension <= 3
         for pc in range(12):
             for scale in ("minor", "major"):
@@ -332,8 +332,7 @@ def test_lane_tables_are_well_formed():
     for lane in grooves.LANES.values():
         assert lane.role in grooves.DRUM_ROLES and lane.role in kitmap.ROLES
         assert len(lane.grid) in (1, 2, 4)
-        for bar in lane.grid:
-            assert len(grooves.parse_cells(bar)) >= 1
+        assert sum(len(grooves.parse_cells(bar)) for bar in lane.grid) >= 1  # v0.9.2: a bar may rest (every other bar)
         assert len(lane.velocities) == 16 and all(1 <= v <= 127 for v in lane.velocities)
         assert lane.micro == () or (len(lane.micro) == 16 and all(-3 <= m <= 3 for m in lane.micro))
         assert lane.name.split(".")[0] in ("kick", "clap", "snare", "rim", "hat", "perc"), lane.name
@@ -341,6 +340,9 @@ def test_lane_tables_are_well_formed():
 
 def test_groove_levels_are_known_lanes_busier_and_capped():
     for groove in grooves.GROOVES.values():
+        if groove.genre in ("soul", "breaks"):  # v0.9.2: one-level classic grooves (energy 3 = today's pattern)
+            assert sorted(groove.levels) == [3] and groove.classic, groove.name
+            continue
         assert sorted(groove.levels) == [1, 2, 3, 4, 5], groove.name
         cap = genres.GENRES[groove.genre].taste["busy_drums"]
         for energy, slots in groove.levels.items():
@@ -540,8 +542,8 @@ def test_energy_on_a_plain_classic_genre_and_refusals(eng):
     other, port = make_engine()
     try:
         pretend_playing(other, P["soul"])
-        with pytest.raises(engine.WhiplashError, match="no energy levels"):
-            other.set_energy("up")
+        with pytest.raises(engine.WhiplashError, match=r"soul.classic has one energy level \(3\)"):
+            other.set_energy("up")  # v0.9.2 (O3): soul is a one-level classic groove
     finally:
         other.shutdown()
 

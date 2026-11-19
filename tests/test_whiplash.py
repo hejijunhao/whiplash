@@ -8,7 +8,7 @@ import mido
 import pytest
 
 import whiplash
-from whiplash import engine, patterns, tools
+from whiplash import engine, genres, patterns, tools
 
 
 class FakePort:
@@ -104,7 +104,10 @@ def test_manifest_lists_every_tool_and_declares_deps():
 @pytest.mark.parametrize("name", sorted(patterns.PATTERNS))
 def test_patterns_valid(name):
     p = patterns.PATTERNS[name]
-    assert set(p.bars) == set(range(1, 9))
+    if name in genres.COMPILED:  # v0.9.2: a compiled genre that uses fewer roles leaves those tracks silent
+        assert set(p.bars) <= set(range(1, 9)) and {1, 6} <= set(p.bars)
+    else:
+        assert set(p.bars) == set(range(1, 9))
     for track, bars in p.bars.items():
         assert len(bars) == patterns.BARS
         for bar in bars:

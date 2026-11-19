@@ -200,6 +200,15 @@ ALIASES = {
     "classic house": "house", "classic-house": "house", "classichouse": "house", "chicago": "house",
     "chicago house": "house", "chicago-house": "house", "chicagohouse": "house",
     "peak time techno": "techno", "peak time tech house": "techhouse",
+    # v0.9.2 (ontology O3): the other four genres. Bare "minimal" is minimal house (Q-alias-minimal).
+    "progressive": "progressivehouse", "progressive house": "progressivehouse", "prog house": "progressivehouse",
+    "progressive-house": "progressivehouse", "prog": "progressivehouse",
+    "melodic techno": "melodictechno", "melodic-techno": "melodictechno", "melodic": "melodictechno",
+    "tropical": "tropicalhouse", "tropical house": "tropicalhouse", "tropical-house": "tropicalhouse",
+    "minimal": "minimal.house", "minimal house": "minimal.house", "minimal-house": "minimal.house",
+    "minimal_house": "minimal.house", "minimalhouse": "minimal.house",
+    "minimal techno": "minimal.techno", "minimal-techno": "minimal.techno", "minimal_techno": "minimal.techno",
+    "minimaltechno": "minimal.techno",
 }
 MOODS = {
     "groovy": "deephouse", "warm": "deephouse", "late night": "deephouse",
@@ -209,6 +218,8 @@ MOODS = {
     "bouncy": "techhouse", "funky": "techhouse", "rolling": "techhouse",
     "peak time": "techno",  # v0.9.0: was techhouse; "peak time tech house" keeps the old choice (research §5)
     "jacking": "house",
+    "journey": "progressivehouse", "cinematic": "melodictechno", "emotional": "melodictechno",
+    "sunny": "tropicalhouse", "summer": "tropicalhouse", "beach": "tropicalhouse", "sparse": "minimal.house",
 }
 
 

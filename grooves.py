@@ -149,6 +149,28 @@ LANES = {lane.name: lane for lane in (
           micro=_m(0.5, OFF_8THS)),
     _lane("perc.rolling", "perc", "...x..x....x..x.", _v(76), "§5 Schunk", "Perc between the kicks (3, 6, 11, 14)"),
     _lane("perc.woodblock", "perc", ".......X.......X", _v(90), "§3 TPS", "Woodblock accents on 7 and 15"),
+    # O3 (v0.9.2): progressive house, melodic techno, minimal, tropical house.
+    _lane("kick.soft", "kick", "x...x...x...x...", "soft", "§7 Melodigging",
+          "Four on the floor with rounded, softer transients (tropical)"),
+    _lane("clap.every_other_bar", "clap", ("................", "....x.......x..."), _v(96), "§6 TPS",
+          "Clap on 2 and 4 in every second bar only: minimal space"),
+    _lane("rim.on_3", "rim", "........x.......", _v(76), "§4 BeatKey", "One rim on beat 3"),
+    _lane("rim.sparse_2_4", "rim", "....x.......x...", _v(56), "§6 Attack", "Quiet rim on 2 and 4, laid back",
+          micro=_m(0.5, (4, 12))),
+    _lane("perc.poly3", "perc", ("x..x..x..x..x..x", "..x..x..x..x..x.", ".x..x..x..x..x..", "x..x..x..x..x..x"),
+          _v(72), "§6 Brizm (polymeter)",
+          "Every 3rd 16th over the 4-bar loop: 3 against 4 that resets every 4 bars (64 isn't a multiple of 3)",
+          micro=_m(0.25, ALL)),
+    _lane("perc.bongo", "perc", "...x...x..x...x.", _v(68), "§7 Melodigging", "Soft bongos on 3, 7, 10 and 14",
+          micro=_m(0.25, (3, 7, 10, 14))),
+    _lane("hat.shaker_16", "closed hat", "xgxgxgxgxgxgxgxg", _v(62), "§7 Melodigging, Splice",
+          "Ghosted shaker 16ths on the closed-hat track, a touch late", micro=_m(0.25, ALL)),
+    _lane("perc.conga_busy", "perc", "..x..gx...x..gx.", _v(74), "§1, §6 Attack",
+          "Helper: off-beat congas with ghosts before 6 and 14, the energy 5 form of perc.conga_offbeats",
+          micro=_m(0.5, OFF_8THS), tags={"helper"}),
+    _lane("perc.bongo_busy", "perc", "...x..xx..x...xx", _v(68), "§7 Melodigging",
+          "Helper: bongos on 3, 6, 7, 10, 14 and 15, the energy 5 form of perc.bongo",
+          micro=_m(0.25, (3, 6, 7, 10, 14, 15)), tags={"helper"}),
 )}
 
 
@@ -231,6 +253,67 @@ GROOVES = {g.name: g for g in (
     }, "§5 Schunk, Beatportal", "Kick-led: off-beat hats and rolling perc, the clap from energy 3",
         fills={"kick": "kick.sit_out"}, tags={"rolling", "hypnotic"}),
 )}
+
+
+def _levels(*levels):
+    """Five energy levels from the first one plus each later level's changes: {slot: lane} (None drops a slot)."""
+    out, cur = {}, {}
+    for energy, change in enumerate(levels, 1):
+        cur = {k: v for k, v in {**cur, **change}.items() if v is not None}
+        out[energy] = dict(cur)
+    return out
+
+
+def _classic_one(genre, swing, layout, about):
+    """A one-level classic groove (soul, breaks): energy 3 is today's pattern; no other levels yet (spec §11)."""
+    return _g(f"{genre}.classic", genre, swing, {3: {role: "@" for role in layout}}, "existing pattern", about,
+              aliases=(f"{genre}.A",), tags={"classic"})
+
+
+GROOVES.update({g.name: g for g in (
+    _g("progressivehouse.functional", "progressivehouse", 0.50, _levels(
+        {"kick": "kick.four_floor", "open hat": "hat.offbeat_open"},
+        {"clap": "clap.2_4", "closed hat": "hat.closed_8ths"},
+        {"rim": "rim.on_3"},
+        {"closed hat": "hat.closed_16ths"},
+        {"clap": "clap.2_4_ghosted"},
+    ), "§4 BeatKey", "Functional 4/4: 8th hats, off-beat open hat, a rim on 3; the pump is the groove",
+        fills={"rim": "snare.roll"}, tags={"functional", "driving"}),
+    _g("melodictechno.stripped", "melodictechno", 0.50, _levels(
+        {"kick": "kick.four_floor", "closed hat": "hat.closed_8ths"},
+        {"clap": "clap.2_4", "closed hat": "hat.closed_16ths"},
+        {"perc": "perc.shaker_16", "rim": "rim.sparse_2_4"},
+        {"open hat": "hat.offbeat_open"},
+        {"kick": "kick.ghost_mid", "clap": "clap.2_4_ghosted"},
+    ), "§8 NI, Soundtrap", "Stripped drums under the melody: 16th hats, a shaker, a quiet rim",
+        fills={"rim": "snare.roll"}, tags={"stripped", "hypnotic"}),
+    _g("minimal.house_shuffle", "minimal.house", 0.57, _levels(
+        {"kick": "kick.four_floor", "perc": "perc.conga_offbeats"},
+        {"rim": "rim.sparse_2_4"},
+        {"clap": "clap.every_other_bar"},
+        {"kick": "kick.ghost_mid"},
+        {"perc": "perc.conga_busy", "clap": "clap.2_4"},
+    ), "§6 Attack, TPS", "Swung minimal: kick, off-beat congas, a quiet rim and a clap every other bar",
+        fills={"perc": "hat.open_choke"}, tags={"minimal", "shuffle", "sparse"}),
+    _g("minimal.techno_kick", "minimal.techno", 0.53, _levels(
+        {"kick": "kick.four_floor", "open hat": "hat.offbeat_open"},
+        {"rim": "rim.sparse_2_4"},
+        {"perc": "perc.poly3"},
+        {"kick": "kick.ghost_mid"},
+        {"rim": "rim.syncopated"},
+    ), "§6 Brizm, Schunk", "Kick-led minimal techno: off-beat hat, a quiet rim, a 3-against-4 perc",
+        fills={"kick": "kick.sit_out"}, tags={"minimal", "hypnotic", "polymeter"}),
+    _g("tropicalhouse.soft", "tropicalhouse", 0.53, _levels(
+        {"kick": "kick.soft", "open hat": "hat.offbeat_open"},
+        {"clap": "clap.2_4", "closed hat": "hat.shaker_16"},
+        {"perc": "perc.bongo"},
+        {"clap": "clap.2_4_ghosted"},
+        {"perc": "perc.bongo_busy"},
+    ), "§7 Melodigging, Splice", "Soft drums: a rounded kick, shaker 16ths and bongos",
+        fills={"clap": "snare.roll"}, tags={"soft", "sunny"}),
+    _classic_one("soul", 0.58, ("kick", "snare", "clap", "closed hat", "open hat"), "Today's soul pattern"),
+    _classic_one("breaks", 0.54, ("kick", "snare", "clap", "closed hat", "open hat"), "Today's breaks pattern"),
+)})
 ALIASES = {alias: g.name for g in GROOVES.values() for alias in g.aliases}
 CLASSIC = {g.genre: g.name for g in GROOVES.values() if g.classic}  # genre -> its classic groove
 
@@ -355,7 +438,18 @@ def _target(role, slot, base, kit, taken):
     return free[0] if free else None
 
 
+def one_level(groove):
+    return (f"{groove.name} has one energy level (3); pick a genre with levels: {', '.join(with_levels())}")
+
+
+def with_levels():
+    """The genres whose grooves have energy levels 1-5."""
+    return sorted({g.genre for g in GROOVES.values() if len(g.levels) > 1})
+
+
 def level(groove, energy):
+    if len(groove.levels) == 1 and energy not in groove.levels:
+        raise GrooveError(one_level(groove))
     if energy not in groove.levels:
         raise GrooveError(f"{groove.name} has no energy {energy}; levels: {sorted(groove.levels)}")
     return groove.levels[energy]

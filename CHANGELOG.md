@@ -42,6 +42,31 @@ Changed
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
 
+## 0.9.2
+
+Ontology v1, O3: the other four genres ([docs/executing/ontology-o3-build-plan.md](docs/executing/ontology-o3-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §9). "Progressive house", "melodic techno", "minimal" and "tropical house" each play their own groove, chords and bass from one call. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks (O14-O17).
+
+Added
+- **Four genres, compiled from their records** (`genres.py`, like classic house), each with five energy levels:
+  - **`progressivehouse`** (124 BPM, A minor): `progressivehouse.functional` (8th hats, off-beat open hat, a rim on 3), off-beat chord stabs (`stab.offbeat`) over `progressivehouse.circle` (Am7 Dm7 Gsus4 Cmaj7), `bass.root_follow`. `pad.hold` is recommended for its breakdowns.
+  - **`melodictechno`** (124, A minor): `melodictechno.stripped` (16th hats, a shaker, a quiet rim), `bass.rolling_16`, a held pad (`pad.hold`) over `melodictechno.cinematic` (Am(add9) Fmaj7 C Gsus2).
+  - **`minimal.house`** (126, swing 57%) and **`minimal.techno`** (128): at most four drum elements. `minimal.house_shuffle` (kick, off-beat congas, a quiet laid-back rim, a clap every other bar) with `bass.stab_sparse` and one `stab.single` a bar; `minimal.techno_kick` (kick, off-beat hat, rim, `perc.poly3`) with `bass.offbeat` and no chords. No progression by default.
+  - **`tropicalhouse`** (108, home key C major): `tropicalhouse.soft` (a soft kick, shaker 16ths on the closed-hat track, bongos), a held pad over `tropicalhouse.pop` (Cmaj7 G Am7 Fmaj7), `bass.round_sub`.
+- **Progressions:** progressive house `circle`, `long_two`, `phrygian_turn`, `descending` (an Am9 held over `bass.descending_walk`; its result says how to write the bass); melodic techno `cinematic`, `held_vamp`; minimal `stab_m7`, `stab_sus2`, `fifth`; tropical house `pop`, `pop_minor`. 28 in all, each with its research source, and brightness and tension for v0.9.1's intents.
+- **Lanes:** `clap.every_other_bar`, `rim.on_3`, `rim.sparse_2_4`, `perc.poly3` (every third 16th over the 4-bar loop: 3 against 4, resetting every 4 bars because 64 isn't a multiple of 3), `perc.bongo`, `hat.shaker_16`, `kick.soft`, plus two helper lanes for energy 5.
+- **Phrases:** `bass.root_follow`, `bass.rolling_16`, `bass.stab_sparse`, `bass.round_sub`, `bass.descending_walk` (A G F E in A minor), `bass.walking`, `stab.single`, `pad.hold` (the existing held pad, named; deep house's recommended chord phrase now resolves).
+- **Leads on request** (Q-P3): `arp.chord_up`, `arp.chord_updown`, `arp.chord_seeded`, `lead.stutter`, `lead.pentatonic_hook` (a seeded 2-bar hook of each chord's R, 3, 5, 9 and octave, repeated) and `melody.motif` (a seeded motif, repeated, sequenced up a step, then answered on the root). They play only when named, never as a genre default; `phrase: "genre"` on a lead track still says leads are yours to write and names them.
+- **`soul.classic` and `breaks.classic`** (= `soul.A`, `breaks.A`): today's patterns as one-level grooves. `whiplash_mutate(action: "energy")` on them says "soul.classic has one energy level (3); pick a genre with levels" and changes nothing.
+- **Words:** `progressive`, `progressive house`, `prog house`; `melodic techno`; `tropical`, `tropical house`; `minimal` (= minimal house), `minimal house`, `minimal techno`. Moods: `journey` (progressive house), `cinematic` and `emotional` (melodic techno), `sunny`, `summer`, `beach` (tropical house), `sparse` (minimal house). Existing moods are unchanged. The library reads "minimal house shuffle", and `list_library(genre: "minimal techno")` lists the shared minimal progressions and phrases with that preset's groove.
+- **Taste:** thresholds for the new genres (progressive, melodic and tropical 16 bars, minimal 64; minimal flags more than 4 drum elements), with named next moves.
+- **Mix presets** for the new genres, picked by `whiplash_mix(preset: "auto")`.
+
+Changed
+- `whiplash_mutate(action: "energy")` now works on a plain compiled genre (`genre: "chicago"` and the four new ones), from its default groove at energy 3. It used to ask for a `groove`.
+- Phrase tones count across the loop instead of restarting each bar, so a phrase can name a tone per bar. Every earlier phrase has a whole number of tone cycles per bar and plays exactly as before.
+- `play_pattern`'s mood description lists one mood per genre (the full list outgrew the description budget); an unknown mood's error still lists them all. `whiplash_mix`'s preset enum keeps the pre-0.9.2 presets; the new genres' presets come through `auto`.
+- Every pre-0.9.2 call plays bit for bit as before (equivalence tests; the hand-written genres, classic house and the O1b phrases are pinned).
+
 ## 0.9.1
 
 Ontology v1, O2: harmony intents and keys ([docs/executing/ontology-o2-build-plan.md](docs/executing/ontology-o2-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §9). Say "darker", "more tension" or "change key to F minor", and the plugin does the theory from the next bar line. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks (O10-O13).
