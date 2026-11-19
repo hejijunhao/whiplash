@@ -1,7 +1,7 @@
 # Whiplash ontology v1: spec
 
 Status:
-- **Spec only. Decisions settled** with Phil's orchestrator in two rounds (15 Nov 2026), resolved from genre research rather than by Phil answering each question: see §10.
+- **Spec only. Decisions settled** with Phil's orchestrator in two rounds (15 Nov 2026), resolved from genre research. **Fully decided 2026-11-19:** Phil confirmed every §10.1 question, with Q-H3 changed and Q-H4 delegated to Deck, and may revisit them in a later detailed review. **O1a is ready to start on Phil's go.** See §10.
 - Branch `docs/ontology-spec`, cut from `main` at `3f4f883` (v0.8.0 merged, PR #23; visualiser timeline, PR #24).
 - No code, tests, tool or version changes come with it.
 - Nothing here has been tested on a real Digitakt II. Every item marked **HW** is a check for Phil's Air (§8), not a result.
@@ -972,11 +972,13 @@ It adds one tool and extends five, so its budget step is small: tools about 4,25
 
 ## 10. Decisions
 
-Settled in two rounds, from the research brief and Phil's stated defaults. On 2026-11-19 Phil answered Q-S1 to Q-H4: six confirmed, Q-H3 changed, Q-H4 decided by Deck (he delegated it). The other 21 are still open with their defaults. Anything marked **HW** is a proposed default that still needs his ears (§8).
+Settled in two rounds, from the research brief and Phil's stated defaults. On 2026-11-19 Phil answered Q-S1 to Q-H4: six confirmed, Q-H3 changed, Q-H4 decided by Deck (he delegated it). The same day he confirmed the other 21 at their defaults ("Yes to all remaining points for now. We can review in more detail."), so he may revisit them in a later detailed review.
 
-### 10.1 Decisions for Phil to confirm
+**The spec is now fully decided. O1a is ready to start on Phil's go.** Anything marked **HW** is a proposed default that still needs his ears (§8).
 
-One line per question, with the default the spec uses. Phil can confirm or change each by ID; the tables in §10.2 give the rationale and source. **Answered** items carry the date and the decision; **open** items carry the default.
+### 10.1 Decisions confirmed by Phil
+
+One line per question, with the default the spec uses. Phil can confirm or change each by ID; the tables in §10.2 give the rationale and source. Every item is answered and carries its date and decision.
 
 **Scope**
 - Q-S1. Four new tools, or fold key/lock/intents, energy, moves and review into existing verbs? **Answered 2026-11-19: confirmed.** One new tool, `whiplash_list_library` (25→26).
@@ -986,39 +988,39 @@ One line per question, with the default the spec uses. Phil can confirm or chang
 **Harmony**
 - Q-H1. Are the six deep house progressions right by ear, and which are missing? **Answered 2026-11-19: confirmed** (the researched set). `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`; i–VI–III–VII moves to `house.uplift`. Still **HW** by ear (O-5).
 - Q-H2. Key lock on by default once a key is set? **Answered 2026-11-19: confirmed.** On; `out_of_key` per part; drums never snapped. Phil: melodic lines (bass, lead, chords) follow the key so they stay tonal; drums stay on the grid and are never pitch-corrected to the scale; a snare must never accidentally sound like a note.
-- Q-H3. Should `darker` do both a mode shift and a filter close by default? **Answered 2026-11-19: changed.** Not hard-wired to harmony only. The plugin gives the model context and a menu (`how`): `harmonic` (darker qualities/modes, flatten the 3rd/6th, lower voicing register), `timbral` (close the filter / reduce brightness on melodic tracks) and `register` (thin the highs, drop the lead an octave). The model picks one or combines them, and the result names what was applied, so it is undoable and explainable. `brighter` mirrors it. Default with no choice: `harmonic`.
+- Q-H3. Should `darker` do both a mode shift and a filter close by default? **Answered 2026-11-19: changed.** Not hard-wired to harmony only. The plugin gives the model context and a menu (`how`): `harmonic` (darker qualities/modes, flatten the 3rd/6th, lower voicing register), `timbral` (close the filter / reduce brightness on melodic tracks) and `register` (thin the highs, drop the lead an octave). The model picks one or combines them, and the result names what was applied, so it is undoable and explainable. `brighter` mirrors it. Default with no choice: `harmonic`. **Provisional, pending the detailed review:** the two rules Deck added here stand for now: a `timbral` darker is separate from filter-as-energy (Q-A1), and `brighter` never opens the filter past its value before the first `darker`.
 - Q-H4. `shell` as the default voicing for 9th (and 7th/11th) chords on audio tracks? **Answered 2026-11-19: delegated to Deck.** Shell voicings (root, 3rd, 7th) by default when there are three or fewer chord tracks; pad tracks may use fuller 9th voicings; otherwise `close`. Still **HW** (O-4).
 
 **Groove**
-- Q-G1. Groove names: letters or descriptive names? **Default:** descriptive; letter aliases only for today's patterns (`deephouse.classic` = `deephouse.A`, bit-identical).
-- Q-G2. +0.5-tick clap and −0.25-tick hat: audible and worth it? **Default:** microtiming on except in the classic grooves. **HW** (O-1).
-- Q-G3. Is energy a `mutate` action, a `perform` move, or both? **Default:** `mutate(action: "energy")` while playing, plus a form section key.
-- Q-G4. Ghost velocity 28–40 vs VELOCITY TO VOL? **Default:** `GHOST_VEL` 28–40; fallback 40–55 in one place. **HW** (O-2).
+- Q-G1. Groove names: letters or descriptive names? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): descriptive; letter aliases only for today's patterns (`deephouse.classic` = `deephouse.A`, bit-identical).
+- Q-G2. +0.5-tick clap and −0.25-tick hat: audible and worth it? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): microtiming on except in the classic grooves. **HW** (O-1).
+- Q-G3. Is energy a `mutate` action, a `perform` move, or both? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): `mutate(action: "energy")` while playing, plus a form section key.
+- Q-G4. Ghost velocity 28–40 vs VELOCITY TO VOL? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): `GHOST_VEL` 28–40; fallback 40–55 in one place. **HW** (O-2).
 
 **Phrases**
-- Q-P1. `phrase` on `write_part`, or a separate tool? **Default:** `write_part(phrase)`.
-- Q-P2. Does a phrase replace the genre's bass line by default? **Default:** yes; a phrase replaces that track's line. Each genre has a default bass.
-- Q-P3. A seeded `melody.motif`, or keep leads hand-written? **Default:** leads stay model-written, with key lock; motifs/leads in O3 on request only.
-- Q-P4. Octave-pump retrigger on one audio track? **Default:** octave-pump is the default bass only in classic house. **HW** (O-3).
+- Q-P1. `phrase` on `write_part`, or a separate tool? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): `write_part(phrase)`.
+- Q-P2. Does a phrase replace the genre's bass line by default? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): yes; a phrase replaces that track's line. Each genre has a default bass.
+- Q-P3. A seeded `melody.motif`, or keep leads hand-written? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): leads stay model-written, with key lock; motifs/leads in O3 on request only.
+- Q-P4. Octave-pump retrigger on one audio track? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): octave-pump is the default bass only in classic house. **HW** (O-3).
 
 **Arrangement**
-- Q-A1. Energy moving the music filter: opt-in? **Default:** opt-in, except progressive and melodic-techno forms, which default it on.
-- Q-A2. A move during an arrangement: replace (undoable), queue, or refuse? **Default:** replace from the next bar; `whiplash_undo` restores it.
-- Q-A3. Breakdown: close the bass filter, or drop the bass? **Default:** per genre (§6.2).
-- Q-A4. `then: "continue"` as the default for moves, `stop` for forms? **Default:** yes; warn, do not refuse, if a section is not a multiple of 8 bars.
+- Q-A1. Energy moving the music filter: opt-in? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): opt-in, except progressive and melodic-techno forms, which default it on.
+- Q-A2. A move during an arrangement: replace (undoable), queue, or refuse? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): replace from the next bar; `whiplash_undo` restores it.
+- Q-A3. Breakdown: close the bass filter, or drop the bass? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): per genre (§6.2).
+- Q-A4. `then: "continue"` as the default for moves, `stop` for forms? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): yes; warn, do not refuse, if a section is not a multiple of 8 bars.
 
 **Taste**
-- Q-T1. Feedback only, or an opt-in autopilot later? **Default:** feedback only in v0.9; autopilot is later (§11).
-- Q-T2. 16 bars for deep house and 32 for techno as "repetitive"? **Default:** tech house 8; tropical, progressive and melodic 16; deep house and house 32; techno and minimal 64.
-- Q-T3. Should `taste_hint` ride on tool results? **Default:** one line, only when a threshold first fires; full review via `status(review)`.
-- Q-T4. Do the user's knob moves count as change? **Default:** yes, and ramps too.
+- Q-T1. Feedback only, or an opt-in autopilot later? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): feedback only in v0.9; autopilot is later (§11).
+- Q-T2. 16 bars for deep house and 32 for techno as "repetitive"? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): tech house 8; tropical, progressive and melodic 16; deep house and house 32; techno and minimal 64.
+- Q-T3. Should `taste_hint` ride on tool results? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): one line, only when a threshold first fires; full review via `status(review)`.
+- Q-T4. Do the user's knob moves count as change? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): yes, and ramps too.
 
 **Aliases**
-- Q-alias-house. Keep bare "house" meaning deep house in v0.9? **Default:** yes (unchanged). Remapping the bare word is a later, explicit decision (§11).
-- Q-alias-chicago. How should classic/Chicago house be named? **Default:** `"classic house"`, `"chicago"` and `"chicago house"` resolve to the new `house` genre.
-- Q-alias-peak-time. Keep the mood "peak time" as tech house, or move it to techno? **Default:** it now means techno; the changelog must note the change.
-- Q-alias-peak-time-tech-house. How is the old meaning kept? **Default:** `"peak time tech house"` still means tech house.
-- Q-alias-minimal. Bare "minimal" = which preset? **Default:** `minimal.house`.
+- Q-alias-house. Keep bare "house" meaning deep house in v0.9? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): yes (unchanged). Remapping the bare word is a later, explicit decision (§11).
+- Q-alias-chicago. How should classic/Chicago house be named? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): `"classic house"`, `"chicago"` and `"chicago house"` resolve to the new `house` genre.
+- Q-alias-peak-time. Keep the mood "peak time" as tech house, or move it to techno? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): it now means techno; the changelog must note the change.
+- Q-alias-peak-time-tech-house. How is the old meaning kept? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): `"peak time tech house"` still means tech house.
+- Q-alias-minimal. Bare "minimal" = which preset? **Confirmed 2026-11-19** (at the default; Phil may revisit it in a later detailed review): `minimal.house`.
 
 ### 10.2 Decision tables
 
@@ -1043,37 +1045,37 @@ One line per question, with the default the spec uses. Phil can confirm or chang
 
 | Q | Decision | Rationale | Source |
 | --- | --- | --- | --- |
-| Q-G1 | Descriptive names; letter aliases only for today's patterns (`deephouse.classic` = `deephouse.A`, identical to today). | Demo-safe, and names describe themselves. | Phil default |
-| Q-G2 | Microtiming on by default in every non-classic groove, per genre (deep house clap +0.5 to +1 tick, about 10-20 ms at 122; Chicago jacked clap; tech house hats −0.25). `humanize: 0` leaves the table. | Late claps and pushes are the groove, not flavour. **HW:** audible above USB jitter (HW O-1). | Research §1 SONAA, §2 Attack, §3 Mix Elite |
-| Q-G3 | Energy is `mutate(action: "energy")` while playing and a section key in forms. No separate perform verb. | One verb per job. | Usability |
-| Q-G4 | Ghosts default to `GHOST_VEL` 28-40, raised to 40-55 in one place if inaudible. | Ghosts are mandatory in house-family grooves. **HW:** VELOCITY TO VOL (HW O-2). | Research §2, §3, §6 |
+| Q-G1 | **Confirmed 2026-11-19.** Descriptive names; letter aliases only for today's patterns (`deephouse.classic` = `deephouse.A`, identical to today). | Demo-safe, and names describe themselves. | Phil default |
+| Q-G2 | **Confirmed 2026-11-19.** Microtiming on by default in every non-classic groove, per genre (deep house clap +0.5 to +1 tick, about 10-20 ms at 122; Chicago jacked clap; tech house hats −0.25). `humanize: 0` leaves the table. | Late claps and pushes are the groove, not flavour. **HW:** audible above USB jitter (HW O-1). | Research §1 SONAA, §2 Attack, §3 Mix Elite |
+| Q-G3 | **Confirmed 2026-11-19.** Energy is `mutate(action: "energy")` while playing and a section key in forms. No separate perform verb. | One verb per job. | Usability |
+| Q-G4 | **Confirmed 2026-11-19.** Ghosts default to `GHOST_VEL` 28-40, raised to 40-55 in one place if inaudible. | Ghosts are mandatory in house-family grooves. **HW:** VELOCITY TO VOL (HW O-2). | Research §2, §3, §6 |
 
 **Phrases:**
 
 | Q | Decision | Rationale | Source |
 | --- | --- | --- | --- |
-| Q-P1 | `phrase` on `write_part`. | Fewer tools; routing, undo and stop already work. | Phil default |
-| Q-P2 | A phrase on the bass track replaces the genre bass ("written parts win"). Each genre has a default bass phrase, so the right line appears without being asked. | Consistent with today. | Usability |
-| Q-P3 | Leads stay model-written with key lock. Seeded `melody.motif`, `lead.stutter` and `lead.pentatonic_hook` arrive in O3, on request only. | Genre traits, without becoming defaults. | Research §7, §8 |
-| Q-P4 | The octave pump is the default bass only for classic house. Deep house `bass.rolling_deep`, tech house `bass.bouncy`, techno `bass.offbeat`, and the O3 genres as in §5.2.1. | A Chicago signature, not universal. **HW:** clean retrigger on one audio track (HW O-3). | Research §2 SONAA |
+| Q-P1 | **Confirmed 2026-11-19.** `phrase` on `write_part`. | Fewer tools; routing, undo and stop already work. | Phil default |
+| Q-P2 | **Confirmed 2026-11-19.** A phrase on the bass track replaces the genre bass ("written parts win"). Each genre has a default bass phrase, so the right line appears without being asked. | Consistent with today. | Usability |
+| Q-P3 | **Confirmed 2026-11-19.** Leads stay model-written with key lock. Seeded `melody.motif`, `lead.stutter` and `lead.pentatonic_hook` arrive in O3, on request only. | Genre traits, without becoming defaults. | Research §7, §8 |
+| Q-P4 | **Confirmed 2026-11-19.** The octave pump is the default bass only for classic house. Deep house `bass.rolling_deep`, tech house `bass.bouncy`, techno `bass.offbeat`, and the O3 genres as in §5.2.1. | A Chicago signature, not universal. **HW:** clean retrigger on one audio track (HW O-3). | Research §2 SONAA |
 
 **Arrangement:**
 
 | Q | Decision | Rationale | Source |
 | --- | --- | --- | --- |
-| Q-A1 | Energy moves the filter only when opted in; forms default it on only for progressive house and melodic techno. | Filter is the performance there; layers elsewhere; the cutoff stays changed until the kit reloads. | Research §4, §8, cross-cutting |
-| Q-A2 | A move during an arrangement replaces it from the next bar; `whiplash_undo` restores it; the result names what it replaced. | "Drop it now" means now. | Usability |
-| Q-A3 | Breakdown style per genre (§6.2): deep, progressive and melodic take kick and bass out; techno drops the kick; tech house filters the low end; tropical reduces drums and keeps the hook; minimal subtracts one element. | One default is wrong for most genres. | Research cross-cutting, §3, §5, §7 |
-| Q-A4 | Moves default to `then: "continue"`; forms to `stop`. Forms warn, not refuse, on a section that isn't a multiple of 8 bars. | Backward compatible; DJs count in 8, 16 and 32. | Research shared norms |
+| Q-A1 | **Confirmed 2026-11-19.** Energy moves the filter only when opted in; forms default it on only for progressive house and melodic techno. | Filter is the performance there; layers elsewhere; the cutoff stays changed until the kit reloads. | Research §4, §8, cross-cutting |
+| Q-A2 | **Confirmed 2026-11-19.** A move during an arrangement replaces it from the next bar; `whiplash_undo` restores it; the result names what it replaced. | "Drop it now" means now. | Usability |
+| Q-A3 | **Confirmed 2026-11-19.** Breakdown style per genre (§6.2): deep, progressive and melodic take kick and bass out; techno drops the kick; tech house filters the low end; tropical reduces drums and keeps the hook; minimal subtracts one element. | One default is wrong for most genres. | Research cross-cutting, §3, §5, §7 |
+| Q-A4 | **Confirmed 2026-11-19.** Moves default to `then: "continue"`; forms to `stop`. Forms warn, not refuse, on a section that isn't a multiple of 8 bars. | Backward compatible; DJs count in 8, 16 and 32. | Research shared norms |
 
 **Taste:**
 
 | Q | Decision | Rationale | Source |
 | --- | --- | --- | --- |
-| Q-T1 | Feedback only in v0.9; an opt-in autopilot later. | | Phil default |
-| Q-T2 | Per-genre thresholds (§7.2): tech house 8; tropical 16; progressive and melodic 16; deep house and house 32; techno and minimal 64. Busy-drum caps: minimal 4; deep, house, progressive, tropical 5; techno and melodic 6; tech house 7. | "Repetitive" is genre-relative. | Research §1-8 |
-| Q-T3 | `taste_hint` on tool results, one line, only when a threshold newly fires. Full review via `status(review)`. | Weak models don't ask unprompted. | Usability |
-| Q-T4 | User knob moves and ramps count as change. | Automation is the arrangement in minimal and progressive; don't nag a performer. | Research §4, §6 |
+| Q-T1 | **Confirmed 2026-11-19.** Feedback only in v0.9; an opt-in autopilot later. | | Phil default |
+| Q-T2 | **Confirmed 2026-11-19.** Per-genre thresholds (§7.2): tech house 8; tropical 16; progressive and melodic 16; deep house and house 32; techno and minimal 64. Busy-drum caps: minimal 4; deep, house, progressive, tropical 5; techno and melodic 6; tech house 7. | "Repetitive" is genre-relative. | Research §1-8 |
+| Q-T3 | **Confirmed 2026-11-19.** `taste_hint` on tool results, one line, only when a threshold newly fires. Full review via `status(review)`. | Weak models don't ask unprompted. | Usability |
+| Q-T4 | **Confirmed 2026-11-19.** User knob moves and ramps count as change. | Automation is the arrangement in minimal and progressive; don't nag a performer. | Research §4, §6 |
 
 ## 11. Later, not v0.9
 
