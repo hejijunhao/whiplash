@@ -42,6 +42,34 @@ Changed
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
 
+## 0.9.1
+
+Ontology v1, O2: harmony intents and keys ([docs/executing/ontology-o2-build-plan.md](docs/executing/ontology-o2-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §9). Say "darker", "more tension" or "change key to F minor", and the plugin does the theory from the next bar line. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks (O10-O13).
+
+Added
+- **`whiplash_set_progression(intent: "darker" | "brighter", how)`.** `how` is a menu (Q-H3), one option or a list; with none, `harmonic`:
+  - `harmonic`: a library progression swaps to the same genre's next darker (brighter) entry by `brightness`, ties to the most shared tags (`deephouse.gospel` → `deephouse.one_chord`). Otherwise, or at the genre's floor, the key steps one rung along the mode ladder lydian → major → mixolydian → dorian → minor → phrygian, and every chord moves degree by degree (A minor → A phrygian: G7 becomes Gm7, Am9 becomes Am7b9). Phrygian is the floor and lydian the ceiling; locrian is never chosen. At the floor `darker` changes nothing and says so.
+  - `timbral`: `filter_freq` (CC 74) one step of 16 on the melodic tracks playing (bass, lead, chord, pad, stab), never below 24, at the next bar line. Drum, cymbal and fx channels are never sent anything. `brighter` reopens by the same step and never past each track's value before the first `darker`. Whiplash never guesses a cutoff: a track whose `filter_freq` it never sent is skipped and named, and with none known the call is refused with the fix.
+  - `register`: thins the highs (the top voice of each chord of three or more notes) and drops each lead track an octave, never below note 41; `brighter` restores exactly that.
+  - Results name what was done and what was left: `{"intent": "darker", "applied": ["harmonic"], "did": "A minor -> A phrygian", "chords": [...], "other_options": ["timbral", "register"], "lands_at_bar": n}`.
+- **`intent: "tension"`**, one step per call: the loop's last chord becomes the key's dominant 7th (E7 in A minor, as harmonic minor gives it), then a dominant 9th, then the bass holds a tonic pedal. A one-chord loop becomes three bars of it and the dominant on the fourth; with no progression, a tonic vamp with a dominant turnaround. **`intent: "release"`** brings back the exact progression (or none) from before the first `tension`, pedal off; with nothing to release: "no tension to release; the progression is unchanged".
+- **Key-only `set_progression(key, scale)`:** with no `chords`, `name` or `intent`, the key alone changes from the next bar (it used to error "give chords"). The pattern's melodic lines move into it, a Roman-numeral or library progression is re-read and re-voiced in the new key, a chord-name progression shifts by the same interval (and by degree for a new scale), and phrases follow. `scale` alone keeps the root. Result: `{key, from, lands_at_bar, progression, lock}`; "already in A minor" when nothing would change.
+- **`set_progression(lock: true | false)`:** key lock on or off for the session (it survives `whiplash_stop`, like the kit map). Combines with any call, or stands alone. Every `set_progression` result carries `lock`.
+- **Track mode `pedal`:** the key's tonic under every chord, each hit in its own octave (a bass bounce keeps its bounce). `tension` turns it on for the bass; `set_progression(tracks: {"6": "pedal"})` asks for it.
+- **`whiplash_write_part(follow: true | "root" | "chords" | "pedal")`:** a written melodic part follows the progression like a generated line (`true` = `snap`), and the key when none plays. Refused on drum, cymbal and fx tracks, with a lane, with `out_of_key`, and as `follow: false` on a phrase (a phrase always follows).
+- **`whiplash_undo`** reverts intents and key changes on the next bar: key, progression, tension, the lead transposes and the `filter_freq` values sent before the step.
+- **Status:** `key_lock`, `harmony_pending` (an intent or key change waiting for its bar), and in `progression`: `tension`, `pedal`, `thinned`.
+- **Tests:** `tests/test_v091.py` (the ladder and degree moves over every library progression in all keys, the library swap, dominants and `pedal`; every intent and `how` on the engine with undo; key-only changes with and without a progression, phrases and drums; lock and follow; refusals that change nothing; equivalence without O2 arguments; a bar-line cost check).
+- **Docs:** checklist Part O (O10-O13), reference §15.1 #40 and §15.3 Q40-43 (all open), the skill's intents and keys, README, roadmap.
+
+Changed
+- **Church-mode keys spell their accidentals from the parent major** (A phrygian as F major, so B♭ not A♯). Names only; major and minor keys are unchanged.
+- An intent or key change lands through one pending slot at the next bar line (`Engine._harmony_next`, the same shape as O1a's energy change), so two calls in one bar compose; a plain `set_progression(chords | name | clear)` replaces a pending one and says so (`replaced_pending`).
+- Version 0.9.1. Tool-description caps: tools 4,300 characters (was 4,250), params 10,150 (was 10,000), JSON 23,950 bytes (was 23,600); 26 tools.
+
+Unchanged (demo-safe)
+- Every call without an O2 argument plays as before: `set_progression(chords | name)`, the hand-written genres and classic house give the same `bar_events` (tested). The written part's `progression` note now also mentions `follow`.
+
 ## 0.9.0
 
 Ontology v1, part 1 of 2 (O1a: library, harmony, grooves; [docs/executing/ontology-o1a-build-plan.md](docs/executing/ontology-o1a-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §9). Tools take musical names and intent, and the plugin does the theory and the timing from in-repo tables. Four genres end to end: deep house, classic/Chicago house, tech house and techno. Part 2 (O1b: phrases and taste; [docs/executing/ontology-o1b-build-plan.md](docs/executing/ontology-o1b-build-plan.md)) completes v0.9.0: bass and stab lines that follow the chords, and feedback on what changed and what's gone stale. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks.

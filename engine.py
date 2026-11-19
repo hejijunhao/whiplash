@@ -250,6 +250,59 @@ def check_key(key, scale=None):
         raise WhiplashError(str(exc)) from None
 
 
+INTENT_WORDS = tuple(progressions.INTENTS)
+TIMBRAL_STEP, TIMBRAL_FLOOR = 16, 24  # v0.9.1 how: "timbral": one filter_freq step, never closed below the floor
+KEY_LOCK_ON = ("explicit melodic notes written with whiplash_write_part snap into the key playing (drums never do); "
+               "out_of_key: true keeps a deliberate chromatic note")
+KEY_LOCK_OFF = "explicit melodic notes play as written, in key or not, until lock: true"
+
+
+def check_intent(intent):
+    """set_progression intent -> darker | brighter | tension | release, or None."""
+    if intent in (None, ""):
+        return None
+    word = str(intent).strip().lower() if isinstance(intent, str) else None
+    if word not in INTENT_WORDS:
+        raise WhiplashError(f"intent must be one of {', '.join(INTENT_WORDS)}, got {intent!r}")
+    return word
+
+
+def check_how(how, intent):
+    """set_progression how -> a tuple of harmonic / timbral / register (default harmonic), for darker/brighter."""
+    if how in (None, "", []):
+        return ("harmonic",) if intent in ("darker", "brighter") else ()
+    if intent not in ("darker", "brighter"):
+        raise WhiplashError("how is for darker or brighter" + (f", not {intent}" if intent else
+                                                               " (give intent: 'darker' or 'brighter')"))
+    items = [how] if isinstance(how, str) else how if isinstance(how, (list, tuple)) else None
+    if not items:
+        raise WhiplashError(f"how must be one of {', '.join(progressions.HOWS)} or a list of them, got {how!r}")
+    out = []
+    for item in items:
+        word = item.strip().lower() if isinstance(item, str) else None
+        if word not in progressions.HOWS:
+            raise WhiplashError(f"how must be one of {', '.join(progressions.HOWS)} or a list of them, got {item!r}")
+        if word not in out:
+            out.append(word)
+    return tuple(sorted(out, key=progressions.HOWS.index))
+
+
+def check_follow(value):
+    """write_part follow -> a harmony mode (true = snap), or None (false / not given)."""
+    if value in (None, "", False):
+        return None
+    if value is True:
+        return "snap"
+    word = value.strip().lower() if isinstance(value, str) else None
+    if word in ("true", "yes", "1"):
+        return "snap"
+    if word in ("false", "no", "0"):
+        return None
+    if word not in harmony.FOLLOW_MODES:
+        raise WhiplashError(f"follow must be true or one of {', '.join(harmony.FOLLOW_MODES)}, got {value!r}")
+    return word
+
+
 def check_setup(tracks):
     """play_pattern's tracks: {"6": {"slot": 9, "tune": 64, "transpose": -12, "mute": false}} -> {6: {...}}.
 
@@ -468,6 +521,16 @@ class Engine:
         self.bar_digest = collections.deque(maxlen=taste.DIGEST_BARS)
         self.changes = collections.deque(maxlen=taste.DIGEST_BARS)
         self._taste_fired = set()  # hint ids carried by the last musical tool result (taste_hint fires once)
+        # v0.9.1 (ontology O2) intents and keys. key_lock: the session's key lock (set_progression(lock)); like the kit
+        # map it survives stop. _harmony_next: an intent, key change or its undo, prepared in the tool thread and
+        # landing at its bar (assignments, at most one filter_freq CC per melodic track, the relabel rebuild).
+        # _tension: {"level", "before"} while tension is on. _register: {"leads": {track: semitones}} after a register
+        # darker. _timbral_base: track -> filter_freq before the first timbral darker (brighter never opens past it).
+        self.key_lock = True
+        self._harmony_next = None
+        self._tension = None
+        self._register = None
+        self._timbral_base = {}
 
     # ---- port handling -------------------------------------------------
     def ensure_port(self, port=None, allow_virtual=True):
@@ -518,6 +581,7 @@ class Engine:
                 log.exception("closing port")
         self._port, self.port_name, self.virtual, self.fallback = None, None, False, False
         self._cc_values.clear()  # values sent to one device say nothing about the next
+        self._timbral_base = {}
 
     def check_hotplug(self):
         """While on the virtual port, return a Digitakt output that has appeared, else None.
@@ -758,11 +822,18 @@ class Engine:
         """Recompute which tracks follow the progression and how (caller holds _lock)."""
         self._prog_full = frozenset()
         if self._prog is None:  # v0.9.0 O1b: phrase lines still follow (the genre's or the key's fallback)
-            self._prog_modes, self._prog_ranks = harmony.phrase_modes(self._work)
+            self._prog_modes, self._prog_ranks = harmony.phrase_modes(self._work, self._written())
             self._prog_pads = frozenset()
             return
         self._prog_modes, self._prog_ranks, self._prog_pads = harmony.modes(
-            self.pattern, self._kit_tracks, self._prog.overrides, set(self._parts), self._work)
+            self.pattern, self._kit_tracks, self._prog.overrides, self._written(), self._work)
+        if self._prog.pedal:  # v0.9.1 tension: bass tracks hold the key's tonic (phrase bass lines too)
+            for track, mode in list(self._prog_modes.items()):
+                if track in self._prog.overrides:
+                    continue
+                if mode == "root" or (mode == harmony.PHRASE and
+                                      harmony.role_of(track, self.pattern, self._kit_tracks) == "bass"):
+                    self._prog_modes[track] = harmony.PEDAL
         if self._prog.colours:  # v0.9.0 shell voicing: pad tracks carry the colour tones, ranked among themselves
             self._prog_full, self._prog_ranks = harmony.colour_ranks(self._prog_modes, self._prog_ranks, self.pattern,
                                                                      self._kit_tracks)
@@ -827,6 +898,7 @@ class Engine:
                     self._transpose = {}
                     self._parts = {}
                     self._key, self._prog = None, None
+                    self._harmony_next, self._tension, self._register = None, None, None
                     self._arr, self._arr_muted = None, set()
                     self._follow, self._undo = None, []  # v0.8.0: follow ends with the beat; nothing left to undo
                     self._phrase.clear()
@@ -934,6 +1006,11 @@ class Engine:
             self._raw_pattern, self._groove = nxt["pattern"], nxt["groove"]
             self._kit_dirty = True
             self._mark("energy", nxt["groove"]["energy"], at)
+        h = self._harmony_next
+        if h is not None and bar_n >= h["at"]:  # v0.9.1: an intent or key change, prepared in the tool thread
+            self._harmony_next = None
+            self._land_harmony(h)
+            self._mark("harmony", h["what"], at)
         if self._kit_dirty:
             self._reroute()
         if self.bars_total and bar_n - self.pattern_start >= self.bars_total:
@@ -991,7 +1068,8 @@ class Engine:
                 hits = harmony.apply(self._prog_modes[track], hits, notes, chord_root, prog.key,
                                      self._prog_ranks.get(track, 0), chord, nxt_root)
             elif fb is not None and track in self._prog_modes:
-                hits = harmony.apply(harmony.PHRASE, hits, fb_notes, fb_chord.root, fb.key,
+                hits = harmony.apply(self._prog_modes[track] if self._prog is None else harmony.PHRASE, hits, fb_notes,
+                                     fb_chord.root, fb.key,
                                      self._prog_ranks.get(track, 0), fb_chord, fb_nxt)
             shift = self._transpose.get(track, 0)
             for step, note, vel, gate, offset in hits:
@@ -1012,13 +1090,14 @@ class Engine:
         self.bar_digest.append((bar_n, at, events, section, chord_name, frozenset(self.muted), bool(self._ramps)))
         return events
 
-    def _reroute(self):
+    def _reroute(self, routed=None):
         """Labels changed while playing (caller holds _lock): route the same pattern onto the new map.
 
-        Unlike a switch this keeps swing, humanize and per-track density.
+        Unlike a switch this keeps swing, humanize and per-track density. routed: the pattern already routed in the
+        session key, prepared in the tool thread (v0.9.1 key changes); None routes it here.
         """
         old = set(self._work)
-        self.pattern = self._routed(self._raw_pattern)
+        self.pattern = routed if routed is not None else self._routed(self._raw_pattern)
         moves = self._plan(self._raw_pattern)["moves"]
         self._carry_track_state(self._remap(self._moves, moves))
         self._moves = moves
@@ -1911,13 +1990,15 @@ class Engine:
         would stop the beat)."""
         with self._lock:
             if not self._undo:
-                raise WhiplashError("nothing to undo: whiplash_undo reverts the last written part, mix or "
-                                    "arrangement change since the beat started")
+                raise WhiplashError("nothing to undo: whiplash_undo reverts the last written part, mix, arrangement, "
+                                    "intent or key change since the beat started")
             entry = self._undo[-1]
             playing = self.playing()
             at = self.bar + 1
             if entry["kind"] != "mix" and not playing:
                 raise WhiplashError("nothing is playing: parts and arrangements only exist while a beat plays")
+            if entry["kind"] == "harmony":  # v0.9.1: an intent or key change; restored through the same pending slot
+                return self._undo_harmony(entry, out_base={"undone": entry["what"], "kind": "harmony"})
             if entry["kind"] == "arrangement" and entry["prev"] is not None:
                 arr = entry["prev"][0]
                 if not arr["loop"] and at - arr["start"] >= arr["total"]:
@@ -1955,6 +2036,35 @@ class Engine:
                 out["back_to"] = (f"the {entry['prev'][0]['name']} arrangement, in the section bar {at} falls in"
                                   if entry["prev"] is not None else "no arrangement (its mutes are lifted)")
             return out
+
+    def _undo_harmony(self, entry, out_base):
+        """whiplash_undo for an intent or key change (caller holds _lock): key, progression, tension, register, the
+        lead transposes and the filter_freq values from before it, on the next bar line."""
+        prev = entry["prev"]
+        before = self._harmony_state()
+        after = {**before, "key": prev["key"], "eff": prev["eff"], "prog": prev["prog"], "tension": prev["tension"],
+                 "register": prev["register"], "timbral_base": dict(prev["timbral_base"]),
+                 "transpose": dict(before["transpose"]), "cc": dict(before["cc"])}
+        for t in prev["transpose_tracks"]:
+            after["transpose"][t] = prev["transpose"].get(t, 0)
+        for t in prev["cc_tracks"]:
+            if prev["cc"].get(t) is not None:
+                after["cc"][t] = prev["cc"][t]
+        raw = self._raw_pattern
+        routed = None
+        if raw is not None and prev["eff"] != self.effective_key():
+            self._warm_fallback(raw, prev["eff"])
+            routed = self._routed(raw, prev["key"] or harmony.key_of(raw.key))
+        self._undo.pop()
+        at = self._schedule_harmony(before, after, f"undo {entry['what']}", raw, routed, undo=False)
+        out = {**out_base, "can_still_undo": [e["what"] for e in reversed(self._undo)][:3], "applies": "next bar",
+               "at_bar": at, "back_to": {"key": prev["eff"].name,
+                                         "chords": [c.name for c in prev["prog"].chords] if prev["prog"] else None}}
+        if prev["cc_tracks"]:
+            out["back_to"]["filter_freq"] = {str(t): prev["cc"].get(t) for t in prev["cc_tracks"]}
+        if prev["transpose_tracks"]:
+            out["back_to"]["transpose"] = {str(t): prev["transpose"].get(t, 0) for t in prev["transpose_tracks"]}
+        return out
 
     def _apply_undo(self, entry, bar_n):
         """Restore a part or an arrangement on bar_n's line (sequencer, caller holds _lock, from _run_timed)."""
@@ -2524,7 +2634,7 @@ class Engine:
 
     def write_part(self, track, rhythm=None, grid=None, steps=None, hits=None, lock_to=None, notes=None, key=None,
                    scale=None, length=None, velocity=None, bars=None, reset=False, envelope=None, groove=None,
-                   out_of_key=False, phrase=None, density=None, seed=None, register=None):
+                   out_of_key=False, phrase=None, density=None, seed=None, register=None, follow=None):
         """Write a track's line from the next bar line: where the hits go, and what notes they play.
 
         Exactly one of rhythm / grid / steps / hits / lock_to places the hits. lock_to (and rhythm
@@ -2533,17 +2643,21 @@ class Engine:
         density and humanize still apply; it carries across pattern switches and whiplash_mutate reset,
         and reset: true or whiplash_stop clears it. Everything is validated before anything changes.
         envelope 'note' sends one CC 80 = 127 (HOLD = NOTE) on the track, only when asked.
+        follow (v0.9.1): true (snap) or a mode makes a written melodic part follow the progression and the key.
         """
         track = check_track(track)
         reset = check_flag(reset, "reset")
         envelope = check_envelope(envelope)
         out_of_key = check_flag(out_of_key, "out_of_key")
+        follow_given = follow not in (None, "")
+        follow = check_follow(follow)
         if reset:
             extra = [k for k, v in (("rhythm", rhythm), ("grid", grid), ("steps", steps), ("hits", hits),
                                     ("lock_to", lock_to), ("notes", notes), ("key", key), ("scale", scale),
                                     ("length", length), ("velocity", velocity), ("bars", bars),
                                     ("envelope", envelope), ("groove", groove), ("phrase", phrase),
-                                    ("density", density), ("seed", seed), ("register", register))
+                                    ("density", density), ("seed", seed), ("register", register),
+                                    ("follow", follow))
                      if v not in (None, "", [])]
             if extra:
                 raise WhiplashError(f"reset: true takes only track (got {', '.join(extra)})")
@@ -2568,12 +2682,18 @@ class Engine:
                                     f"playing: drop {', '.join(others)}")
             if out_of_key:
                 raise WhiplashError("a phrase's notes come from the chords, so they are always in key: drop out_of_key")
+            if follow_given and follow is None:
+                raise WhiplashError("a phrase always follows the chords; for a fixed line write notes (rhythm + notes)")
             return self._write_phrase(track, phrase, density, seed, register, envelope)
         loose = [k for k, v in (("density", density), ("seed", seed), ("register", register)) if v not in (None, "")]
         if loose:
             raise WhiplashError(f"{', '.join(loose)} go(es) with phrase, e.g. phrase: 'bass.octave_pump'")
+        if follow is not None and out_of_key:
+            raise WhiplashError("follow snaps the part to the chords and the key; drop out_of_key, or follow")
         lane = None
         if groove not in (None, ""):  # v0.9.0: a named lane is a sixth placement
+            if follow is not None:
+                raise WhiplashError("follow is for melodic parts; a lane is a drum part and never follows the chords")
             others = [k for k, v in (("rhythm", rhythm), ("grid", grid), ("steps", steps), ("hits", hits),
                                      ("lock_to", lock_to), ("length", length), ("velocity", velocity),
                                      ("bars", bars)) if v not in (None, "", [])]
@@ -2595,6 +2715,12 @@ class Engine:
                 self._require_playing()
                 source_bars = self._base(source) if source else None
                 role = harmony.role_of(track, self.pattern, self._kit_tracks)
+                if follow is not None and role in harmony.NEVER:
+                    label = self._kit_tracks.get(track)
+                    what = f"is labelled {label[1]}" if label else f"plays the {role}"
+                    raise WhiplashError(f"track {track} {what}: follow is for melodic parts; drums never follow the "
+                                        "chords or the key")
+                raw_now, key_now = self._raw_pattern, self.effective_key()
                 own_key = key not in (None, "") and not (isinstance(key, str) and key.strip().lower() in CURRENT_KEY)
                 lock_key = self.lock_key() if role in kitmap.MELODIC and not (out_of_key or own_key) else None
                 if isinstance(key, str) and key.strip().lower() in CURRENT_KEY:
@@ -2609,6 +2735,9 @@ class Engine:
                                velocity=velocity, bars=bars, source_bars=source_bars, lock=lock)
         except parts.PartError as exc:
             raise WhiplashError(str(exc)) from None
+        if follow is not None:  # v0.9.1: follows like a generated line; with no progression, the key's fallback
+            part = replace(part, follow=follow)
+            self._warm_fallback(raw_now, key_now)
         sent = None
         if envelope == "note":  # opt-in, after validation: exactly one CC 80 = 127 on this track
             self.ensure_port()
@@ -2640,6 +2769,11 @@ class Engine:
                 out["key_lock"] = "off for this part (out_of_key)"
             elif own_key and role in kitmap.MELODIC:
                 out["key_lock"] = f"off: the part is written in its own key ({part.key}); key: 'current' locks it"
+            elif not self.key_lock and role in kitmap.MELODIC:
+                out["key_lock"] = "off for the session (set_progression lock: true turns it back on)"
+            if follow is not None:
+                out["follow"] = follow
+                out["follows"] = "progression" if self._prog is not None else "key"
             hidden = self._hidden_by(track)
             if hidden:
                 out["replaces_generated"] = hidden
@@ -2658,9 +2792,9 @@ class Engine:
                 out["density"] = self._density[track]
             if self._prog is not None:
                 mode = self._prog_modes.get(track)
-                out["progression"] = (f"follows the progression ({mode}): named in whiplash_set_progression tracks"
-                                      if mode else "plays as written; the progression doesn't change it (name the "
-                                      "track in whiplash_set_progression tracks to make it follow)")
+                out["progression"] = (f"follows the progression ({mode})" if mode else
+                                      "plays as written; the progression doesn't change it (follow: true, or name "
+                                      "the track in whiplash_set_progression tracks, makes it follow)")
             if self._queued:
                 out["carries_into"] = (f"the queued switch to {self._queued['pattern'].name} at bar "
                                        f"{self._queued['at']}")
@@ -2787,6 +2921,8 @@ class Engine:
     def lock_key(self):
         """The key explicit melodic notes snap to (caller holds _lock): the progression's while one plays, else
         the session key, else the pattern's home key. None with nothing set (v0.9.0 key lock, Q-H2)."""
+        if not self.key_lock:  # v0.9.1: set_progression(lock: false) turns it off for the session
+            return None
         if self._prog is not None:
             return self._prog.key
         return self.effective_key()
@@ -2839,7 +2975,7 @@ class Engine:
 
     # ---- keys and progressions ----------------------------------------
     def set_progression(self, chords=None, bars_per_chord=None, voicing=None, key=None, scale=None, tracks=None,
-                        clear=False, name=None):
+                        clear=False, name=None, intent=None, how=None, lock=None):
         """Play a chord progression from the next bar line: chord tracks voice it, bass follows the roots.
 
         chords are Roman numerals in the key ("i VI III VII") or names ("Am F C G"). The key is the one given,
@@ -2847,26 +2983,59 @@ class Engine:
         Each chord lasts bars_per_chord bars and the progression loops. Roles pick each track's mode
         (harmony.modes); tracks overrides them, but never on a drum, cymbal or fx track. It carries across
         pattern switches; clear: true or whiplash_stop ends it. Validated before anything changes.
+
+        v0.9.1 (ontology O2): intent (darker, brighter, tension, release; how for darker/brighter) changes what
+        plays by musical intent (_intent); key and/or scale with no chords, name or intent change the key alone
+        (_key_change); lock turns key lock on or off for the session and combines with any call.
         """
         clear = check_flag(clear, "clear")
+        lock = None if lock in (None, "") else check_flag(lock, "lock")
+        intent = check_intent(intent)
+        hows = check_how(how, intent)
+        given = {k: v for k, v in (("chords", chords), ("bars_per_chord", bars_per_chord), ("voicing", voicing),
+                                   ("key", key), ("scale", scale), ("tracks", tracks), ("name", name),
+                                   ("intent", intent)) if v not in (None, "", [], {})}
         if clear:
-            extra = [k for k, v in (("chords", chords), ("bars_per_chord", bars_per_chord), ("voicing", voicing),
-                                    ("key", key), ("scale", scale), ("tracks", tracks), ("name", name))
-                     if v not in (None, "", [], {})]
-            if extra:
-                raise WhiplashError(f"clear: true takes nothing else (got {', '.join(extra)})")
+            if given:
+                raise WhiplashError(f"clear: true takes nothing else (got {', '.join(given)})")
             with self._lock:
                 self._require_playing()
                 had = self._prog
                 self._prog = None
+                replaced = self._forget_harmony()
                 self._refresh_harmony()
-                return {"cleared": had is not None, "applies": "next bar", "at_bar": self.bar + 1, "key": self.key_name()}
-        named = name not in (None, "")
-        if named and chords not in (None, "", []):
-            raise WhiplashError("give chords or name, not both (name brings its own chords)")
-        if not named and chords in (None, "", []):
-            raise WhiplashError("give chords, e.g. ['i', 'VI', 'III', 'VII'] or 'Am F C G', or a library name, e.g. "
-                                "name: 'deephouse.gospel' (or clear: true)")
+                out = {"cleared": had is not None, "applies": "next bar", "at_bar": self.bar + 1,
+                       "key": self.key_name()}
+                if replaced:
+                    out["replaced_pending"] = replaced
+            return self._with_lock(out, lock)
+        exclusive = [k for k in ("chords", "name", "intent") if k in given]
+        if len(exclusive) > 1:
+            if exclusive[:2] == ["chords", "name"]:
+                raise WhiplashError("give chords or name, not both (name brings its own chords)")
+            raise WhiplashError(f"give one of chords, name or intent, not {' and '.join(exclusive)}")
+        if intent is not None:
+            extra = [k for k in given if k != "intent"]
+            if extra:
+                raise WhiplashError(f"intent changes what plays now; it takes only how (and lock), not "
+                                    f"{', '.join(extra)}")
+            return self._with_lock(self._intent(intent, hows), lock)
+        if "chords" not in given and "name" not in given:
+            if "key" in given or "scale" in given:  # v0.9.1: a key-only call changes the key from the next bar
+                extra = [k for k in given if k not in ("key", "scale")]
+                if extra:
+                    raise WhiplashError(f"{', '.join(extra)} go(es) with chords or name; a key change takes key and/or "
+                                        "scale only")
+                return self._with_lock(self._key_change(key, scale), lock)
+            if lock is not None:
+                with self._lock:
+                    self.key_lock = lock
+                    return {"lock": "on" if lock else "off", "key": self.key_name(),
+                            "does": (KEY_LOCK_ON if lock else KEY_LOCK_OFF)}
+            raise WhiplashError("give chords, e.g. ['i', 'VI', 'III', 'VII'] or 'Am F C G', a library name (name: "
+                                "'deephouse.gospel'), an intent (darker, brighter, tension, release), a key to change "
+                                "key, lock, or clear: true")
+        named = "name" in given
         entry = None
         if named:
             with self._lock:
@@ -2901,11 +3070,7 @@ class Engine:
             resolved = [harmony.parse_chord(sym, prog_key) for sym in symbols]
         except harmony.HarmonyError as exc:
             raise WhiplashError(str(exc)) from None
-        rule = voicing is None
-        sevenths = any(harmony.has_seventh(c.shape) for c in resolved)
-        close = harmony.voice(resolved, "close") if rule or voicing == "shell" else None
-        shell = harmony.voice(resolved, "shell") if (rule and sevenths) or voicing == "shell" else None
-        voicings = shell if voicing == "shell" else close if rule else harmony.voice(resolved, voicing)
+        voiced = self._prepare_voicings(resolved, voicing)
         routed = self._routed(raw, session_key) if raw is not None else None
         with self._lock:
             self._require_playing()
@@ -2919,32 +3084,21 @@ class Engine:
                                     "whiplash_label_tracks")
             at = self.bar + 1
             replaced = self._prog is not None
-            rule_note = None
-            if rule:  # v0.9.0 (Q-H4): shell for 7th/9th/11th chords on <= 3 one-voice chord tracks, else close
-                modes_now, ranks_now, _ = harmony.modes(routed, self._kit_tracks, overrides, set(self._parts),
-                                                        self._work)
-                count = harmony.chord_track_count(modes_now, routed, self._kit_tracks, ranks_now)
-                if sevenths and count <= 3:
-                    voicing, voicings = "shell", shell
-                    rule_note = (f"shell (root, 3rd, 7th): {count} one-voice chord track(s) voice it; pad tracks add "
-                                 "the 9th and other colour tones")
-                else:
-                    voicing, voicings = "close", close
-                    rule_note = ("close: no 7th, 9th or 11th chords" if not sevenths else
-                                 f"close: {count} chord tracks can carry the full chord")
-            colours = harmony.colours(resolved, close) if voicing == "shell" else ()
-            prog = harmony.Progression(tuple(resolved), voicings, per_chord, voicing, prog_key, at, overrides,
-                                       colours=colours, library=entry.name if entry is not None else None)
+            prog, rule_note = self._finish_prog(resolved, voiced, per_chord, prog_key, at, overrides, routed,
+                                                entry.name if entry is not None else None)
             key_changed = session_key != self.effective_key()
+            pending = self._forget_harmony()
             self._key, self._prog = session_key, prog
             if key_changed:
                 self._kit_dirty = True  # re-key the pattern at the same bar line the progression starts on
                 self.pattern = routed  # so the modes below see the routing that bar will use
             self._refresh_harmony()
             out = {"progression": harmony.describe(prog), "key": key_note or prog_key.name,
-                   "bars_per_chord": per_chord, "voicing": voicing, "loop_bars": prog.length, "applies": "next bar",
+                   "bars_per_chord": per_chord, "voicing": prog.voicing, "loop_bars": prog.length, "applies": "next bar",
                    "starts_at_bar": at, "replaced": replaced, "tracks": self._prog_summary(),
                    "polyphony_note": POLY_NOTE}
+            if pending:
+                out["replaced_pending"] = pending
             if entry is not None:
                 out["library"] = {"name": entry.name, "about": entry.about, "source": entry.source,
                                   "chords": entry.chords, "scale": entry.scale}
@@ -2965,7 +3119,441 @@ class Engine:
                 out["phrases_follow"] = following
             if self._queued:
                 out["carries_into"] = f"the queued switch to {self._queued['pattern'].name} at bar {self._queued['at']}"
+        return self._with_lock(out, lock)
+
+    # ---- v0.9.1 (ontology O2): progressions built, intents, key changes, lock ----------------------------------
+    def _written(self):
+        """{track: follow mode or None} for the written parts (caller holds _lock): harmony.modes' written."""
+        return {t: p.follow for t, p in self._parts.items()}
+
+    def _with_lock(self, out, lock):
+        """Apply set_progression's lock after the call succeeded, and report it on every result."""
+        with self._lock:
+            if lock is not None:
+                self.key_lock = lock
+            out["lock"] = "on" if self.key_lock else "off"
+        return out
+
+    @staticmethod
+    def _prepare_voicings(resolved, voicing):
+        """Tool thread: the voicings a progression may take. voicing None = the shell rule (decided in _finish_prog)."""
+        rule = voicing is None
+        sevenths = any(harmony.has_seventh(c.shape) for c in resolved)
+        close = harmony.voice(resolved, "close") if rule or voicing == "shell" else None
+        shell = harmony.voice(resolved, "shell") if (rule and sevenths) or voicing == "shell" else None
+        voicings = shell if voicing == "shell" else close if rule else harmony.voice(resolved, voicing)
+        return {"voicing": voicing, "rule": rule, "sevenths": sevenths, "close": close, "shell": shell,
+                "voicings": voicings}
+
+    def _finish_prog(self, resolved, voiced, per_chord, prog_key, at, overrides, routed, library_name, **extra):
+        """A Progression from prepared voicings (caller holds _lock): the shell rule (Q-H4) needs the tracks playing.
+        A register darker in force thins it too. -> (Progression, the rule's note or None)."""
+        voicing, voicings, rule_note = voiced["voicing"], voiced["voicings"], None
+        if voiced["rule"]:  # v0.9.0 (Q-H4): shell for 7th/9th/11th chords on <= 3 one-voice chord tracks, else close
+            modes_now, ranks_now, _ = harmony.modes(routed, self._kit_tracks, overrides, self._written(), self._work)
+            count = harmony.chord_track_count(modes_now, routed, self._kit_tracks, ranks_now)
+            if voiced["sevenths"] and count <= 3:
+                voicing, voicings = "shell", voiced["shell"]
+                rule_note = (f"shell (root, 3rd, 7th): {count} one-voice chord track(s) voice it; pad tracks add "
+                             "the 9th and other colour tones")
+            else:
+                voicing, voicings = "close", voiced["close"]
+                rule_note = ("close: no 7th, 9th or 11th chords" if not voiced["sevenths"] else
+                             f"close: {count} chord tracks can carry the full chord")
+        colours = harmony.colours(resolved, voiced["close"]) if voicing == "shell" else ()
+        thinned = ()
+        if self._register_state().get("thinned"):
+            thinned, voicings = voicings, harmony.thin(voicings)
+        prog = harmony.Progression(tuple(resolved), voicings, per_chord, voicing, prog_key, at, overrides,
+                                   colours=colours, library=library_name, thinned_from=thinned, **extra)
+        return prog, rule_note
+
+    @staticmethod
+    def _revoice(prog, chords, key=None, **changes):
+        """prog with new chords (and key), voiced the way it was (tool thread): its voicing, shell colours and
+        thinning kept, its start, bars per chord and track overrides unchanged."""
+        voicings = harmony.voice(chords, prog.voicing)
+        colours = harmony.colours(chords, harmony.voice(chords, "close")) if prog.voicing == "shell" else ()
+        thinned = ()
+        if prog.thinned_from:
+            thinned, voicings = voicings, harmony.thin(voicings)
+        return replace(prog, chords=tuple(chords), voicings=voicings, colours=colours, thinned_from=thinned,
+                       key=key or prog.key, **changes)
+
+    def _forget_harmony(self):
+        """A plain set_progression replaces a pending intent or key change and forgets tension (caller holds _lock).
+        -> what it replaced, or None."""
+        pending, self._harmony_next = self._harmony_next, None
+        self._tension = None
+        return pending["what"] if pending else None
+
+    def _register_state(self):
+        h = self._harmony_next
+        return (h["register"] if h is not None and "register" in h else self._register) or {}
+
+    def _harmony_state(self):
+        """What plays once any pending intent lands (caller holds _lock): an intent builds on the one before it."""
+        h = self._harmony_next or {}
+        key = h["key"] if "key" in h else self._key
+        eff = key or (harmony.key_of(self._raw_pattern.key) if self._raw_pattern is not None else None)
+        cc = {ch + 1: v for (ch, c), v in self._cc_values.items() if c == FILTER_CC}
+        cc.update(dict(h.get("ccs", ())))
+        transpose = dict(self._transpose)
+        transpose.update(h.get("transpose", {}))
+        return {"key": key, "eff": eff or harmony.Key(0, "major"),
+                "prog": h["prog"] if "prog" in h else self._prog,
+                "tension": h["tension"] if "tension" in h else self._tension,
+                "register": h["register"] if "register" in h else self._register,
+                "timbral_base": dict(h["timbral_base"] if "timbral_base" in h else self._timbral_base),
+                "transpose": {t: v for t, v in transpose.items() if v}, "cc": cc}
+
+    def _schedule_harmony(self, before, after, what, raw, routed, undo=True):
+        """Queue the change from state before to after for the next bar (caller holds _lock). Merges with a pending
+        one. -> the bar it lands on."""
+        h = dict(self._harmony_next or {})
+        at = self.bar + 1
+        h.update(at=at, what=what, key=after["key"], prog=after["prog"], tension=after["tension"],
+                 register=after["register"], timbral_base=after["timbral_base"])
+        changed_t = {t: after["transpose"].get(t, 0) for t in set(before["transpose"]) | set(after["transpose"])
+                     if before["transpose"].get(t, 0) != after["transpose"].get(t, 0)}
+        h["transpose"] = {**h.get("transpose", {}), **changed_t}
+        ccs = dict(h.get("ccs", ()))
+        ccs.update({t: v for t, v in after["cc"].items() if before["cc"].get(t) != v})
+        h["ccs"] = tuple(sorted(ccs.items()))
+        new_eff = after["key"] or (harmony.key_of(raw.key) if raw is not None else None)
+        if new_eff != self.effective_key() or h.get("rekey"):
+            h.update(rekey=True, raw=raw, routed=routed, sig=self._route_sig())
+        self._harmony_next = h
+        if undo:
+            self._push_undo({"kind": "harmony", "what": what,
+                             "prev": {**before, "transpose_tracks": sorted(changed_t),
+                                      "cc_tracks": sorted(t for t in after["cc"]
+                                                          if before["cc"].get(t) != after["cc"][t])}})
+        return at
+
+    def _moved_since(self, snap):
+        """True when the harmony state snapshotted as snap changed (caller holds _lock): compared by identity."""
+        return any(a is not b for a, b in zip((self._harmony_next, self._prog, self._key, self._raw_pattern), snap))
+
+    def _route_sig(self):
+        return (self._raw_pattern, tuple(sorted(self._kit_tracks.items())), tuple(sorted(self._parts)))
+
+    def _land_harmony(self, h):
+        """At the bar line (sequencer, caller holds _lock): assign what the tool thread prepared, send the timbral
+        CCs (at most one per melodic track), and rebuild the lines as a relabel does."""
+        self._key, self._prog = h["key"], h["prog"]
+        self._tension, self._register, self._timbral_base = h["tension"], h["register"], h["timbral_base"]
+        self._set_transposes(h.get("transpose") or {})
+        if h.get("ccs"):
+            mido = __import__("mido")
+            for track, value in h["ccs"]:
+                self._ramps.pop((track, FILTER_CC), None)
+                if self._cc_values.get((track - 1, FILTER_CC)) != value:
+                    self._cc(mido, track - 1, FILTER_CC, value)
+        if h.get("rekey"):
+            routed = h["routed"] if h.get("sig") == self._route_sig() else None
+            self._reroute(routed)
+        else:
+            self._refresh_harmony()
+
+    def _melodic_playing(self):
+        """{track: role} for the melodic tracks playing (caller holds _lock); never a drum, cymbal or fx track."""
+        return {t: r for t, r in self._roles_playing().items() if r in kitmap.MELODIC}
+
+    def _lowest(self, track):
+        """The lowest note a track's line plays, before transpose (caller holds _lock), or None."""
+        notes = [int(h[1]) for bar in self._work.get(track) or () for h in bar]
+        return min(notes) if notes else None
+
+    def _intent(self, intent, hows):
+        """set_progression(intent): darker / brighter (how: harmonic, timbral, register) or tension / release, from
+        the next bar. Compiled in the tool thread on a snapshot; nothing changes if any part is refused."""
+        for _ in range(3):
+            with self._lock:
+                if not self.playing():
+                    raise WhiplashError("start a beat first: an intent changes what plays (whiplash_play_pattern)")
+                before = self._harmony_state()
+                snap = (self._harmony_next, self._prog, self._key, self._raw_pattern)
+                raw = self._raw_pattern
+                melodic = self._melodic_playing()
+                lowest = {t: self._lowest(t) for t, r in melodic.items() if r == "lead"}
+                genre = raw.family if raw is not None else None
+                start = self.bar + 1 - ((self.bar + 1 - self.pattern_start) % patterns.BARS)
+            after = {**before, "timbral_base": dict(before["timbral_base"]), "cc": dict(before["cc"]),
+                     "transpose": dict(before["transpose"])}
+            if intent in ("darker", "brighter"):
+                out, done = self._plan_colour(intent, hows, before, after, melodic, lowest)
+            elif intent == "tension":
+                out, done = self._plan_tension(before, after, start, genre)
+            else:
+                out, done = self._plan_release(before, after)
+            routed = None
+            new_eff = after["key"] or (harmony.key_of(raw.key) if raw is not None else None)
+            if raw is not None and new_eff != before["eff"]:
+                self._warm_fallback(raw, new_eff)
+                routed = self._routed(raw, new_eff)
+            with self._lock:
+                if self._moved_since(snap):
+                    continue  # something landed meanwhile: plan again on what plays now
+                self._require_playing()
+                if done:
+                    out["lands_at_bar"] = self._schedule_harmony(before, after, out.pop("_what"), raw, routed)
+                else:
+                    out.pop("_what", None)
+                    out["unchanged"] = True
+                prog = after["prog"]
+                out["chords"] = [c.name for c in prog.chords] if prog is not None else []
+                out["key"] = (prog.key if prog is not None else after["eff"]).name
+                return out
+        raise WhiplashError("the beat kept changing while the intent was prepared; nothing changed, try again")
+
+    def _plan_colour(self, intent, hows, before, after, melodic, lowest):
+        """darker / brighter: each how in turn on after (a copy of before). -> (result, anything changed)."""
+        darker = intent == "darker"
+        did, applied, notes = [], [], {}
+        for how in hows:
+            if how == "harmonic":
+                step = self._plan_harmonic(darker, before, after)
+            elif how == "timbral":
+                step = self._plan_timbral(darker, before, after, melodic)
+            else:
+                step = self._plan_register(darker, before, after, lowest)
+            if step.get("note"):
+                notes[how] = step["note"]
+            if step.get("did"):
+                did.append(step["did"])
+                applied.append(how)
+        out = {"intent": intent, "applied": applied,
+               "did": "; ".join(did) if did else "nothing: " + "; ".join(notes.values()),
+               "other_options": [h for h in progressions.HOWS if h not in hows],
+               "_what": f"{intent} ({', '.join(applied)})"}
+        if notes and did:
+            out["notes"] = notes
+        return out, bool(applied)
+
+    def _plan_harmonic(self, darker, before, after):
+        prog, key = after["prog"], after["eff"]
+        entry = progressions.PROGRESSIONS.get(prog.library) if prog is not None and prog.library else None
+        if entry is not None:
+            pick = progressions.swap(entry, darker)
+            if pick is not None:
+                prog_key, _ = progressions.key_for(pick, key)
+                resolved = harmony.parse_chords(pick.chords, prog_key)
+                voiced = self._prepare_voicings(resolved, pick.voicing)
+                with self._lock:
+                    routed = self.pattern
+                    new, _ = self._finish_prog(resolved, voiced, pick.bars_per_chord, prog_key, self.bar + 1,
+                                               prog.overrides, routed, pick.name, pedal=prog.pedal)
+                after["prog"] = new
+                return {"did": f"{entry.name} -> {pick.name} ({pick.about})"}
+        try:
+            scale = harmony.step_mode(key.scale, darker)
+        except harmony.HarmonyError:
+            return {"note": (f"{key.name} isn't on the mode ladder ({' > '.join(harmony.LADDER)}), so harmonic has no "
+                             "step to take; try how: 'timbral' or 'register'")}
+        if scale is None:
+            return {"note": (f"already at the {'floor' if darker else 'ceiling'}: {key.name} is as "
+                             f"{'dark' if darker else 'bright'} as the mode ladder goes"
+                             + (" (locrian is never chosen)" if darker else ""))}
+        new_key = harmony.Key(key.pc, scale)
+        after["key"], after["eff"] = new_key, new_key
+        did = f"{key.name} -> {new_key.name}"
+        if entry is not None:
+            did = f"no {'darker' if darker else 'brighter'} {entry.genre} progression than {entry.name}; " + did
+        if prog is not None:
+            old_pk = prog.key
+            new_pk = harmony.Key(old_pk.pc, harmony.step_mode(old_pk.scale, darker) or old_pk.scale) \
+                if old_pk.scale in harmony.LADDER else old_pk
+            if old_pk == key:
+                new_pk = new_key
+            chords = [harmony.move_chord(c, old_pk, new_pk) for c in prog.chords]
+            after["prog"] = self._revoice(prog, chords, new_pk, library=None)
+            if after["tension"] is not None:
+                after["tension"] = {**after["tension"], "before": self._moved_prog(after["tension"]["before"], key,
+                                                                                   new_key)}
+        return {"did": did}
+
+    def _plan_timbral(self, darker, before, after, melodic):
+        tracks = sorted(melodic)
+        if not tracks:
+            return {"note": "no melodic track is playing to filter (drums are never touched)"}
+        unknown = [t for t in tracks if after["cc"].get(t) is None]
+        known = [t for t in tracks if t not in unknown]
+        if not known:
+            raise WhiplashError(
+                f"Whiplash hasn't sent filter_freq on track(s) {unknown}, so it doesn't know where their cutoff is "
+                "and won't guess: set it first (whiplash_set_param filter_freq, e.g. 127 if the filters are open on "
+                "the unit), or use how: 'harmonic' or 'register'. Nothing changed")
+        moved, base = {}, after["timbral_base"]
+        for t in known:
+            value = after["cc"][t]
+            if darker:
+                new = max(TIMBRAL_FLOOR, value - TIMBRAL_STEP)
+                if new != value:
+                    base.setdefault(t, value)
+            else:
+                cap = base.get(t)
+                new = value if cap is None or value >= cap else min(cap, value + TIMBRAL_STEP)
+                if cap is not None and new >= cap:
+                    del base[t]
+            if new != value:
+                after["cc"][t] = new
+                moved[t] = (value, new)
+        out = {}
+        if moved:
+            out["did"] = "filter_freq " + ", ".join(f"track {t} {a} -> {b}" for t, (a, b) in sorted(moved.items()))
+        else:
+            out["note"] = (f"the melodic filters are already at the floor ({TIMBRAL_FLOOR})" if darker else
+                           "nothing to reopen: brighter timbral only reopens what a timbral darker closed")
+        if unknown:
+            out["note"] = (out.get("note", "") + "; " if out.get("note") else "") + (
+                f"skipped track(s) {unknown}: Whiplash never sent their filter_freq, so it won't guess the cutoff")
+        return out
+
+    def _plan_register(self, darker, before, after, lowest):
+        state = after["register"]
+        prog = after["prog"]
+        if darker:
+            if state:
+                return {"note": "the highs are already thinned and the lead already down an octave"}
+            leads, skipped = {}, []
+            for t, low in sorted(lowest.items()):
+                if low is None:
+                    continue
+                shift = after["transpose"].get(t, 0)
+                if low + shift - 12 >= harmony.CHORD_BOTTOM:
+                    leads[t] = -12
+                    after["transpose"][t] = shift - 12
+                else:
+                    skipped.append(t)
+            thinned = prog is not None and not prog.thinned_from and any(len(v) >= 3 for v in prog.voicings)
+            if thinned:
+                after["prog"] = replace(prog, voicings=harmony.thin(prog.voicings), thinned_from=prog.voicings)
+            if not leads and not thinned:
+                return {"note": "no lead and no chord of three or more notes to thin" +
+                        (f"; lead track(s) {skipped} would fall below {patterns.note_name(harmony.CHORD_BOTTOM)}"
+                         if skipped else "")}
+            after["register"] = {"leads": leads, "thinned": thinned}
+            parts_ = (["top chord voice out"] if thinned else []) + [f"lead track {t} down an octave" for t in leads]
+            out = {"did": ", ".join(parts_)}
+            if skipped:
+                out["note"] = f"lead track(s) {skipped} stay: an octave down would fall below 41"
             return out
+        if not state:
+            return {"note": "nothing to restore: brighter register undoes a register darker"}
+        for t, semis in state["leads"].items():
+            after["transpose"][t] = after["transpose"].get(t, 0) - semis
+        if state.get("thinned") and prog is not None and prog.thinned_from:
+            after["prog"] = replace(prog, voicings=prog.thinned_from, thinned_from=())
+        after["register"] = None
+        return {"did": ", ".join((["highs restored"] if state.get("thinned") else []) +
+                                 [f"lead track {t} back up an octave" for t in state["leads"]]) or "restored"}
+
+    def _plan_tension(self, before, after, start, genre):
+        tension = after["tension"] or {"level": 0, "before": after["prog"]}
+        level = tension["level"]
+        out = {"intent": "tension"}
+        if level >= progressions.TENSION_STEPS:
+            out.update(did="already at full tension (a dominant 9th and a tonic pedal); release brings the loop back",
+                       level=level, _what="tension")
+            return out, False
+        prog = after["prog"]
+        key = prog.key if prog is not None else after["eff"]
+        if prog is None:  # a tonic vamp with a dominant turnaround, so there is a chord to pull
+            minor = 3 in key.steps and 4 not in key.steps
+            tonic = harmony.parse_chord("i" if minor else "I", key)
+            chords = [tonic, tonic, tonic, harmony.dominant(key)]
+            voiced = self._prepare_voicings(chords, None)
+            with self._lock:
+                prog, _ = self._finish_prog(chords, voiced, 1, key, start, {}, self.pattern, None)
+            level, did = 1, f"a {key.name} vamp with a dominant turnaround: {' '.join(c.name for c in chords)}"
+        else:
+            last = prog.chords[-1]
+            dom7 = harmony.dominant(key)
+            if level == 0 and len(prog.chords) == 1:  # one held chord: three bars of it, the dominant on the fourth
+                bars = max(1, prog.bars_per_chord // 4)
+                chords = [last] * 3 + [dom7]
+                prog = replace(self._revoice(prog, chords, library=None), bars_per_chord=bars)
+                level, did = 1, f"{last.name} held, {dom7.name} on the last bar of every {4 * bars}"
+            elif level == 0 and not (last.root == dom7.root and last.shape == dom7.shape):
+                chords = list(prog.chords[:-1]) + [dom7]
+                prog, level, did = self._revoice(prog, chords, library=None), 1, f"last chord {last.name} -> {dom7.name}"
+            elif level <= 1:
+                dom9 = harmony.dominant(key, ninth=True)
+                chords = list(prog.chords[:-1]) + [dom9]
+                prog, level, did = self._revoice(prog, chords, library=None), 2, f"last chord {last.name} -> {dom9.name}"
+            else:
+                prog, level = replace(prog, pedal=True), 3
+                did = f"the bass holds a {harmony.pc_name(key.pc, key.flats)} pedal under every chord"
+        after["prog"] = prog
+        after["tension"] = {"level": level, "before": tension["before"]}
+        out.update(did=did, level=level, of=progressions.TENSION_STEPS, _what=f"tension {level}",
+                   release="set_progression(intent: 'release') brings back the loop from before")
+        return out, True
+
+    def _plan_release(self, before, after):
+        tension = after["tension"]
+        if not tension:
+            raise WhiplashError("no tension to release; the progression is unchanged")
+        back = tension["before"]
+        after["prog"], after["tension"] = back, None
+        did = ("back to " + (back.library or " ".join(c.name for c in back.chords)) if back is not None
+               else "back to no progression")
+        return {"intent": "release", "did": did + ", pedal off", "_what": "release"}, True
+
+    def _moved_prog(self, prog, old, new):
+        """A progression moved from key old into key new (tool thread): a library entry or Roman numerals re-read in
+        the new key, chord names moved by the tonics' interval (and degree by degree for a new scale)."""
+        if prog is None:
+            return None
+        entry = progressions.PROGRESSIONS.get(prog.library) if prog.library else None
+        if entry is not None:
+            prog_key, _ = progressions.key_for(entry, new)
+            return self._revoice(prog, harmony.parse_chords(entry.chords, prog_key), prog_key)
+        if prog.key == old:
+            prog_key = new
+        else:  # its own key beside the session's: moved by the same interval, its scale kept
+            prog_key = harmony.Key((prog.key.pc + harmony.tonic_shift(old, new)) % 12, prog.key.scale)
+        chords = [harmony.parse_chord(c.symbol, prog_key) if harmony.is_numeral(c.symbol)
+                  else harmony.move_chord(c, prog.key, prog_key) for c in prog.chords]
+        return self._revoice(prog, chords, prog_key)
+
+    def _key_change(self, key, scale):
+        """set_progression(key, scale) with no chords: the key alone changes from the next bar line (v0.9.1)."""
+        for _ in range(3):
+            with self._lock:
+                self._require_playing()
+                before = self._harmony_state()
+                snap = (self._harmony_next, self._prog, self._key, self._raw_pattern)
+                raw = self._raw_pattern
+            old = before["eff"]
+            new = check_key(key, scale) if key not in (None, "") else check_key(harmony.pc_name(old.pc, old.flats),
+                                                                               scale)
+            if new == old:
+                raise WhiplashError(f"already in {old.name}")
+            after = {**before, "key": new, "eff": new}
+            after["prog"] = self._moved_prog(before["prog"], old, new)
+            if before["tension"]:
+                after["tension"] = {**before["tension"], "before": self._moved_prog(before["tension"]["before"], old,
+                                                                                    new)}
+            self._warm_fallback(raw, new)
+            routed = self._routed(raw, new) if raw is not None else None
+            with self._lock:
+                if self._moved_since(snap):
+                    continue
+                self._require_playing()
+                at = self._schedule_harmony(before, after, f"key {old.name} -> {new.name}", raw, routed)
+                prog = after["prog"]
+                out = {"key": new.name, "from": old.name, "lands_at_bar": at,
+                       "progression": [c.name for c in prog.chords] if prog is not None else None,
+                       "moves": "the melodic tracks, the progression and the phrases; drums stay as they are"}
+                if prog is not None and prog.key != new:
+                    out["progression_key"] = prog.key.name
+                if self._queued:
+                    out["carries_into"] = (f"the queued switch to {self._queued['pattern'].name} at bar "
+                                           f"{self._queued['at']}")
+                return out
+        raise WhiplashError("the beat kept changing while the key change was prepared; nothing changed, try again")
 
     # ---- arrangement ---------------------------------------------------
     def arrange(self, sections=None, preset=None, seconds=None, loop=False, clear=False):
@@ -3254,6 +3842,12 @@ class Engine:
                "voicings": harmony.describe(prog)}
         if prog.library:
             out["library"] = prog.library
+        if prog.pedal:
+            out["pedal"] = f"the bass holds {harmony.pc_name(prog.key.pc, prog.key.flats)} (tension)"
+        if prog.thinned_from:
+            out["thinned"] = "top chord voices out (register darker)"
+        if self._tension:
+            out["tension"] = {"level": self._tension["level"], "of": progressions.TENSION_STEPS}
         if self.bar >= prog.start:
             i = prog.index(self.bar)
             into = (self.bar - prog.start) % prog.bars_per_chord
@@ -3446,6 +4040,9 @@ class Engine:
                 "transpose": {str(t): v for t, v in sorted(self._transpose.items())},
                 "key": self.key_name(), "key_source": ("set" if self._key is not None else
                                                        "pattern" if self._raw_pattern is not None else None),
+                "key_lock": "on" if self.key_lock else "off",
+                "harmony_pending": ({"what": self._harmony_next["what"], "lands_at_bar": self._harmony_next["at"]}
+                                    if self._harmony_next else None),
                 "progression": self.progression_status(),
                 "groove": self.groove_status(),
                 "arrangement": self.arrangement_status(),

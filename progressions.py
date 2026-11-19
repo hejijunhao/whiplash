@@ -98,3 +98,37 @@ def key_for(prog, session):
         return key, f"{key.name} (relative of {session.name})"
     key = harmony.Key(session.pc, prog.scale)
     return key, f"{key.name} (its own scale on {session.name}'s root)"
+
+
+# ---- intents (v0.9.1, ontology O2) -------------------------------------------------------------------------------
+# set_progression(intent): each is a deterministic transform, compiled in the tool thread (engine._intent).
+# darker / brighter take `how` (Q-H3): one or more of HOWS, default harmonic; the result names what was applied and
+# the options left unused. tension and release change the progression only.
+HOWS = ("harmonic", "timbral", "register")
+INTENTS = {
+    "darker": "harmonic: the same genre's next darker progression, else one step down the mode ladder (lydian > "
+              "major > mixolydian > dorian > minor > phrygian); timbral: close the melodic tracks' filter a step; "
+              "register: thin the highs and drop the lead an octave",
+    "brighter": "the reverse of darker: the next brighter progression or one step up the ladder; timbral reopens, "
+                "never past the cutoff before the first darker; register restores the highs and the lead",
+    "tension": "one step per call: the last chord becomes the dominant 7th, then a dominant 9th, then the bass "
+               "holds a tonic pedal",
+    "release": "back to the progression that played before the first tension, pedal off",
+}
+TENSION_STEPS = 3
+
+
+def swap(entry, darker):
+    """The same genre's entry with the next lower (darker) or higher brightness, ties broken by the most shared
+    tags, then the name. None when entry is already its genre's darkest (brightest)."""
+    genre = entry.genre
+    if darker:
+        pool = [p for p in PROGRESSIONS.values() if p.genre == genre and p.brightness < entry.brightness]
+        best = max((p.brightness for p in pool), default=None)
+    else:
+        pool = [p for p in PROGRESSIONS.values() if p.genre == genre and p.brightness > entry.brightness]
+        best = min((p.brightness for p in pool), default=None)
+    pool = [p for p in pool if p.brightness == best]
+    if not pool:
+        return None
+    return min(pool, key=lambda p: (-len(p.tags & entry.tags), p.name))

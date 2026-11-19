@@ -24,7 +24,7 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
 - **Part R** (after P) covers v0.6.1: arrangement, fills by role, and the routing report (PR #17's HW 6.1-1 to 6.1-9). R1 is the demo's optional arrangement beat: run it before using that beat on stage.
 - **Part V** (after R) covers v0.7.0's listening loop (PR #20's HW 7.0-1 to 7.0-9). It needs USB AUDIO/MIDI, numpy and sounddevice on the Air, and microphone permission. V6 unplugs the cable, so do it last, with Part L.
-- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8).
+- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8). O10-O13 cover v0.9.1 (O2): darker and brighter (harmonic, timbral, register), tension and release, and key changes.
 - **Part W** (after V) covers v0.7.1's kit scan (PR #22's HW 7.1-1 to 7.1-8), with the same setup as V. W8 unplugs the cable, so do it last, with Part L.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
@@ -755,6 +755,34 @@ v0.9.0 (O1a) adds named grooves with five energy levels, microtiming, ghost note
 - **Type:** *"Play tech house."* Let it run **16 bars** without asking anything. Then *"How's it sounding?"*
 - **Expect:** Hermes calls `whiplash_status(review: …)` and quotes it: the bars unchanged (16 or so; tech house wants a change every 8) and a named next move (energy up, a fill, the `perc.woodblock` lane or the `bass.bouncy` phrase). **It changes nothing by itself.** The next musical call may also carry a one-line `taste_hint`, once.
 - [ ] Pass · [ ] Fail. Did Hermes change anything unasked? ____
+
+### O10. Darker and brighter, harmonic (O2; §15.3 Q40)
+v0.9.1 (O2). **Setup:** whiplash v0.9.1, 26 tools.
+- **Type:** *"Play deep house. Deep house gospel progression."* Then *"Darker."* Wait 4 bars. *"Darker."* again, then *"Brighter."*
+- **Expect:**
+  - Each change lands **on the one** of the next bar. The first darker swaps to a darker deep house progression (the result's `did` names it); the second steps the key to A phrygian (the B in the chords and bass becomes B♭). Brighter goes back to A minor.
+  - Hermes reads back what it did and offers another option (`other_options`: timbral or register). No filter moves unless asked.
+  - The drums never change.
+- [ ] Pass · [ ] Fail. Did each step sound darker? ____
+
+### O11. Darker with the filters (O2 `how: "timbral"`; §15.3 Q41)
+- **Type:** *"Set the filter frequency on tracks 6, 7 and 8 to 127."* Then *"Darker, with the filters."* twice, then *"Brighter, with the filters."* twice.
+- **Expect:** the bass and chord tracks close **one step (16) each time, on the bar line**; the drums' filters never move. Brighter reopens to exactly 127, never past it. *"Undo"* after a darker puts the values back.
+- [ ] Pass · [ ] Fail. Was one step of 16 audible? Too much? ____
+
+### O12. Tension and release (O2; §15.3 Q42)
+- **Type:** *"Play deep house. Progression i VI III VII, one bar each."* Then *"More tension."* three times, a few bars apart, then *"Release."*
+- **Expect:**
+  - First: the 4th chord becomes **E7** (a dominant pull back to Am). Second: **E9**. Third: the bass holds **A** under every chord (a pedal).
+  - Release: the old loop comes back exactly, bass on the roots again. All on bar lines, no stuck notes.
+- [ ] Pass · [ ] Fail. Notes:
+
+### O13. Key change and register (O2; §15.3 Q43)
+- **Type:** *"Play Chicago house."* Then *"Change key to F minor."* Later: *"Label track 9 lead, and write a melody on it."* then *"Darker, in register."* then *"Undo."*
+- **Expect:**
+  - Everything melodic (octave bass, stabs) moves to F minor on the next bar; nothing stuck or doubled; drums unchanged.
+  - Register darker: the lead drops an octave and the top chord voice drops out; undo restores both on the next bar.
+- [ ] Pass · [ ] Fail. Notes:
 
 ---
 

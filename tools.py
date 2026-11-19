@@ -65,7 +65,7 @@ def change_summary(params):
 
 def log_change(name, params, out):
     """Log a successful musical call as a change, then attach taste_hint when a threshold newly fires."""
-    if name not in MUSICAL or not out.get("success"):
+    if name not in MUSICAL or not out.get("success") or out.get("unchanged") is True:  # v0.9.1: an intent at its floor
         return
     try:
         hint = ENGINE.new_taste_hint()  # what the beat was like before this call
@@ -294,7 +294,8 @@ def write_part(p):
                             scale=p.get("scale"), length=p.get("length"), velocity=p.get("velocity"),
                             bars=p.get("bars"), reset=p.get("reset"), envelope=p.get("envelope"),
                             groove=p.get("groove"), out_of_key=p.get("out_of_key"), phrase=p.get("phrase"),
-                            density=p.get("density"), seed=p.get("seed"), register=p.get("register"))
+                            density=p.get("density"), seed=p.get("seed"), register=p.get("register"),
+                            follow=p.get("follow"))
     if not out.get("reset"):
         out["pitch_note"] = eng.PITCH_NOTE
     return out
@@ -304,7 +305,8 @@ def write_part(p):
 def set_progression(p):
     return ENGINE.set_progression(chords=p.get("chords"), bars_per_chord=p.get("bars_per_chord"),
                                   voicing=p.get("voicing"), key=p.get("key"), scale=p.get("scale"),
-                                  tracks=p.get("tracks"), clear=p.get("clear"), name=p.get("name"))
+                                  tracks=p.get("tracks"), clear=p.get("clear"), name=p.get("name"),
+                                  intent=p.get("intent"), how=p.get("how"), lock=p.get("lock"))
 
 
 @_tool
@@ -425,7 +427,8 @@ def follow(p):
 
 @_tool
 def undo(p):
-    """v0.8.0: revert the last written part, mix or arrangement change on the next bar line."""
+    """v0.8.0: revert the last written part, mix or arrangement change (v0.9.1: or intent, key change) on the next
+    bar line."""
     return ENGINE.undo()
 
 

@@ -35,7 +35,7 @@ maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.9.0"
+version: "0.9.1"
 readme: true
 platforms: [linux, macos]
 known_issues:

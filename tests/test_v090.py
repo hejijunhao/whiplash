@@ -50,13 +50,13 @@ def drums(events, tracks=(1, 2, 3, 4, 5, 8)):
 
 # ---- version, tools, budget -----------------------------------------------
 
-def test_version_is_0_9_0():
-    assert whiplash.__version__ == "0.9.0"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.0"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.0"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.0"
+def test_version_is_0_9_1():  # v0.9.1 (ontology O2)
+    assert whiplash.__version__ == "0.9.1"
+    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.1"
+    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.1"
+    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.1"
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.9.0")
+    assert releases[0].startswith("0.9.1") and releases[1].startswith("0.9.0")
 
 
 def test_list_library_is_the_one_new_tool():
@@ -622,9 +622,10 @@ def test_fill_true_on_a_classic_genre_is_unchanged(eng):
 def test_description_budget_for_v090():
     from test_v053 import _descriptions
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
-    assert sum(tool_text.values()) <= 4250 and max(tool_text.values()) <= 400
-    assert _descriptions(schemas.SCHEMAS) <= 10000
-    assert len(json.dumps(schemas.SCHEMAS)) <= 23600
+    # v0.9.1 (O2) raised the caps to 4300 / 10150 / 23950 (test_v053.test_description_size_budget)
+    assert sum(tool_text.values()) <= 4300 and max(tool_text.values()) <= 400
+    assert _descriptions(schemas.SCHEMAS) <= 10150
+    assert len(json.dumps(schemas.SCHEMAS)) <= 23950
 
 
 def test_an_explicit_key_on_write_part_keeps_its_own_notes(eng):
