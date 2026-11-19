@@ -42,6 +42,25 @@ Changed
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
 
+## 0.9.4
+
+Ontology v1, O5: taste polish ([docs/executing/ontology-o5-build-plan.md](docs/executing/ontology-o5-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §7 and §9). This closes the ontology v1 build. "How's it sounding?" after a `whiplash_listen` now gets a review that also says what was heard, and every hint is one sentence of real calls. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the check (O21).
+
+Added
+- **Listen data in reviews.** `whiplash_status(review: N)` fills `listen` from the last `whiplash_listen` when it was taken while playing, in this run, and under 32 bars ago: `{bars_ago, clipping, masking, kick_over_rest_db, low_pct, lufs_ish, peak_dbfs}`. Otherwise it stays `null`, and `listen_note` says why when a listen exists (too old, taken while stopped, or from an earlier run). A review never captures anew: it never opens the audio device or the MIDI input, and sends nothing.
+- **Heard hints.** `masking` (the listen heard the kick masked; with bass hits on kick steps it says how many per bar and suggests `whiplash_write_part(track: 6, phrase: 'bass.offbeat')` or lowering the bass with `whiplash_mix`, without them only the mix) and `clipping` (lower a level, then listen again). Like the others they ride `taste_hint` once on the next musical result.
+- `whiplash_listen`'s kept summary (`status.listen`) also holds `masking`, `kick_over_rest_db` and `low_pct` (the low band's share).
+- Review metrics gain `busiest_drum` (the non-kick drum track with the most hits) and `bass_track`, which the hints name.
+
+Changed
+- **Hint wording.** Every hint has one shape: what fired, against which limit, then "try" and two to four calls in tool syntax, each naming a library entry. "8 bars unchanged in tech house, which wants a change every 8: try `whiplash_mutate(action: 'energy', amount: 'up')`, `whiplash_mutate(action: 'fill', fill: 'kick.sit_out')`, `whiplash_write_part(groove: 'perc.woodblock')` on a free track, or `whiplash_write_part(phrase: 'bass.bouncy')`."
+  - The energy step follows the groove playing: `up` below 5, `down` at 5, a `whiplash_play_pattern(groove, energy)` when none is set. `soul` and `breaks` (one level) get `density thicken` instead of an energy step that would fail.
+  - Deep house, progressive house, melodic techno, techno and both minimal presets also offer a slow `filter_freq` sweep (`whiplash_ramp_param`): there the research says automation is the change, and ramps already count as change.
+  - The busy hint names the track to mute (`whiplash_mute_track(track: 8), the busiest drum after the kick`).
+- A review's `energy` is 3 for a plain classic genre (its classic groove), where it was `null`.
+- **Thresholds unchanged.** The spec's O5 row allows tuning from Phil's sessions, but none are recorded yet (checklist O9 untested). The per-genre table (§7.2) is now pinned by a test, so a tuned value is one deliberate edit in `genres.py`.
+- No schema change: 26 tools, budget pins unchanged.
+
 ## 0.9.3
 
 Ontology v1, O4: the arrangement grammar ([docs/executing/ontology-o4-build-plan.md](docs/executing/ontology-o4-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §6 and §9). "Build to the drop in 16 bars" is one call: `whiplash_arrange(move: "build", bars: 16)`. "Play it as a tech house DJ track" is `whiplash_arrange(form: "techhouse_dj")`, with tech house's own breakdown. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks (O18-O20).

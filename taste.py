@@ -13,6 +13,7 @@ import statistics
 from . import genres, grooves, kitmap
 
 DIGEST_BARS = 64
+LISTEN_BARS = 32  # v0.9.4 (O5): a review uses the last whiplash_listen only while it is under this many bars old
 WINDOW = 8  # bars a metric looks back over by default
 REVIEW_MIN, REVIEW_MAX = 4, 32
 VEL_BUCKET = 8  # fingerprints compare velocity in buckets of 8
@@ -34,6 +35,11 @@ SUGGEST = {
     "tropicalhouse": {"lane": "perc.bongo", "fill": "snare.roll", "phrase": "lead.pentatonic_hook"},
 }
 FALLBACK_SUGGEST = {"lane": "perc.conga_offbeats", "fill": "snare.roll"}
+# v0.9.4 (O5): genres where automation is the change (research §1 deep house "if filter or perc evolve", §4, §5,
+# §6, §8), so a slow filter sweep is offered too. Ramps count as change (Q-T4), so the hint and the counter agree.
+SWEEP = frozenset({"deephouse", "progressivehouse", "melodictechno", "techno", "minimal.house", "minimal.techno"})
+SWEEP_CALL = "a slow filter_freq sweep on a chord or bass track (whiplash_ramp_param, bars: 8)"
+MASKING_PHRASE = "bass.offbeat"  # spec §7.2: the off-beat bass leaves the kick's steps alone
 
 
 def thresholds(genre):
@@ -119,6 +125,10 @@ def metrics(digest, changes, moves, roles, window=WINDOW):
     busy = {t: statistics.median(x[0] for x in hits) for t, hits in per_track.items()
             if roles.get(t) in kitmap.MELODIC and len(hits) / n >= 4}
     crowded = [[a, b] for a in sorted(busy) for b in sorted(busy) if a < b and abs(busy[a] - busy[b]) <= 2]
+    counts = {t: len(h) for t, h in per_track.items()}
+    # v0.9.4 (O5): the tracks a hint names. Busiest: most hits in the window, the lower track on a tie.
+    others = [t for t in drums if roles.get(t) != "kick"]
+    basses = [t for t in per_track if roles.get(t) == "bass"]
     return {
         "bars": n,
         "unchanged_for_bars": unchanged_for(digest, changes, moves),
@@ -128,6 +138,8 @@ def metrics(digest, changes, moves, roles, window=WINDOW):
         "notes_per_bar": round(sum(len(h) for h in bars) / n, 1),
         "notes_per_bar_by_track": {str(t): round(len(h) / n, 1) for t, h in sorted(per_track.items())},
         "drum_elements": len(drums),
+        "busiest_drum": min(others, key=lambda t: (-counts[t], t)) if others else None,
+        "bass_track": min(basses, key=lambda t: (-counts[t], t)) if basses else None,
         "max_voices_per_step": voices,
         "low_collisions": round(sum(collisions) / n, 1),
         "hat_density": round(sum(hats) / n, 1),
@@ -137,22 +149,82 @@ def metrics(digest, changes, moves, roles, window=WINDOW):
     }
 
 
-def hints(m, genre, energy=None):
-    """{hint id: one sentence} for each threshold m crosses; each names next steps from the libraries."""
+def heard(listen, digest, run):
+    """The review's `listen` block from Engine.last_listen -> (block or None, note or None). Pure.
+
+    It applies only when the listen was taken while playing, in this run (`run`, bumped on every fresh start), and
+    is under LISTEN_BARS bars old on Whiplash's clock (spec §7.2: never captured anew). A listen taken while
+    stopped or in an earlier run heard something else, so it is ignored, with a note saying why."""
+    if not listen:
+        return None, None
+    if listen.get("_bar") is None or listen.get("_run") != run or not digest:
+        return None, "the last listen was of another run or taken while stopped; whiplash_listen again for heard checks"
+    ago = max(0, digest[-1][0] - listen["_bar"])
+    if ago >= LISTEN_BARS:
+        return None, (f"the last listen is {ago} bars old (reviews use one under {LISTEN_BARS}); "
+                      "whiplash_listen again for heard checks")
+    return {"bars_ago": ago, "clipping": bool(listen.get("clipping")), "masking": listen.get("masking"),
+            "kick_over_rest_db": listen.get("kick_over_rest_db"), "low_pct": listen.get("low_pct"),
+            "lufs_ish": listen.get("lufs_ish"), "peak_dbfs": listen.get("peak_dbfs")}, None
+
+
+def _energy_step(genre, energy, levels, direction):
+    """A call that moves the energy, or None when the groove has one level (soul, breaks)."""
+    if levels is not None and levels <= 1:
+        return None
+    record = genres.GENRES.get(genre)
+    if energy is None:  # no groove known: start the genre's own one a level up (it queues on the next bar)
+        if record is None:
+            return None
+        return f"whiplash_play_pattern(groove: '{record.groove}', energy: {4 if direction == 'up' else 2})"
+    if direction == "up" and energy >= 5 or direction == "down" and energy <= 1:
+        direction = "down" if direction == "up" else "up"
+    return f"whiplash_mutate(action: 'energy', amount: '{direction}')"
+
+
+def _try(calls):
+    calls = [c for c in calls if c]
+    return calls[0] if len(calls) == 1 else ", ".join(calls[:-1]) + ", or " + calls[-1]
+
+
+def hints(m, genre, energy=None, heard=None, levels=None):
+    """{hint id: one sentence} for each threshold m crosses; each names next steps from the libraries.
+
+    One shape for every hint (v0.9.4, O5): what fired, against which limit, then "try" and two to four calls in
+    tool syntax. energy: the groove's level now (None: no groove); levels: how many levels it has (soul and breaks
+    have one, so they never get an energy step); heard: the review's `listen` block (taste.heard) or None."""
     if not m:
         return {}
     limits, name = thresholds(genre), name_of(genre)
     out = {}
     if m["unchanged_for_bars"] >= limits["unchanged_bars"]:
         s = SUGGEST.get(genre, FALLBACK_SUGGEST)
-        energy_move = ("whiplash_mutate(action: 'energy', amount: 'up')" if energy is not None and energy < 5 else
-                       "whiplash_mutate(action: 'energy', amount: 'down')" if energy is not None else
-                       "whiplash_mutate(action: 'energy', amount: 'up') with a groove playing")
-        extra = f", or write_part with phrase {s['phrase']}" if s.get("phrase") else ""
-        out["repetition"] = (f"{m['unchanged_for_bars']} bars unchanged in {name} (it wants a change every "
-                             f"{limits['unchanged_bars']}): try {energy_move}, fill '{s['fill']}', or write_part with "
-                             f"groove {s['lane']}{extra}.")
+        calls = [_energy_step(genre, energy, levels, "up") or "whiplash_mutate(action: 'density', amount: 'thicken')",
+                 f"whiplash_mutate(action: 'fill', fill: '{s['fill']}')",
+                 f"whiplash_write_part(groove: '{s['lane']}') on a free track"]
+        if s.get("phrase"):
+            calls.append(f"whiplash_write_part(phrase: '{s['phrase']}')")
+        if genre in SWEEP:
+            calls[-1:] = [SWEEP_CALL]  # keep it to four: the sweep replaces the phrase where automation is the change
+        out["repetition"] = (f"{m['unchanged_for_bars']} bars unchanged in {name}, which wants a change every "
+                             f"{limits['unchanged_bars']}: try {_try(calls)}.")
     if m["drum_elements"] > limits["busy_drums"]:
-        out["busy"] = (f"Busy for {name}: {m['drum_elements']} drum elements ({name} holds {limits['busy_drums']}): "
-                       "mute one, or whiplash_mutate(action: 'energy', amount: 'down').")
+        busiest = m.get("busiest_drum")
+        calls = [f"whiplash_mute_track(track: {busiest}), the busiest drum after the kick" if busiest else
+                 "whiplash_mute_track on one drum track", _energy_step(genre, energy, levels, "down")]
+        out["busy"] = (f"Busy for {name}: {m['drum_elements']} drum elements, and {name} holds "
+                       f"{limits['busy_drums']}: try {_try(calls)}.")
+    if heard and heard.get("masking"):
+        bass = m.get("bass_track")
+        where = f"track: {bass}, " if bass else ""
+        mix = "lower the bass with whiplash_mix(levels: {'bass': 95})"
+        if m["low_collisions"] > 0:
+            out["masking"] = (f"Bass hits {m['low_collisions']:g} kick steps per bar and the last listen heard the "
+                              f"kick masked: try whiplash_write_part({where}phrase: '{MASKING_PHRASE}'), or {mix}.")
+        else:
+            out["masking"] = ("The last listen heard the kick masked in the low end, though the bass avoids the kick "
+                              f"steps: try {mix}, or a shorter bass sample on the unit.")
+    if heard and heard.get("clipping"):
+        out["clipping"] = ("The last listen heard clipping: try lowering the loudest track with whiplash_mix, then "
+                           "whiplash_listen again (level raises are refused until a listen shows none).")
     return out
