@@ -307,7 +307,8 @@ def test_input_loss_is_reported_and_the_beat_plays_on(jamming):
     wait_bar(eng, 1)
     eng.play_along()
     inp.push(cc(5, 74, 1), cc(5, 74, 2), cc(5, 74, 3))
-    wait(lambda: eng.status()["play_along"].get("lost"))
+    # the reader records the loss, then closes the input: wait for both (macOS CI, run 44493614828, read between)
+    wait(lambda: eng.status()["play_along"].get("lost") and eng.status()["play_along"]["open"] is False)
     st = eng.status()["play_along"]
     assert "unplugged" in st["lost"] and "whiplash_play_along" in st["hint"] and st["open"] is False
     bar = eng.bar
