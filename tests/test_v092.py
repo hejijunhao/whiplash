@@ -148,7 +148,7 @@ def test_tropical_house_is_soft_and_bright_in_c_major():
 O3_PROGS = {
     "progressivehouse.circle": (AM, ["Am7", "Dm7", "Gsus4", "Cmaj7"]),
     "progressivehouse.long_two": (AM, ["Am7", "Dm7"]),
-    "progressivehouse.phrygian_turn": (AM, ["Am", "A#", "Am", "E7"]),  # B flat, named as house.piano_stab names it
+    "progressivehouse.phrygian_turn": (AM, ["Am", "Bb", "Am", "E7"]),  # bII spells B flat (audit)
     "progressivehouse.descending": (AM, ["Am9"]),
     "melodictechno.cinematic": (AM, ["Amadd9", "Fmaj7", "C", "Gsus2"]),
     "melodictechno.held_vamp": (AM, ["Am9", "Fmaj7"]),

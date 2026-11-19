@@ -276,6 +276,20 @@ def expand(raw, genre=None, energy_filter=False, form=None, names=None):
                 base.pop("tracks", None)
                 base.pop("mute", None)
             merged = {**base, **sec}
+            bars = merged.get("bars")
+            if isinstance(bars, int) and not isinstance(bars, bool) and bars > 0:
+                # audit: a short section warns, never refuses (Q-A4). A type's own fill_every or enter that doesn't
+                # fit fits itself to the section (a fill on its last bar; hats in from the start); given keys don't.
+                if "fill_every" not in sec and isinstance(merged.get("fill_every"), int) and \
+                        merged["fill_every"] > bars:
+                    merged["fill_every"] = bars
+                if "enter" not in sec and isinstance(merged.get("enter"), dict):
+                    fits = {g: off for g, off in merged["enter"].items()
+                            if isinstance(off, int) and (1 <= off <= bars or -bars < off < 0)}
+                    if fits:
+                        merged["enter"] = fits
+                    else:
+                        merged.pop("enter")
             if "name" not in sec:
                 counts[kind] = counts.get(kind, 0) + 1
                 merged["name"] = kind if counts[kind] == 1 else f"{kind} {counts[kind]}"

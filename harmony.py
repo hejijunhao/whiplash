@@ -211,7 +211,9 @@ def parse_chord(symbol, key):
         shape = ROMAN_SUFFIX[suffix][0 if upper else 1]
         steps = _seven(key)
         root = (key.pc + steps[DEGREES[numeral.lower()] - 1] + _accidental(acc)) % 12
-        return Chord(symbol, root, SHAPES[shape], pc_name(root, key.flats) + SHAPE_SUFFIX[shape])
+        # audit: an explicit accidental spells the name (bII in A minor is Bb, spec §1.1); else the key's spelling
+        flats = _accidental(acc) < 0 or (not acc and key.flats)
+        return Chord(symbol, root, SHAPES[shape], pc_name(root, flats) + SHAPE_SUFFIX[shape])
     m = _NAME.match(symbol)
     if m and m.group(3) in NAME_SUFFIX:
         letter, acc, suffix = m.groups()

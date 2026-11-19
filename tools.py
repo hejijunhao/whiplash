@@ -56,8 +56,21 @@ LANDS_AT = ("at_bar", "switch_at_bar", "starts_at_bar", "lands_at_bar")
 SUMMARY_MAX = 80
 
 
-def change_summary(params):
-    """A tool call's arguments as a short line for the change log: 'action=energy amount=up'."""
+def change_summary(params, out=None):
+    """A tool call as a short line for the change log. The spec's own words for the named things (audit, spec §7.2):
+    'energy 3 -> 4', '6 bass.octave_pump', 'deephouse.gospel', 'darker (harmonic)'; otherwise the arguments,
+    'action=fill fill=snare.roll'."""
+    out = out or {}
+    if params.get("action") == "energy" and isinstance(out.get("from"), int) and isinstance(out.get("energy"), int):
+        return f"energy {out['from']} -> {out['energy']}"
+    named = next((params[k] for k in ("phrase", "groove") if params.get(k) not in (None, "")), None)
+    if named is not None and params.get("track") not in (None, ""):
+        return f"{params['track']} {named}"[:SUMMARY_MAX]
+    if params.get("intent") not in (None, ""):
+        how = out.get("applied")
+        return f"{params['intent']}" + (f" ({', '.join(how)})" if isinstance(how, list) and how else "")
+    if params.get("name") not in (None, "") and "chords" not in params:
+        return str(params["name"])[:SUMMARY_MAX]
     items = [f"{k}={v}" for k, v in params.items() if v not in (None, "", [], {}) and k != "port"]
     text = " ".join(items)
     return text if len(text) <= SUMMARY_MAX else text[:SUMMARY_MAX - 1] + "…"
@@ -76,7 +89,7 @@ def log_change(name, params, out):
             at = 0
         elif at is None:
             at = ENGINE.bar + (0 if name in IMMEDIATE else 1)
-        ENGINE.note_change(PREFIX + name, change_summary(params), at)
+        ENGINE.note_change(PREFIX + name, change_summary(params, out), at)
     except Exception:  # feedback must never break a musical call
         log.exception("whiplash taste for %s failed", name)
 
@@ -146,7 +159,8 @@ def groove_pattern(p, pattern):
         return pattern, None
     level = 3 if energy in (None, "") else eng.check_whole(energy, 1, 5, "energy", " (1 intro feel .. 5 busiest)")
     given = p.get("genre") not in (None, "") or p.get("mood") not in (None, "")
-    hint = pattern.family if given else ENGINE.playing_family()
+    # audit: from a cold start the pattern being started (deephouse by default) is the hint, so a bare 'A' works
+    hint = pattern.family if given else (ENGINE.playing_family() or pattern.family)
     entry = library.resolve("groove", groove, genre=hint)
     if given and entry.genre != pattern.family:
         raise eng.WhiplashError(f"groove {entry.name} belongs to {entry.genre}, not {pattern.family}: drop genre/mood "

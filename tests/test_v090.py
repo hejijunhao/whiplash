@@ -50,13 +50,13 @@ def drums(events, tracks=(1, 2, 3, 4, 5, 8)):
 
 # ---- version, tools, budget -----------------------------------------------
 
-def test_version_is_0_9_4():  # v0.9.4 (ontology O5)
-    assert whiplash.__version__ == "0.9.4"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.4"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.4"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.4"
+def test_version_is_0_9_5():  # v0.9.5 (the post-O5 ontology audit)
+    assert whiplash.__version__ == "0.9.5"
+    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.5"
+    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.5"
+    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.5"
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.9.4") and releases[1].startswith("0.9.3")
+    assert releases[0].startswith("0.9.5") and releases[1].startswith("0.9.4")
 
 
 def test_list_library_is_the_one_new_tool():
@@ -280,8 +280,7 @@ def test_scale_mismatch_plays_the_relative_major(eng):
     pretend_playing(eng, P["deephouse"])
     out = eng.set_progression(name="house.mixed_shuffle")
     assert out["key"] == "C major (relative of A minor)"
-    assert [c["name"] for c in out["progression"]] == ["C", "A#", "Cm", "F"] or \
-        [c["name"] for c in out["progression"]] == ["C", "Bb", "Cm", "F"]
+    assert [c["name"] for c in out["progression"]] == ["C", "Bb", "Cm", "F"]  # a flat numeral spells flat (audit)
     assert eng.key_name() == "A minor"  # the session key and the pattern stay in A minor
     out = eng.set_progression(name="deephouse.dorian_soul")
     assert out["key"].startswith("A dorian") and [c["name"] for c in out["progression"]] == ["Am7", "D7"]
