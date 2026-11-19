@@ -46,6 +46,41 @@ def device_notice(name):
             "onto the hardware. Whiplash never switches on its own.")
 
 
+# v0.9.0 (ontology O1b) taste: these tools change the music. A successful call while a beat plays is logged as a
+# change (Engine.changes, at the bar it lands on) and may carry a one-line taste_hint (Q-T3).
+MUSICAL = frozenset({"play_pattern", "set_param", "select_sample", "label_tracks", "transpose", "write_part",
+                     "set_progression", "arrange", "mix", "ramp_param", "mutate", "mute_track", "unmute_track",
+                     "set_tempo", "follow", "undo"})
+IMMEDIATE = frozenset({"set_param", "select_sample", "ramp_param", "mute_track", "unmute_track", "set_tempo"})
+LANDS_AT = ("at_bar", "switch_at_bar", "starts_at_bar", "lands_at_bar")
+SUMMARY_MAX = 80
+
+
+def change_summary(params):
+    """A tool call's arguments as a short line for the change log: 'action=energy amount=up'."""
+    items = [f"{k}={v}" for k, v in params.items() if v not in (None, "", [], {}) and k != "port"]
+    text = " ".join(items)
+    return text if len(text) <= SUMMARY_MAX else text[:SUMMARY_MAX - 1] + "…"
+
+
+def log_change(name, params, out):
+    """Log a successful musical call as a change, then attach taste_hint when a threshold newly fires."""
+    if name not in MUSICAL or not out.get("success"):
+        return
+    try:
+        hint = ENGINE.new_taste_hint()  # what the beat was like before this call
+        if hint:
+            out["taste_hint"] = hint
+        at = next((out[k] for k in LANDS_AT if isinstance(out.get(k), int)), None)
+        if name == "play_pattern" and out.get("mode") == "started":
+            at = 0
+        elif at is None:
+            at = ENGINE.bar + (0 if name in IMMEDIATE else 1)
+        ENGINE.note_change(PREFIX + name, change_summary(params), at)
+    except Exception:  # feedback must never break a musical call
+        log.exception("whiplash taste for %s failed", name)
+
+
 def _tool(fn):
     @functools.wraps(fn)
     def wrapper(params=None, **kwargs):
@@ -58,6 +93,7 @@ def _tool(fn):
         except Exception as exc:
             log.exception("whiplash tool %s failed", fn.__name__)
             out = {"success": False, "error": f"{type(exc).__name__}: {exc}"}
+        log_change(fn.__name__, params or {}, out)
         if ENGINE.virtual:  # on every result, so the agent cannot miss that nothing is audible
             device = ENGINE.check_hotplug()
             if device:
@@ -257,7 +293,8 @@ def write_part(p):
                             hits=p.get("hits"), lock_to=p.get("lock_to"), notes=p.get("notes"), key=p.get("key"),
                             scale=p.get("scale"), length=p.get("length"), velocity=p.get("velocity"),
                             bars=p.get("bars"), reset=p.get("reset"), envelope=p.get("envelope"),
-                            groove=p.get("groove"), out_of_key=p.get("out_of_key"))
+                            groove=p.get("groove"), out_of_key=p.get("out_of_key"), phrase=p.get("phrase"),
+                            density=p.get("density"), seed=p.get("seed"), register=p.get("register"))
     if not out.get("reset"):
         out["pitch_note"] = eng.PITCH_NOTE
     return out
@@ -353,6 +390,8 @@ def stop(p):
 
 @_tool
 def status(p):
+    if p.get("review") not in (None, ""):  # v0.9.0 O1b: the compact review instead of the full status
+        return ENGINE.review(p["review"])
     out = ENGINE.status()
     if ENGINE.virtual:
         out["device_available"] = ENGINE.check_hotplug()
@@ -392,7 +431,7 @@ def undo(p):
 
 @_tool
 def list_library(p):
-    """v0.9.0: named genres, progressions, grooves, lanes and fills (phrases, forms and moves come later)."""
+    """v0.9.0: named genres, progressions, grooves, lanes, phrases and fills (forms and moves come in O4)."""
     return library.entries(p.get("kind"), genre=p.get("genre"), tag=p.get("tag"))
 
 

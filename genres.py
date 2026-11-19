@@ -7,14 +7,13 @@
   house (`house`) is the first. Everything downstream (kitmap.route, harmony.in_key, fills, density, arrangement)
   sees an ordinary Pattern.
 
-House's bass and stabs are baked into plain notes against its default progression in O1a: the octave bounce
-(the root on each beat, the octave on each off-beat 8th) and one chord tone per stab track on the off-beats. The
-O1b phrase generators (`bass.octave_pump`, `stab.offbeat`) replace the baked lines and make them follow a later
-progression; until then a later progression moves the house bass through harmony's `root` mode, as for every genre.
+A compiled genre's bass and chord tracks are its record's phrases (O1b, phrases.py), built against its default
+progression: classic house plays `bass.octave_pump` and `stab.offbeat` over house.piano_stab. Their notes are
+harmony.Rel values, so a later set_progression or key change moves them (harmony.apply mode phrase).
 """
 from dataclasses import dataclass, field
 
-from . import grooves, harmony, kitmap, patterns, progressions
+from . import grooves, harmony, kitmap, patterns, phrases
 
 
 @dataclass(frozen=True)
@@ -58,47 +57,35 @@ GENRES = {g.name: g for g in (
           _roles("techhouse"), "filter_low_end", "techhouse_dj", {"unchanged_bars": 8, "busy_drums": 7},
           frozenset({"techhouse", "bouncy", "funky", "rolling"}),
           "126 BPM, every-16th hats pushed early, short bouncy bass, change something every 8 bars", "§3",
-          {"progression": "techhouse.one_note", "bass": "bass.bouncy", "chords": "stab.offbeat"}),
+          {"progression": "techhouse.one_note", "bass": "bass.bouncy", "chords": "stab.offbeat",
+           "chords_density": 0.25}),
     Genre("techno", "techno", 130, 0.50, (5, "minor"), "techno.classic", None, "hand", None,
           _roles("techno"), "kick_drop", "techno_plateau", {"unchanged_bars": 64, "busy_drums": 6},
           frozenset({"techno", "dark", "driving", "hypnotic", "peak time"}),
           "130 BPM, kick-led, one chord or a dark two-chord vamp, off-beat bass, plateaus", "§5",
-          {"progression": "techno.pedal", "bass": "bass.offbeat", "chords": "stab.offbeat"}),
+          {"progression": "techno.pedal", "bass": "bass.offbeat", "chords": "stab.offbeat",
+           "chords_density": 0.25}),
 )}
 
-BASS_ANCHOR = 55  # the baked house bass's roots sit nearest this (low register, at or above the v0.5 floor)
-STAB_STEPS = (2, 6, 10, 14)  # off-beat stabs, never on the kick's downbeat (research §2)
-PUMP_BEATS, PUMP_OFFBEATS = (0, 4, 8, 12), (2, 6, 10, 14)
-
-
-def _chords(record):
-    prog = progressions.PROGRESSIONS[record.progression]
-    session = harmony.Key(*record.key)
-    key, _ = progressions.key_for(prog, session)
-    chords = harmony.parse_chords(prog.chords, key)
-    per_bar = [chords[(b // prog.bars_per_chord) % len(chords)] for b in range(patterns.BARS)]
-    voiced = harmony.voice(chords, "close")
-    voiced_bar = [voiced[(b // prog.bars_per_chord) % len(chords)] for b in range(patterns.BARS)]
-    return per_bar, voiced_bar
-
-
 def melodic_lines(record):
-    """{track: 4 bars of 4-field hits} for a compiled genre's bass and chord tracks (O1a: baked lines)."""
-    per_bar, voiced = _chords(record)
-    bass = []
-    for chord in per_bar:
-        root = harmony.nearest(chord.root, BASS_ANCHOR)
-        bass.append([(s, root, 108, 1) for s in PUMP_BEATS] + [(s, root + 12, 96, 1) for s in PUMP_OFFBEATS])
-    lines = {6: [sorted(bar) for bar in bass]}
-    stab_tracks = [t for t, r in sorted(record.roles.items()) if kitmap.generated_role(r) in ("stab", "chord", "pad")]
-    for rank, track in enumerate(stab_tracks):
-        lines[track] = [[(s, notes[::-1][rank % len(notes)], 100 if s == 2 else 88, 1) for s in STAB_STEPS]
-                        for notes in voiced]
+    """{track: 4 bars of 4-field hits} for a compiled genre's bass and chord tracks: its phrases, built against its
+    default progression (or the home key's tonic), with harmony.Rel notes so they follow later chords."""
+    prog = phrases.fallback(record.progression, harmony.Key(*record.key))
+    lines = {}
+    bass_track = next(t for t, r in sorted(record.roles.items()) if kitmap.generated_role(r) == "bass")
+    bars, _ = phrases.build(phrases.PHRASES[record.bass], prog)
+    lines[bass_track] = [[h[:4] for h in bar] for bar in bars]
+    if record.chords:
+        chord_tracks = [t for t, r in sorted(record.roles.items())
+                        if kitmap.generated_role(r) in ("stab", "chord", "pad")]
+        for rank, track in enumerate(chord_tracks):
+            bars, _ = phrases.build(phrases.PHRASES[record.chords], prog, rank=rank)
+            lines[track] = [[h[:4] for h in bar] for bar in bars]
     return lines
 
 
 def compile(record):
-    """A compiled genre -> its registered Pattern: the default groove at energy 3 over the baked melodic lines."""
+    """A compiled genre -> its registered Pattern: the default groove at energy 3 over its phrase lines."""
     melodic = melodic_lines(record)
     base = patterns.Pattern(record.name, record.bpm, record.swing,
                             {t: r for t, r in record.roles.items() if t in melodic}, melodic, key=record.key)

@@ -16,6 +16,9 @@ Track modes:
   root    every hit plays the chord root, in the octave nearest the line's own register.
   snap    every note moves to the nearest note of the key's scale (ties go down).
   off     the track plays its line unchanged.
+  phrase  (v0.9.0, O1b) each Rel note resolves against the chord playing: its tone (R, 3, 5, oct, chord, ...)
+          from the chord root in the line's register window. A track gets it by carrying Rel notes (phrases.py),
+          not by asking.
 """
 import re
 import statistics
@@ -31,7 +34,8 @@ CHORD_HIGH = 79
 MAX_CHORDS = 16
 BARS_PER_CHORD_MAX = 16
 VOICINGS = ("close", "root", "open", "power", "shell")
-MODES = ("chords", "stack", "root", "snap", "off")
+MODES = ("chords", "stack", "root", "snap", "off")  # what set_progression(tracks) may ask for
+PHRASE = "phrase"  # v0.9.0 (O1b): a track whose line carries Rel notes; never asked for, it comes with the line
 ROLE_MODES = {"chord": "chords", "pad": "chords", "stab": "chords", "bass": "root", "lead": "snap"}
 NEVER = frozenset({"kick", "snare", "rim", "clap", "closed hat", "open hat", "cymbal", "perc", "fx"})
 PAD_VELOCITY, PAD_GATE = 90, 16  # a chord track with no line holds one chord tone per bar
@@ -413,6 +417,127 @@ def in_key(pattern, key):
 
 # ---- tracks ----------------------------------------------------------------
 
+# ---- chord-relative notes (v0.9.0, ontology O1b) -----------------------------
+
+REGISTER_FLOORS = {"low": CHORD_LOW, "mid": patterns.NATIVE, "high": patterns.NATIVE + 7}  # root window floors
+_TONE = re.compile(r"^(R|3|5|7|9|oct|chord|approach|step[+-][1-7])([+-](?:12|24))?$")
+_TONE_ALIASES = {"root": "R", "1": "R", "b3": "3", "b7": "7", "8": "oct", "R+12": "oct"}
+_TONE_WANT = {"3": (3, 4), "5": (7, 6, 8), "7": (10, 11, 9), "9": (2, 1, 3)}  # pitch-class offsets, preferred first
+
+
+def parse_tone(text):
+    """'R' -> ('R', 0); 'R+12' -> ('oct', 0); '5-12' -> ('5', -1); 'b7' -> ('7', 0); 'step-2' -> ('step-2', 0)."""
+    word = str(text).strip()
+    word = _TONE_ALIASES.get(word, word)
+    m = _TONE.match(word)
+    if not m:
+        raise HarmonyError(f"can't read tone {text!r}: use R, 3, 5, 7, 9, oct, chord, approach or step+n/step-n, "
+                           "optionally +12/-12")
+    tone, octave = m.group(1), int(m.group(2) or 0) // 12
+    return tone, octave
+
+
+class Rel(int):
+    """A chord-relative note: an int (the note it plays against the chord it was written for) that also knows its tone.
+
+    tone: R, 3, 5, 7, 9, oct, chord, approach or step+n / step-n; octave: -2..+2 on top; floor: the bottom of the
+    register window the chord root lands in (REGISTER_FLOORS). Anything that doesn't know about Rel sees a sensible
+    note in 16-84. Arithmetic keeps the tone (patterns.register, in_key and snap move the value only); apply() in
+    mode phrase resolves it against the chord playing and always returns plain ints.
+    """
+
+    def __new__(cls, value, tone="R", octave=0, floor=CHORD_LOW):
+        obj = super().__new__(cls, value)
+        obj.tone, obj.octave, obj.floor = tone, octave, floor
+        return obj
+
+    def _like(self, value):
+        return Rel(value, self.tone, self.octave, self.floor)
+
+    def __add__(self, other):
+        if not isinstance(other, int):
+            return NotImplemented
+        return self._like(int(self) + int(other))
+
+    __radd__ = __add__
+
+    def __sub__(self, other):
+        if not isinstance(other, int):
+            return NotImplemented
+        return self._like(int(self) - int(other))
+
+    def __reduce__(self):
+        return (Rel, (int(self), self.tone, self.octave, self.floor))
+
+    def __repr__(self):
+        return f"Rel({int(self)}, {self.tone!r}, {self.octave}, {self.floor})"
+
+
+def scale_step(note, n, key):
+    """note moved n steps along key's scale (a note outside the scale moves to its neighbour first)."""
+    step = 1 if n > 0 else -1
+    for _ in range(abs(n)):
+        note += step
+        while (note - key.pc) % 12 not in key.steps:
+            note += step
+    return note
+
+
+def _interval(tone, shape):
+    """Semitones above the root for a 3, 5, 7 or 9 of shape; a tone the chord lacks falls to its nearest chord tone."""
+    pcs = {x % 12 for x in shape}
+    want = _TONE_WANT[tone]
+    pick = next((w for w in want if w in pcs), None)
+    if pick is None:  # the nearest chord tone, the root counted as its octave for tones above the 5th
+        cands = sorted(12 if p == 0 and want[0] > 7 else p for p in pcs)
+        pick = min(cands, key=lambda p: abs(p - want[0]))
+    return pick + 12 if tone == "9" else pick
+
+
+def resolve(rel, chord, notes, key, rank=0, nxt=None):
+    """One Rel -> the note it plays on chord (voiced as notes), in key. nxt: the next chord's root (approach)."""
+    tone = rel.tone
+    if tone == "chord":
+        down = notes[::-1]  # the top voice first, as chords mode plays it
+        note = down[rank % len(down)]
+    else:
+        floor = rel.floor
+        root = floor + (chord.root - floor) % 12
+        if tone == "R":
+            note = root
+        elif tone == "oct":
+            note = root + 12
+        elif tone == "approach":
+            target = root if nxt is None else floor + (nxt - floor) % 12
+            note = scale_step(target, -1, key)
+        elif tone.startswith("step"):
+            note = scale_step(root, int(tone[4:]), key)
+        else:
+            note = root + _interval(tone, chord.shape)
+    note = int(note) + 12 * rel.octave
+    while note < patterns.NOTE_MIN:
+        note += 12
+    while note > patterns.NOTE_MAX:
+        note -= 12
+    return note
+
+
+def is_phrase(bars):
+    """True when a line carries Rel notes (a phrase): it follows the chords in mode phrase."""
+    return any(isinstance(h[1], Rel) for bar in bars or () for h in bar)
+
+
+def _chordal(bars):
+    """A phrase line that plays chord tones (stab.offbeat): it ranks with the chord tracks."""
+    return any(isinstance(h[1], Rel) and h[1].tone == "chord" for bar in bars or () for h in bar)
+
+
+def phrase_modes(work):
+    """With no progression: {track: phrase} for every phrase line, and the chord-tone ones' ranks."""
+    out = {t: PHRASE for t, bars in sorted(work.items()) if is_phrase(bars)}
+    return out, {t: i for i, t in enumerate(t for t in out if _chordal(work[t]))}
+
+
 def role_of(track, pattern, kit_tracks):
     """A track's role: the user's label, else the routed pattern's role, else 'other'."""
     if track in kit_tracks:
@@ -432,34 +557,40 @@ def modes(pattern, kit_tracks, overrides, written, work):
 
     Roles pick the default (chord/pad/stab -> chords, bass -> root, lead -> snap; drums, cymbal, fx and
     other never change). Written parts play as written unless the user named the track. A chord or stack
-    track with no line at all gets a held tone per bar (pads).
+    track with no line at all gets a held tone per bar (pads). A line carrying Rel notes (a phrase, v0.9.0 O1b)
+    takes mode phrase, written or generated; chord-tone phrase lines rank with the chord tracks.
     """
     tracks = set(pattern.bars if pattern is not None else ()) | set(kit_tracks) | set(overrides)
+    tracks |= {t for t, bars in work.items() if is_phrase(bars)}
     out = {}
     for track in sorted(tracks):
         if track in overrides:
             mode = overrides[track]
+        elif is_phrase(work.get(track)):
+            mode = PHRASE
         elif track in written:
             continue
         else:
             mode = ROLE_MODES.get(role_of(track, pattern, kit_tracks))
         if mode and mode != "off":
             out[track] = mode
-    chord_tracks = [t for t, m in sorted(out.items()) if m == "chords"]
+    chord_tracks = [t for t, m in sorted(out.items()) if m == "chords" or (m == PHRASE and _chordal(work.get(t)))]
     ranks = {t: i for i, t in enumerate(chord_tracks)}
     pads = frozenset(t for t, m in out.items() if m in ("chords", "stack") and not any(work.get(t) or []))
     return out, ranks, pads
 
 
-def chord_track_count(mode_map, pattern, kit_tracks):
-    """How many one-voice chord or stab tracks voice a progression (pads not counted): the shell rule's count."""
-    return sum(1 for t, m in mode_map.items() if m == "chords" and role_of(t, pattern, kit_tracks) != "pad")
+def chord_track_count(mode_map, pattern, kit_tracks, ranks=None):
+    """How many one-voice chord or stab tracks voice a progression (pads not counted): the shell rule's count.
+    ranks (modes()' second value) also counts chord-tone phrase tracks."""
+    tracks = list(ranks) if ranks is not None else [t for t, m in mode_map.items() if m == "chords"]
+    return sum(1 for t in tracks if role_of(t, pattern, kit_tracks) != "pad")
 
 
 def colour_ranks(mode_map, ranks, pattern, kit_tracks):
     """-> (pad tracks that play colour tones, ranks). With a shell progression, chord and stab tracks rank among
     themselves over the shell, and pad tracks among themselves over the colour tones (the 9th first)."""
-    chords = [t for t, m in sorted(mode_map.items()) if m == "chords"]
+    chords = sorted(ranks)
     pads = [t for t in chords if role_of(t, pattern, kit_tracks) == "pad"]
     rest = [t for t in chords if t not in pads]
     out = dict(ranks)
@@ -473,13 +604,19 @@ def pad_line():
     return [(0, patterns.NATIVE, PAD_VELOCITY, PAD_GATE, 0.0)]
 
 
-def apply(mode, hits, notes, root, key, rank):
+def apply(mode, hits, notes, root, key, rank, chord=None, nxt=None):
     """One bar of one track's hits (working shape) reshaped for the chord now playing.
 
     notes: the chord's voiced notes (low to high); root: its pitch class; key: the progression's Key.
+    chord and nxt (the next chord's root) are for mode phrase only.
     """
     if not hits:
         return hits
+    if mode == PHRASE:
+        if chord is None:
+            chord = Chord("", root, tuple(sorted({(n - root) % 12 for n in notes})), "")
+        return [(s, resolve(n, chord, notes, key, rank, nxt) if isinstance(n, Rel) else n, v, g, o)
+                for s, n, v, g, o in hits]
     if mode == "stack":
         return [(s, n, v, g, o) for s, _, v, g, o in hits for n in notes]
     if mode == "chords":

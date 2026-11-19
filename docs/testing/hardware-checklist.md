@@ -24,7 +24,7 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
 - **Part R** (after P) covers v0.6.1: arrangement, fills by role, and the routing report (PR #17's HW 6.1-1 to 6.1-9). R1 is the demo's optional arrangement beat: run it before using that beat on stage.
 - **Part V** (after R) covers v0.7.0's listening loop (PR #20's HW 7.0-1 to 7.0-9). It needs USB AUDIO/MIDI, numpy and sounddevice on the Air, and microphone permission. V6 unplugs the cable, so do it last, with Part L.
-- **Part O** (after W) covers v0.9.0's ontology O1a: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, and key lock (spec §8 HW O-1 to O-6).
+- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8).
 - **Part W** (after V) covers v0.7.1's kit scan (PR #22's HW 7.1-1 to 7.1-8), with the same setup as V. W8 unplugs the cable, so do it last, with Part L.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
@@ -693,9 +693,9 @@ Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 
 ---
 
-## O. Ontology O1a: grooves, energy, named progressions, key lock, v0.9.0 (ontology spec §8 HW O-1 to O-6; §15.1 #38; §15.3 Q32-37)
+## O. Ontology O1a + O1b: grooves, energy, named progressions, key lock, phrases, taste, v0.9.0 (ontology spec §8 HW O-1 to O-6, O-8; §15.1 #38-39; §15.3 Q32-39)
 
-v0.9.0 (O1a) adds named grooves with five energy levels, microtiming, ghost notes, named fills, classic/Chicago house, named chord progressions with the `shell` voicing, and key lock. It sends **no new message type and no new CC**: only notes, and the existing CCs when you ask for them. All of it is **untested on hardware**. Every value below is a proposed default from the spec.
+v0.9.0 (O1a) adds named grooves with five energy levels, microtiming, ghost notes, named fills, classic/Chicago house, named chord progressions with the `shell` voicing, and key lock. O1b adds phrase lines that follow the chords (`write_part(phrase)`; Chicago house's bass and stabs are phrases) and the taste review (`whiplash_status(review)`). It sends **no new message type and no new CC**: only notes, and the existing CCs when you ask for them. All of it is **untested on hardware**. Every value below is a proposed default from the spec.
 
 **Setup:** `hermes plugins list` should show whiplash v0.9.0 with 26 tools. Select an empty pattern on the unit. Keep `docs/testing/clock-jitter.md` at hand for O1.
 
@@ -741,6 +741,20 @@ v0.9.0 (O1a) adds named grooves with five energy levels, microtiming, ghost note
 - **Type:** *"Play deep house. Write C sharp 5 on every beat on track 7."*
 - **Expect:** track 7 plays **C5** (the result lists `snapped`). Then *"Same, but keep the C sharp"* (`out_of_key: true`): it plays C#5. The kick and the other drums never change pitch.
 - [ ] Pass · [ ] Fail. Notes:
+
+### O8. Phrases follow the chords (HW O-3 continued; §15.3 Q34, Q38)
+- **Type:** *"Play Chicago house."* then *"House uplift progression."* (Am F C G, two bars each). Then *"Play deep house. Write the rolling deep bass on track 6."* (`phrase: "bass.rolling_deep"`) and *"Deep house gospel progression."*
+- **Expect:**
+  - Chicago house: the octave bounce and the stabs **move with each chord on the one** (A, F, C, G roots), still clean retriggers near native pitch.
+  - Deep house: a sustained rolling bass (root, 5th, octave) near native pitch that follows Am7, Fmaj7, G7, Am7. The result's `now` names the notes the next bar plays.
+  - No stuck or smeared notes at the chord changes; the drums never change.
+- **If it fails:** note which track and which chord. Shorter gates or a different register (`register: "mid"`) are the fixes to try.
+- [ ] Pass · [ ] Fail. Notes:
+
+### O9. Taste review (HW O-8; §15.3 Q39)
+- **Type:** *"Play tech house."* Let it run **16 bars** without asking anything. Then *"How's it sounding?"*
+- **Expect:** Hermes calls `whiplash_status(review: …)` and quotes it: the bars unchanged (16 or so; tech house wants a change every 8) and a named next move (energy up, a fill, the `perc.woodblock` lane or the `bass.bouncy` phrase). **It changes nothing by itself.** The next musical call may also carry a one-line `taste_hint`, once.
+- [ ] Pass · [ ] Fail. Did Hermes change anything unasked? ____
 
 ---
 

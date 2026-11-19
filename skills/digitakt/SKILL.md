@@ -16,7 +16,7 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 ## Named things first (v0.9.0): list, pick, combine
 
 Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does the timing and the harmony.
-1. **List** what exists: `whiplash_list_library(kind: "groove", genre: "house")`. Kinds: `genre`, `progression`, `groove`, `lane`, `fill` (phrases, forms and moves come in later versions). `tag` filters (`warm`, `dark`, `jacking`; for lanes a role, `perc`).
+1. **List** what exists: `whiplash_list_library(kind: "groove", genre: "house")`. Kinds: `genre`, `progression`, `groove`, `lane`, `phrase`, `fill` (forms and moves come in a later version). `tag` filters (`warm`, `dark`, `jacking`; for lanes a role, `perc`).
 2. **Pick** by name. Names are `<genre>.<name>` or `<role>.<name>`; any case, spaces or `-` work, and a bare name works when it is unambiguous (`"gospel"`, `"shuffle"`). An unknown name answers with the closest matches.
 3. **Combine** in as few calls as possible:
    - "Chicago house, jack groove, energy 3": `whiplash_play_pattern(groove: "house.jack", energy: 3)`. A full groove name picks its genre.
@@ -24,6 +24,8 @@ Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does 
    - "Busier" / "bring it down" while playing: `whiplash_mutate(action: "energy", amount: "up")` (or 1-5, `"down"`).
    - "A flam roll into the next bar": `whiplash_mutate(action: "fill", fill: "snare.flam_roll")`.
    - "Shuffled hats on track 10": `whiplash_write_part(track: 10, groove: "hat.offbeat_shuffle")` (a named lane).
+   - "A rolling deep house bass": `whiplash_write_part(track: 6, phrase: "bass.rolling_deep")`. It follows whatever chords play, from then on. `phrase: "genre"` takes the genre's own line for that track. Don't pass `notes` with a phrase.
+   - "How's it sounding?" / "is it getting stale?": `whiplash_status(review: 16)`. Quote it; don't act on it unless the user agrees.
 
 **The house words, plainly:** bare "house" still means **deep house**. Classic/Chicago house is `chicago`, `chicago house` or `classic house` (`genre: "chicago"`); its library prefix is `house.` (`house.jack`). The mood "peak time" means **techno** now; "peak time tech house" keeps tech house.
 
@@ -39,6 +41,8 @@ Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does 
 - A library progression in another scale plays in the relative key or in its own mode on the session root: read `key` back ("C major, the relative of A minor").
 - Library 7th/9th/11th chords voice `shell` (root, 3rd, 7th) on up to three chord tracks (`voicing_rule` says why); a labelled pad adds the 9th (`pad_tones`). Pass `voicing` to override.
 - **Key lock:** notes you write on a bass, chord, pad, stab or lead track snap to the key playing, and the result lists `snapped`. Say so. For a deliberate chromatic note pass `out_of_key: true`. A part written in its own `key` keeps its notes. Drums are never snapped.
+- **Phrases** (`bass.rolling_deep`, `bass.octave_pump` (Chicago only by default), `bass.bouncy`, `bass.offbeat`, `stab.offbeat`): the result says what the line `follows` (a progression, the genre's own chords, or the key's tonic) and `now`, the notes the next bar plays. `density` (0-1) thins it by importance, `register` (`low`, `mid`, `high` or a note) moves its window, `seed` varies `bass.rolling_deep`'s 4th bar. Leads stay yours to write (key lock keeps them in key). Chicago house's bass and stabs are phrases already, so a progression moves them.
+- **Taste feedback is feedback only.** `whiplash_status(review: N)` lists what changed (by `you` or the `user`), `unchanged_for_bars`, compact metrics and `hints`, each naming a next move from the library. `whiplash_status` carries a one-line `taste`. A musical call's result may carry `taste_hint` once, when a threshold first fires: mention it in a few words, suggest the move, and never apply it unasked. "Repetitive" depends on the genre: tech house wants a change every 8 bars, deep and classic house 32, techno 64.
 - Microtiming (a late clap, pushed hats) and ghost notes are part of every non-classic groove. `whiplash_mutate humanize` adds on top. Whether they are audible on the unit is untested.
 
 ## Kit map (`whiplash_label_tracks`)
@@ -224,6 +228,9 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`, or `key: "current"`) |
 | "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern`, then `whiplash_set_progression` |
 | "Deep house chords", "something gospel", "a Chicago groove" | `whiplash_list_library`, then `name` on `whiplash_set_progression` or `groove` on `whiplash_play_pattern` |
+| "A bass that follows the chords", "the bass stays on one note" | `whiplash_write_part(phrase: ...)` on the bass track (`whiplash_list_library(kind: "phrase", tag: "bass")`) |
+| "phrase brings its own notes" | drop `notes` (and any rhythm/grid) from the call, or write `rhythm` + `notes` instead |
+| "Is it boring?", a `taste_hint` | `whiplash_status(review: 16)`; offer one named move, don't apply it unasked |
 | "unknown groove / progression / lane" error | read its `closest:` names, or `whiplash_list_library(kind: ...)`; never guess a name twice |
 | "energy needs a groove" | add `groove` (`"A"` is the genre's classic) |
 | "has no energy levels yet" (soul, breaks) | switch to a genre with grooves, or use `density` |

@@ -109,8 +109,8 @@ def test_resolve_unknown_name_gives_close_matches_and_the_list_hint():
         library.resolve("groove", "rolling")  # tech house and techno both have one
     with pytest.raises(library.LibraryError, match="kind must be one of"):
         library.resolve("colour", "x")
-    with pytest.raises(library.LibraryError, match="O1b"):
-        library.resolve("phrase", "bass.octave_pump")
+    with pytest.raises(library.LibraryError, match="O4"):  # phrases arrived in O1b; forms and moves come in O4
+        library.resolve("form", "techno_plateau")
 
 
 def test_list_library_filters_caps_and_hints(tool):
@@ -129,8 +129,8 @@ def test_list_library_filters_caps_and_hints(tool):
     assert empty["entries"] == [] and "genres:" in empty["note"] and "tags:" in empty["note"]
     bad = call("whiplash_list_library", kind="nope")
     assert not bad["success"] and "groove" in bad["error"]
-    later = call("whiplash_list_library", kind="phrase")
-    assert later["entries"] == [] and "O1b" in later["note"]
+    later = call("whiplash_list_library", kind="form")
+    assert later["entries"] == [] and "O4" in later["note"]
     assert tool.test_port.messages == []  # read-only: never touches the engine or the port
 
 
@@ -623,8 +623,8 @@ def test_description_budget_for_v090():
     from test_v053 import _descriptions
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
     assert sum(tool_text.values()) <= 4250 and max(tool_text.values()) <= 400
-    assert _descriptions(schemas.SCHEMAS) <= 9900
-    assert len(json.dumps(schemas.SCHEMAS)) <= 23500
+    assert _descriptions(schemas.SCHEMAS) <= 10000
+    assert len(json.dumps(schemas.SCHEMAS)) <= 23600
 
 
 def test_an_explicit_key_on_write_part_keeps_its_own_notes(eng):

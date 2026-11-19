@@ -276,7 +276,8 @@ def _line(track, bars, bar, pattern_start, hm):
     if track in pads:
         hits = harmony.pad_line()
     i = prog.index(bar)
-    return harmony.apply(modes[track], hits, prog.voicings[i], prog.chords[i].root, prog.key, ranks.get(track, 0))
+    return harmony.apply(modes[track], hits, prog.voicings[i], prog.chords[i].root, prog.key, ranks.get(track, 0),
+                         prog.chords[i], prog.chords[prog.index(bar + 1)].root)
 
 
 def _harmony(st, bar, pattern):
