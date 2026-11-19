@@ -24,7 +24,7 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
 - **Part R** (after P) covers v0.6.1: arrangement, fills by role, and the routing report (PR #17's HW 6.1-1 to 6.1-9). R1 is the demo's optional arrangement beat: run it before using that beat on stage.
 - **Part V** (after R) covers v0.7.0's listening loop (PR #20's HW 7.0-1 to 7.0-9). It needs USB AUDIO/MIDI, numpy and sounddevice on the Air, and microphone permission. V6 unplugs the cable, so do it last, with Part L.
-- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8). O10-O13 cover v0.9.1 (O2): darker and brighter (harmonic, timbral, register), tension and release, and key changes. O14-O17 cover v0.9.2 (O3): the four new genres and the on-request leads.
+- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8). O10-O13 cover v0.9.1 (O2): darker and brighter (harmonic, timbral, register), tension and release, and key changes. O14-O17 cover v0.9.2 (O3): the four new genres and the on-request leads. O18-O20 cover v0.9.3 (O4): moves, energy per section and the breakdown styles.
 - **Part W** (after V) covers v0.7.1's kit scan (PR #22's HW 7.1-1 to 7.1-8), with the same setup as V. W8 unplugs the cable, so do it last, with Part L.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
@@ -807,6 +807,30 @@ v0.9.1 (O2). **Setup:** whiplash v0.9.1, 26 tools.
   - Minimal house: four drum elements at most, a clap every other bar, a sparse bass, one stab a bar.
   - Minimal techno: kick, off-beat hat, a quiet rim and a perc every third 16th (3 against 4, repeating every 4 bars); no chords.
   - Tropical house: 108 BPM, a soft kick, shaker 16ths and bongos, a bright C major pad, a round sub. Soft but present.
+- [ ] Pass · [ ] Fail. Notes:
+
+v0.9.3 (O4). **Setup:** whiplash v0.9.3, 26 tools.
+
+### O18. Build to the drop in 16 bars (HW O-7; §15.3 Q49)
+- **Type:** *"Play deep house."* Wait a few bars, then *"Build to the drop in 16 bars."* (`whiplash_arrange(move: "build", bars: 16)`). Later, on *"Play progressive house."*, the same again.
+- **Expect:**
+  - The hats come in for the last 4 bars of the build; the kick sits out bar 16 under a snare (rim) roll; the drop lands on the one at energy 5; after its 16 bars the beat keeps going at the energy it had, with no Stop or Start.
+  - On progressive house the music's filter opens 20→127 over the 16 bars (and stays open until the kit is reloaded).
+- [ ] Pass · [ ] Fail. Notes:
+
+### O19. Energy per section (HW O-6; §15.3 Q50)
+- **Type:** *"Play tech house."* Then *"Arrange it as intro 8, groove 8, drop 8, outro 8."* (`whiplash_arrange(form: "intro 8, groove 8, drop 8, outro 8")`).
+- **Expect:** each section's energy lands on its first bar (intro sparse, drop busiest), no stuck notes, no Stop or Start until the end; the outro's hats thin in its last 4 bars; the run stops on the bar after the outro.
+- [ ] Pass · [ ] Fail. Notes:
+
+### O20. Breakdown styles (§15.3 Q51)
+- **Type:** for each of *"Play techno."*, *"tech house"*, *"minimal"*, *"tropical house"*: *"Breakdown for 8 bars."* (`whiplash_arrange(move: "breakdown", bars: 8)`).
+- **Expect:**
+  - Techno: the kick drops, the bass stays.
+  - Tech house: the bass closes (filter_freq to 40) over 2 bars and reopens on the bar after the breakdown. If Whiplash never sent a cutoff to the bass track it assumes 127, the unit's default: say if your bass preset's cutoff was elsewhere.
+  - Minimal: one element (the busiest besides the kick) drops out.
+  - Tropical: the drums thin to energy 1; the pad and bass stay.
+  - Each time, everything is back on the one after the breakdown.
 - [ ] Pass · [ ] Fail. Notes:
 
 ---

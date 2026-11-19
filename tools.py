@@ -312,7 +312,8 @@ def set_progression(p):
 @_tool
 def arrange(p):
     return ENGINE.arrange(sections=p.get("sections"), preset=p.get("preset"), seconds=p.get("seconds"),
-                          loop=p.get("loop"), clear=p.get("clear"))
+                          loop=p.get("loop"), clear=p.get("clear"), form=p.get("form"), move=p.get("move"),
+                          bars=p.get("bars"), then=p.get("then"), energy_filter=p.get("energy_filter"))
 
 
 @_tool
@@ -434,7 +435,7 @@ def undo(p):
 
 @_tool
 def list_library(p):
-    """v0.9.0: named genres, progressions, grooves, lanes, phrases and fills (forms and moves come in O4)."""
+    """v0.9.0: named genres, progressions, grooves, lanes, phrases and fills; v0.9.3: forms and moves."""
     return library.entries(p.get("kind"), genre=p.get("genre"), tag=p.get("tag"))
 
 

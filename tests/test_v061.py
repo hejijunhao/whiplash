@@ -529,10 +529,11 @@ def test_a_short_arrangement_plays_its_sections_and_stops_by_itself(fake):
 def test_arrange_schema():
     schema = schemas.SCHEMAS["whiplash_arrange"]
     props = schema["parameters"]["properties"]
-    assert set(props) == {"preset", "seconds", "sections", "loop", "clear"}
+    assert set(props) == {"preset", "seconds", "sections", "loop", "clear",
+                          "form", "move", "bars", "then", "energy_filter"}  # v0.9.3 (O4)
     assert props["preset"]["enum"] == list(arrange.PRESETS)
     section = props["sections"]["items"]["properties"]
-    assert set(section) == set(arrange.SECTION_KEYS) and props["sections"]["items"]["required"] == ["bars"]
+    assert set(section) == set(arrange.SECTION_KEYS) | {"type"} and props["sections"]["items"]["required"] == ["bars"]
     assert "whiplash:digitakt" in schema["description"] and len(schema["description"]) <= 400
     json.dumps(schemas.SCHEMAS)
 

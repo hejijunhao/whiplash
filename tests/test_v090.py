@@ -50,13 +50,13 @@ def drums(events, tracks=(1, 2, 3, 4, 5, 8)):
 
 # ---- version, tools, budget -----------------------------------------------
 
-def test_version_is_0_9_2():  # v0.9.2 (ontology O3)
-    assert whiplash.__version__ == "0.9.2"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.2"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.2"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.2"
+def test_version_is_0_9_3():  # v0.9.3 (ontology O4)
+    assert whiplash.__version__ == "0.9.3"
+    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.3"
+    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.3"
+    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.3"
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.9.2") and releases[1].startswith("0.9.1")
+    assert releases[0].startswith("0.9.3") and releases[1].startswith("0.9.2")
 
 
 def test_list_library_is_the_one_new_tool():
@@ -109,8 +109,7 @@ def test_resolve_unknown_name_gives_close_matches_and_the_list_hint():
         library.resolve("groove", "rolling")  # tech house and techno both have one
     with pytest.raises(library.LibraryError, match="kind must be one of"):
         library.resolve("colour", "x")
-    with pytest.raises(library.LibraryError, match="O4"):  # phrases arrived in O1b; forms and moves come in O4
-        library.resolve("form", "techno_plateau")
+    assert library.resolve("form", "techno_plateau").name == "techno_plateau"  # forms and moves arrived in O4
 
 
 def test_list_library_filters_caps_and_hints(tool):
@@ -129,8 +128,8 @@ def test_list_library_filters_caps_and_hints(tool):
     assert empty["entries"] == [] and "genres:" in empty["note"] and "tags:" in empty["note"]
     bad = call("whiplash_list_library", kind="nope")
     assert not bad["success"] and "groove" in bad["error"]
-    later = call("whiplash_list_library", kind="form")
-    assert later["entries"] == [] and "O4" in later["note"]
+    forms = call("whiplash_list_library", kind="form")
+    assert "techno_plateau" in {e["name"] for e in forms["entries"]}  # O4 (v0.9.3)
     assert tool.test_port.messages == []  # read-only: never touches the engine or the port
 
 
@@ -624,10 +623,10 @@ def test_fill_true_on_a_classic_genre_is_unchanged(eng):
 def test_description_budget_for_v090():
     from test_v053 import _descriptions
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
-    # v0.9.1 (O2) raised the caps to 4300 / 10150 / 23950 (test_v053.test_description_size_budget)
-    assert sum(tool_text.values()) <= 4300 and max(tool_text.values()) <= 400
-    assert _descriptions(schemas.SCHEMAS) <= 10150
-    assert len(json.dumps(schemas.SCHEMAS)) <= 23950
+    # v0.9.3 (O4) raised the caps to 4350 / 10200 / 24650 (test_v053.test_description_size_budget)
+    assert sum(tool_text.values()) <= 4350 and max(tool_text.values()) <= 400
+    assert _descriptions(schemas.SCHEMAS) <= 10200
+    assert len(json.dumps(schemas.SCHEMAS)) <= 24650
 
 
 def test_an_explicit_key_on_write_part_keeps_its_own_notes(eng):

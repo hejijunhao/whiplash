@@ -11,6 +11,7 @@ optionally ramps started on its first bar, a fill on its last bar, tracks that s
 a chord progression. Tracks are numbers 1-16 or group words resolved at the section's first bar from the roles
 playing then (the kit map label, else the pattern's role), so an arrangement survives a pattern switch.
 """
+import math
 from dataclasses import dataclass
 
 from . import kitmap, transition
@@ -32,7 +33,10 @@ GROUPS = {
     **{role: frozenset({role}) for role in kitmap.ROLES if role not in ("perc",)},
 }
 SECTION_KEYS = ("name", "bars", "tracks", "mute", "drop", "fill", "chords", "bars_per_chord", "ramps", "transition",
-                "transition_bars", "filter_from", "mix")
+                "transition_bars", "filter_from", "mix", "energy", "fill_every", "enter", "exit")
+# v0.9.3: keys only form.py sets (a breakdown style, the outro's thinning, the drop move's crash). Not in the schema.
+INTERNAL_KEYS = ("_style", "_thin", "_crash")
+STYLES = ("filter_low_end", "reduce_drums", "subtract_one")
 RAMP_KEYS = ("track", "param", "to", "from", "bars", "curve")
 CLEAR_CHORDS = {"none", "off", "clear", "stop"}
 # The build's rising filter: low-pass cutoff from nearly closed to fully open. It leaves filter_freq at 127.
@@ -68,6 +72,15 @@ class Section:
     transition_bars: int = 0
     filter_from: object = None
     mix: object = None  # v0.6.2: a mix snapshot or preset name recalled on the section's first bar
+    # v0.9.3 (ontology O4)
+    energy: object = None  # None, 1-5 or "rising": the groove level from the section's first bar
+    fill_every: int = 0  # the section's fill on the last bar of every N bars (0: only `fill` on its last bar)
+    fill_name: object = None  # a grooves.FILLS name for fill / fill_every
+    enter: tuple = ()  # ((spec, offset in the section), ...): muted at the start, in from that bar
+    exit: tuple = ()  # ((spec, offset), ...): out from that bar
+    style: object = None  # a breakdown style the engine resolves at the first bar (form.BREAKDOWNS)
+    thin: bool = False  # the outro: the hats' density drops over its last bars
+    crash: bool = False  # the drop move: a crash on a labelled cymbal on the first bar
 
 
 def _whole(value, low, high, what):
@@ -122,12 +135,47 @@ def _ramp(raw, where):
                     bars, curve)
 
 
-def section(raw, i):
-    """Validate one section dict -> Section. Param values and chords are checked by the engine."""
+def _fill_name(value):
+    """A fill name (grooves.FILLS) -> its canonical name, or None when value isn't one."""
+    from . import library
+    try:
+        return library.resolve("fill", value).name
+    except library.LibraryError:
+        return None
+
+
+def _at(raw, bars, where, what):
+    """enter / exit: {group or track: bar} -> ((spec, offset), ...). Bar 1..bars, or negative from the end."""
+    if raw in (None, {}, ""):
+        return ()
+    if not isinstance(raw, dict):
+        raise ArrangeError(f"{where}: {what} is an object like {{hats: -4}} (group or track -> bar)")
+    out = []
+    for key, value in raw.items():
+        s = spec(key, f"{where} {what}")
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = float("nan")
+        if isinstance(value, bool) or not math.isfinite(number) or number != int(number):
+            raise ArrangeError(f"{where} {what}: give a whole bar number for {key!r}, got {value!r}")
+        n = int(number)
+        if n == 0 or abs(n) > bars:
+            name = where.split("(", 1)[-1].rstrip(")") if "(" in where else where
+            raise ArrangeError(f"{what}: bar {n} is outside {name} ({bars} bars); use 1-{bars}, or -1..-{bars} "
+                               "from its end")
+        out.append((s, n - 1 if n > 0 else bars + n))
+    return tuple(out)
+
+
+def section(raw, i, internal=False):
+    """Validate one section dict -> Section. Param values and chords are checked by the engine.
+
+    internal: also accept form.py's own keys (INTERNAL_KEYS)."""
     where = f"section {i + 1}"
     if not isinstance(raw, dict):
         raise ArrangeError(f"{where}: give an object like {{name: 'intro', bars: 8, tracks: ['kick', 'hats']}}")
-    unknown = sorted(set(raw) - set(SECTION_KEYS))
+    unknown = sorted(set(raw) - set(SECTION_KEYS) - (set(INTERNAL_KEYS) if internal else set()))
     if unknown:
         raise ArrangeError(f"{where}: unknown key(s) {unknown}; use {', '.join(SECTION_KEYS)}")
     name = raw.get("name") or f"section {i + 1}"
@@ -143,13 +191,44 @@ def section(raw, i):
     if tracks is not None and mute:
         raise ArrangeError(f"{where}: give tracks (what plays) or mute (what doesn't), not both")
     drop = specs(raw.get("drop"), f"{where} drop")
-    fill = raw.get("fill")
+    fill, fill_name = raw.get("fill"), None
     if fill in (None, False, "", [], "false", "no"):
         fill = None
     elif fill is True or (isinstance(fill, str) and fill.strip().lower() in ("true", "yes", "default", "drums")):
         fill = "default"
     else:
-        fill = specs(fill, f"{where} fill")
+        try:
+            fill = specs(fill, f"{where} fill")
+        except ArrangeError:
+            fill_name = _fill_name(fill) if isinstance(fill, str) else None
+            if fill_name is None:
+                raise ArrangeError(f"{where}: fill is true, tracks or groups, or a fill name (e.g. snare.roll; "
+                                   "see whiplash_list_library(kind: 'fill')), got {!r}".format(fill)) from None
+            fill = "default"
+    fill_every = raw.get("fill_every")
+    if fill_every in (None, "", 0, False):
+        fill_every = 0
+    else:
+        fill_every = _whole(fill_every, 1, SECTION_BARS_MAX, f"{where} fill_every")
+        if fill_every > bars:
+            raise ArrangeError(f"{where}: fill_every ({fill_every}) is longer than the section ({bars} bars)")
+    energy = raw.get("energy")
+    if energy not in (None, ""):
+        from . import form
+        try:
+            energy = form.check_energy(energy, where)
+        except form.FormError as exc:
+            raise ArrangeError(str(exc)) from None
+    else:
+        energy = None
+    enter = _at(raw.get("enter"), bars, where, "enter")
+    exit_ = _at(raw.get("exit"), bars, where, "exit")
+    both = {s for s, _ in enter} & {s for s, _ in exit_}
+    if both:
+        raise ArrangeError(f"{where}: {', '.join(map(str, sorted(both, key=str)))} can't both enter and exit")
+    style = raw.get("_style") if internal else None
+    if style is not None and style not in STYLES:
+        raise ArrangeError(f"{where}: unknown breakdown style {style!r}")
     chords = raw.get("chords")
     if chords in (None, "", []):
         chords = None
@@ -181,17 +260,19 @@ def section(raw, i):
     else:
         mix = " ".join(mix.strip().lower().split())
     return Section(name, bars, tracks, mute, drop, fill, chords, per_chord,
-                   tuple(_ramp(r, where) for r in ramps), None if kind == "cut" else kind, tx_bars, tx_from, mix)
+                   tuple(_ramp(r, where) for r in ramps), None if kind == "cut" else kind, tx_bars, tx_from, mix,
+                   energy, fill_every, fill_name, enter, exit_, style,
+                   bool(raw.get("_thin")) if internal else False, bool(raw.get("_crash")) if internal else False)
 
 
-def sections(raw):
+def sections(raw, internal=False):
     """Validate the sections list -> tuple of Section."""
     if not isinstance(raw, list) or not raw:
         raise ArrangeError("give sections, e.g. [{name: 'intro', bars: 8, tracks: ['kick', 'hats']}, ...], "
                            f"or a preset ({', '.join(PRESETS)})")
     if len(raw) > SECTIONS_MAX:
         raise ArrangeError(f"at most {SECTIONS_MAX} sections, got {len(raw)}")
-    out = tuple(section(s, i) for i, s in enumerate(raw))
+    out = tuple(section(s, i, internal) for i, s in enumerate(raw))
     total = sum(s.bars for s in out)
     if total > TOTAL_BARS_MAX:
         raise ArrangeError(f"the sections add up to {total} bars; at most {TOTAL_BARS_MAX}")

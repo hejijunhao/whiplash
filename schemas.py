@@ -3,6 +3,7 @@ from .ccmap import PARAMS
 from .engine import (BARS_MAX, BPM_MAX, BPM_MIN, CURVES, DROP_BARS_MAX, RAMP_BARS_MAX, RAMP_BEATS_MAX, SWING_MAX,
                      SWING_MIN, TRANSPOSE_MAX)
 from .arrange import GROUPS, PRESETS, RAMPS_MAX, SECONDS_MAX, SECONDS_MIN, SECTION_BARS_MAX, SECTIONS_MAX
+from .form import MOVES, SECTION_TYPES, THEN
 from .mixer import MIX_BARS_MAX, SCHEMA_PRESETS as MIX_SCHEMA_PRESETS
 from .transition import BARS_MAX as TX_BARS_MAX, KINDS as TX_KINDS
 from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
@@ -211,22 +212,32 @@ SCHEMAS = {
     },
     "whiplash_arrange": {
         "name": "whiplash_arrange",
-        "description": ("Play the beat as a song from the next bar: sections (intro, build, drop) bring tracks in and out, "
-                        "ramp, fill, swap chords, transition. Presets club, short_demo. Stops after the last section unless "
-                        "loop." + SKILL),
+        "description": ("Play the beat as a song from the next bar: a form ('intro 16, build 8, drop 16' or a library "
+                        "name), sections or preset (club, short_demo) bring tracks in and out, ramp, fill, swap chords. "
+                        "A move acts now, then keeps playing." + SKILL),
         "parameters": {"type": "object", "properties": {
             "preset": {"type": "string", "enum": list(PRESETS)},
             "seconds": {"type": "integer", "minimum": SECONDS_MIN, "maximum": SECONDS_MAX,
                         "description": "short_demo length (default 75)"},
+            "form": {"type": "string"},
+            "move": {"type": "string", "enum": list(MOVES)},
+            "bars": {"type": "integer", "minimum": 1, "maximum": SECTION_BARS_MAX, "description": "Move length"},
+            "then": {"type": "string", "enum": list(THEN), "description": "Default stop; move: continue"},
+            "energy_filter": {"type": "boolean"},
             "sections": {"type": "array", "maxItems": SECTIONS_MAX, "items": {"type": "object", "required": ["bars"],
                          "properties": {
                 "name": {"type": "string"},
+                "type": {"type": "string", "enum": list(SECTION_TYPES)},
                 "bars": {"type": "integer", "minimum": 1, "maximum": SECTION_BARS_MAX},
+                "energy": {"type": ["integer", "string"], "description": "1-5 or rising"},
                 "tracks": {"type": "array", "items": {"type": ["integer", "string"]},
                            "description": "What plays (others muted): 1-16, all, drums, kick, hats, perc, bass, music"},
                 "mute": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Or: what doesn't"},
                 "drop": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Sit out the last bar"},
-                "fill": {"type": "boolean", "description": "Drum fill on the last bar"},
+                "fill": {"type": ["boolean", "string"], "description": "Fill (or a fill name) on the last bar"},
+                "fill_every": {"type": "integer"},
+                "enter": {"type": "object", "description": "{group: bar}; -4 = 4th from the end"},
+                "exit": {"type": "object"},
                 "chords": {"type": ["string", "array"], "items": {"type": "string"}, "description": "'i VI III VII', or 'none'"},
                 "bars_per_chord": {"type": "integer", "minimum": 1, "maximum": BARS_PER_CHORD_MAX},
                 "ramps": {"type": "array", "maxItems": RAMPS_MAX, "items": {"type": "object", "properties": {
