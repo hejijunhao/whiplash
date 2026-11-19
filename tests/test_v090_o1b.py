@@ -376,7 +376,7 @@ def test_hints_only_name_library_entries():
         assert genre in genres.GENRES
     m = taste.metrics(_digest(64), [], [], ROLES)
     for genre in (*taste.SUGGEST, "soul"):
-        for text in taste.hints(m, genre).values():
+        for text in taste.hints(m, genre, energy=3, levels=5).values():  # v0.9.4 wording: tests/test_v094.py
             assert "whiplash_mutate(action: 'energy'" in text
 
 

@@ -50,13 +50,13 @@ def drums(events, tracks=(1, 2, 3, 4, 5, 8)):
 
 # ---- version, tools, budget -----------------------------------------------
 
-def test_version_is_0_9_3():  # v0.9.3 (ontology O4)
-    assert whiplash.__version__ == "0.9.3"
-    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.3"
-    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.3"
-    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.3"
+def test_version_is_0_9_4():  # v0.9.4 (ontology O5)
+    assert whiplash.__version__ == "0.9.4"
+    assert yaml.safe_load(open(ROOT / "plugin.yaml"))["version"] == "0.9.4"
+    assert yaml.safe_load(open(ROOT / "docs" / "catalog-entry.yaml"))["version"] == "0.9.4"
+    assert tomllib.load(open(ROOT / "pyproject.toml", "rb"))["project"]["version"] == "0.9.4"
     releases = [h for h in (ROOT / "CHANGELOG.md").read_text().split("\n## ")[1:] if not h.startswith("Unreleased")]
-    assert releases[0].startswith("0.9.3") and releases[1].startswith("0.9.2")
+    assert releases[0].startswith("0.9.4") and releases[1].startswith("0.9.3")
 
 
 def test_list_library_is_the_one_new_tool():

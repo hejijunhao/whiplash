@@ -622,10 +622,16 @@ def analyse(np, audio, sr, start, seconds, grid=None, sent=(), roles=None):
 
 
 def summary(result):
-    """The part of a listen kept for status and the loudness guard."""
+    """The part of a listen kept for status, the loudness guard and (v0.9.4) the taste review's heard checks.
+
+    masking and kick_over_rest_db are None when the listen couldn't judge the low end (under two kicks heard);
+    low_pct (the low band's share of the energy, %) is None for a silent listen."""
     loud = result.get("loudness") or {}
+    low_end = result.get("low_end") or {}
+    low = (result.get("bands") or {}).get("low") or {}
     return {"at": time.time(), "bars": result.get("bars"), "lufs_ish": loud.get("lufs_ish"),
             "peak_dbfs": loud.get("peak_dbfs"), "clipping": bool(loud.get("clipping")),
-            "silent": bool(result.get("silent"))}
+            "silent": bool(result.get("silent")), "masking": low_end.get("masking"),
+            "kick_over_rest_db": low_end.get("kick_over_rest_db"), "low_pct": low.get("pct")}
 
 

@@ -523,6 +523,7 @@ class Engine:
         self.bar_digest = collections.deque(maxlen=taste.DIGEST_BARS)
         self.changes = collections.deque(maxlen=taste.DIGEST_BARS)
         self._taste_fired = set()  # hint ids carried by the last musical tool result (taste_hint fires once)
+        self._run_id = 0  # v0.9.4 (O5): bumped on every fresh start, so a review never reads an earlier run's listen
         # v0.9.1 (ontology O2) intents and keys. key_lock: the session's key lock (set_progression(lock)); like the kit
         # map it survives stop. _harmony_next: an intent, key change or its undo, prepared in the tool thread and
         # landing at its bar (assignments, at most one filter_freq CC per melodic track, the relabel rebuild).
@@ -740,6 +741,7 @@ class Engine:
                 self.bar_digest.clear()
                 self.changes.clear()
                 self._taste_fired = set()
+                self._run_id += 1
                 self.send_transport = send_transport
                 self._key = keyspec
                 self._groove = groove
@@ -1673,7 +1675,11 @@ class Engine:
     def record_listen(self, result):
         from .listen import summary
         with self._lock:
-            self.last_listen = summary(result)
+            heard = summary(result)
+            # v0.9.4 (O5): where on the clock it was heard, for the review's "under 32 bars old" (internal keys)
+            heard["_bar"] = self.bar if result.get("playing") and self.playing() else None
+            heard["_run"] = self._run_id
+            self.last_listen = heard
 
     def scan_state(self):
         """v0.7.1 whiplash_scan_kit: (playing, transport mode, muted tracks, stop count) in one locked copy."""
@@ -1709,7 +1715,7 @@ class Engine:
         heard = self.last_listen
         if heard is None:
             return None
-        out = {k: v for k, v in heard.items() if k != "at"}
+        out = {k: v for k, v in heard.items() if k != "at" and not k.startswith("_")}
         out["age_s"] = round(time.time() - heard["at"], 1)
         return out
 
@@ -4448,7 +4454,11 @@ class Engine:
             tracks = {t for d in digest for evs in d[2].values() for t, *_ in evs}
             roles = {t: harmony.role_of(t, self.pattern, self._kit_tracks) for t in tracks}
             genre = self._raw_pattern.family if self._raw_pattern is not None else None
-            energy = (self._groove or {}).get("energy")
+            info = self._groove_info()  # v0.9.4: a plain classic genre is its classic groove at energy 3
+            energy = info["energy"] if info else None
+            record = self._groove_record()
+            levels = len(record.levels) if record is not None else None
+            listen, run = (dict(self.last_listen) if self.last_listen else None), self._run_id
             prog = self._prog
             chords = ([c.name for c in prog.chords] if prog is not None else None)
             playing = self.playing()
@@ -4461,13 +4471,15 @@ class Engine:
             if bar is not None:
                 moves.append((bar, f"{m.get('param')} on track {m.get('track')} {m.get('from')} -> {m.get('value')}"))
         return {"digest": digest, "changes": changes, "moves": moves, "roles": roles, "genre": genre,
-                "energy": energy, "chords": chords, "playing": playing, "swing": swing, "humanize": humanize}
+                "energy": energy, "chords": chords, "playing": playing, "swing": swing, "humanize": humanize,
+                "levels": levels, "listen": listen, "run": run}
 
     def taste_hints(self):
         """{hint id: sentence} firing now, over the default window."""
         x = self._taste_inputs()
         m = taste.metrics(x["digest"], x["changes"], x["moves"], x["roles"])
-        return taste.hints(m, x["genre"], x["energy"]), m
+        heard, _ = taste.heard(x["listen"], x["digest"], x["run"])
+        return taste.hints(m, x["genre"], x["energy"], heard, x["levels"]), m
 
     def new_taste_hint(self):
         """A musical tool result's taste_hint: the first hint that fires now but didn't at the last result, else None."""
@@ -4497,7 +4509,8 @@ class Engine:
         win = digest[-bars:]
         first, last = win[0][0], win[-1][0]
         m = taste.metrics(digest, x["changes"], x["moves"], x["roles"], window=bars)
-        fired = taste.hints(m, x["genre"], x["energy"])
+        heard, listen_note = taste.heard(x["listen"], digest, x["run"])
+        fired = taste.hints(m, x["genre"], x["energy"], heard, x["levels"])
         changed = [{"bar": b, "what": f"{tool.removeprefix('whiplash_')} {summary}".strip(), "by": "you"}
                    for b, tool, summary in x["changes"] if first <= b <= last]
         changed += [{"bar": b, "what": what, "by": "user"} for b, what in x["moves"] if first <= b <= last]
@@ -4510,9 +4523,11 @@ class Engine:
                "unchanged_for_bars": m["unchanged_for_bars"], "section": win[-1][3], "energy": x["energy"],
                "chords": x["chords"] or win[-1][4], "thresholds": limits,
                "metrics": {k: v for k, v in m.items() if k != "unchanged_for_bars"},
-               "hints": list(fired.values()), "listen": None,
+               "hints": list(fired.values()), "listen": heard,
                "feedback_only": "nothing here changed the beat; pick a hint's move, or keep going"}
         out["metrics"]["swing"], out["metrics"]["humanize"] = round(x["swing"] * 100, 1), x["humanize"]
+        if listen_note:
+            out["listen_note"] = listen_note
         if len(win) < bars:
             out["window_note"] = f"only {len(win)} bar(s) played, so the review covers those"
         if not x["playing"]:

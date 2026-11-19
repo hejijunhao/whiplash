@@ -24,7 +24,7 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
 - **Part R** (after P) covers v0.6.1: arrangement, fills by role, and the routing report (PR #17's HW 6.1-1 to 6.1-9). R1 is the demo's optional arrangement beat: run it before using that beat on stage.
 - **Part V** (after R) covers v0.7.0's listening loop (PR #20's HW 7.0-1 to 7.0-9). It needs USB AUDIO/MIDI, numpy and sounddevice on the Air, and microphone permission. V6 unplugs the cable, so do it last, with Part L.
-- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8). O10-O13 cover v0.9.1 (O2): darker and brighter (harmonic, timbral, register), tension and release, and key changes. O14-O17 cover v0.9.2 (O3): the four new genres and the on-request leads. O18-O20 cover v0.9.3 (O4): moves, energy per section and the breakdown styles.
+- **Part O** (after W) covers v0.9.0's ontology O1a and O1b: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, key lock, phrases that follow the chords, and the taste review (spec §8 HW O-1 to O-6, O-8). O10-O13 cover v0.9.1 (O2): darker and brighter (harmonic, timbral, register), tension and release, and key changes. O14-O17 cover v0.9.2 (O3): the four new genres and the on-request leads. O18-O20 cover v0.9.3 (O4): moves, energy per section and the breakdown styles. O21 covers v0.9.4 (O5): a review that quotes the last listen, and the taste thresholds by ear.
 - **Part W** (after V) covers v0.7.1's kit scan (PR #22's HW 7.1-1 to 7.1-8), with the same setup as V. W8 unplugs the cable, so do it last, with Part L.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
@@ -832,6 +832,17 @@ v0.9.3 (O4). **Setup:** whiplash v0.9.3, 26 tools.
   - Tropical: the drums thin to energy 1; the pad and bass stay.
   - Each time, everything is back on the one after the breakdown.
 - [ ] Pass · [ ] Fail. Notes:
+
+v0.9.4 (O5). **Setup:** whiplash v0.9.4, 26 tools, USB CONFIG = USB AUDIO/MIDI and `whiplash[listen]` installed (as Part V).
+
+### O21. A review that heard the unit, and the thresholds by ear (HW O-8 extended; §15.3 Q52)
+- **Type:** *"Play tech house."* Raise the bass: *"Bass level up to 127."* Then *"Listen for 2 bars."* and *"How's it sounding?"* Then *"Bass down to 90."*, *"Listen again."* and *"How's it sounding now?"*
+- **Expect:**
+  - Hermes quotes `whiplash_status(review: …)`, including what the listen heard (`listen`: masking, clipping, `low_pct`). With the loud bass it should name the masked kick and offer `bass.offbeat` on track 6 or a lower bass level; after the bass comes down the masking hint should be gone if the listen no longer hears it.
+  - **Hermes changes nothing by itself** and never starts a listen unasked.
+  - About 40 bars after the last listen (at 126 BPM, about 75 s) the review's `listen` is `null` with a `listen_note`.
+- **Thresholds by ear:** let tech house, deep house, techno and minimal each run untouched. Write down when it starts to feel stale: Whiplash flags tech house at 8 bars, deep house at 32, techno and minimal at 64.
+- [ ] Pass · [ ] Fail. Masking heard as expected? ____ Stale points by ear (bars): tech house ____ deep house ____ techno ____ minimal ____
 
 ---
 
