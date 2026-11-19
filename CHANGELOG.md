@@ -62,6 +62,7 @@ Added
 
 Changed
 - `whiplash_arrange`'s `loop: true` is the same as `then: "loop"`; both still work, and a contradiction is refused. Forms and sections default to `stop`, moves to `continue`.
+- CI: the test job's `timeout-minutes` rises from 10 to 20 (`.github/workflows/tests.yml`). With the O4 tests and the informational clock-jitter step, the macOS jobs ran past 10 minutes (py3.11 took 9m46s; py3.13 was cancelled at about 10m10s with every step green). The jitter step is unchanged.
 - Budget pins: tools 4,350, params 10,200, JSON 24,650 bytes (measured 4,322 / 10,170 / 24,625). The JSON passes the spec's proposed 24,000: the grammar's schema is about 700 bytes and O3 left 81.
 - Every pre-0.9.3 call plays bit for bit as before: `club`, `short_demo` (with and without `loop`) and plain `sections` are pinned against digests taken on `main` in deep house, techno and classic house.
 
