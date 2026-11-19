@@ -1,6 +1,7 @@
 # Hardware test session: Whiplash on a Digitakt II
 
-This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.7.1** that hasn't been checked on a real unit yet, except v0.6.2's transitions and `whiplash_mix` (PR #19): those have their hardware checks in that PR and reference §15.3 Q15-17, and aren't in this file yet:
+This is one ordered session for Phil on the Air, with Hermes and a Digitakt II on USB MIDI. It covers everything merged up to **v0.9.5** that hasn't been checked on a real unit yet, except v0.6.2's transitions and `whiplash_mix` (PR #19), whose hardware checks are in that PR and reference §15.3 Q15-17, and v0.8.0's play along (reference §15.3 Q26-31). **For v0.9 (the ontology) run [v0.9-hardware-checklist.md](v0.9-hardware-checklist.md) instead of Part O:** the same checks, plus the v0.9.5 ones, reordered into one session genre by genre. Part O stays below as the per-phase record.
+- v0.9.0-v0.9.5: the ontology (Part O, O1-O21; see the v0.9 session above),
 - the visualiser's SECTIONS timeline and EAR module (E10-E11, PR "Visualiser: section timeline + listening view"),
 - v0.7.1: the kit scan, `whiplash_scan_kit` (one note per track heard and classified; labels proposed, never applied) (Part W, PR #22's HW 7.1-1 to 7.1-8),
 - v0.7.0: the listening loop, `whiplash_listen` (capture, loudness, kick timing, the loudness guard, the ramp and CC-rate caps) (Part V, PR #20's HW 7.0-1 to 7.0-9),
@@ -40,7 +41,7 @@ Type the prompts as written; *italic* text in a prompt is a placeholder. If Herm
 ```bash
 git -C ~/whiplash pull          # symlinked checkout; or: hermes plugins update whiplash
 hermes gateway restart          # required: the gateway keeps old plugin code until it restarts
-hermes plugins list             # whiplash -> enabled (v0.7.1, 22 tools)
+hermes plugins list             # whiplash -> enabled (v0.9.5, 26 tools)
 ```
 
 A new chat is **not** enough after an update. Only `hermes gateway restart` loads the new code. If `hermes plugins list` shows fewer tools or an older version, the gateway didn't restart: run it again.
@@ -693,7 +694,9 @@ Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 
 ---
 
-## O. Ontology O1a + O1b: grooves, energy, named progressions, key lock, phrases, taste, v0.9.0 (ontology spec §8 HW O-1 to O-6, O-8; §15.1 #38-39; §15.3 Q32-39)
+## O. Ontology v0.9.0-v0.9.4 (O1a-O5): grooves, energy, progressions, key lock, phrases, taste, intents, the O3 genres, arrangement grammar, heard reviews (ontology spec §8 HW O-1 to O-8; §15.1 #38-43; §15.3 Q32-52)
+
+**Run [v0.9-hardware-checklist.md](v0.9-hardware-checklist.md) instead:** it has every check below, reordered into one session, plus the v0.9.5 audit's (Q53). This part stays as the per-phase record; its check IDs map there.
 
 v0.9.0 (O1a) adds named grooves with five energy levels, microtiming, ghost notes, named fills, classic/Chicago house, named chord progressions with the `shell` voicing, and key lock. O1b adds phrase lines that follow the chords (`write_part(phrase)`; Chicago house's bass and stabs are phrases) and the taste review (`whiplash_status(review)`). It sends **no new message type and no new CC**: only notes, and the existing CCs when you ask for them. All of it is **untested on hardware**. Every value below is a proposed default from the spec.
 
@@ -1114,6 +1117,8 @@ Fails go in a GitHub issue, or the next build plan, with the check ID.
 | Q23 Kit scan and the unit's mutes | W5 |
 | Q24 Kit scan and the unit's own pattern | W3 |
 | Q25 The unit follows Whiplash's clock steadily | R10 (and 0.2 for the laptop) |
+| Q32-Q52 The ontology (v0.9.0-v0.9.4) | O1-O21; in [v0.9-hardware-checklist.md](v0.9-hardware-checklist.md) its table maps each |
+| Q53 The energy filter reopens after `then: "continue"` (v0.9.5) | [v0.9-hardware-checklist.md](v0.9-hardware-checklist.md) M4 |
 
 | Plan item / §15.1 | Check |
 | --- | --- |

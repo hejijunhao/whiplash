@@ -66,9 +66,23 @@ def change_bars(digest, changes, moves):
     bars = {c[0] for c in changes} | {m[0] for m in moves}
     bars |= {d[0] for d in digest if d[6]}  # a ramp ran on this bar
     for prev, cur in zip(digest, digest[1:]):
-        if cur[3] != prev[3] and cur[3] is not None:  # an arrangement section started
+        if cur[3] != prev[3]:  # an arrangement section started, or the arrangement ended (then: continue)
             bars.add(cur[0])
+    bars |= {b for b, _ in mute_changes(digest)}  # audit: an enter/exit, or the arrangement's mutes lifting
     return bars
+
+
+def mute_changes(digest):
+    """[(bar, 'tracks 4 in, 5 out')] where the set of muted tracks changed from one bar to the next (an arrangement
+    enter or exit, a section's mutes, the end of an arrangement, or a mute). Pure; reads the digest only."""
+    out = []
+    for prev, cur in zip(digest, digest[1:]):
+        if cur[5] != prev[5]:
+            back, gone = sorted(prev[5] - cur[5]), sorted(cur[5] - prev[5])
+            words = ([f"track{'s' if len(back) > 1 else ''} {', '.join(map(str, back))} in"] if back else []) + \
+                    ([f"track{'s' if len(gone) > 1 else ''} {', '.join(map(str, gone))} out"] if gone else [])
+            out.append((cur[0], ", ".join(words)))
+    return out
 
 
 def unchanged_for(digest, changes, moves):

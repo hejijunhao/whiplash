@@ -272,6 +272,12 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "unknown groove / progression / lane" error | read its `closest:` names, or `whiplash_list_library(kind: ...)`; never guess a name twice |
 | "energy needs a groove" | add `groove` (`"A"` is the genre's classic) |
 | "has one energy level (3)" (soul.classic, breaks.classic) | switch to a genre with levels, or use `density` |
+| "already at energy 5" / "already at energy 1" | nothing changed: the groove is at its busiest (or sparsest); offer a fill, a lane or a phrase instead |
+| "groove X belongs to Y, not Z" | drop `genre`/`mood` (a full groove name picks its genre), or pick one of that genre's grooves |
+| "follow is for melodic parts" | expected: drums and lanes never follow the chords; put `follow` on a bass, chord, pad or lead part |
+| "has no genre phrases" (soul, breaks) on `phrase: "genre"` | name a phrase (`bass.root_follow`, `stab.offbeat`, ...) from `whiplash_list_library(kind: "phrase")` |
+| "give chords or name, not both" | a library `name` brings its own chords: send one of them (overrides like `bars_per_chord` are fine) |
+| "nothing is playing: start a pattern ..." on a move, intent or energy | start the beat with `whiplash_play_pattern`, then repeat the call |
 | "leads stay model-written" on `phrase: "genre"` | write the notes, or name a lead phrase (`arp.chord_up`, `lead.stutter`, ...) if the user asked for one |
 | "has no chord phrase" (minimal techno) | expected: it plays without chords; name a phrase (`stab.single`) if the user wants one |
 | "Play minimal" sounds like minimal house | expected: bare "minimal" is minimal house; `genre: "minimal techno"` for the other |
@@ -289,6 +295,8 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Build to the drop", "break it down", "drop it now" | `whiplash_arrange(move: ..., bars: ...)`; the beat keeps going after it |
 | "unknown section type" / "unknown move" | use one of the names the error lists |
 | "bar 20 is outside build (8 bars)" | `enter`/`exit` bars count inside the section: 1-8, or -1..-8 from its end |
+| "can't both enter and exit" | one group per section enters or exits, not both: split the section |
+| "slam is two bars long; bars is for build, drop and breakdown" | drop `bars` from the slam |
 | `warnings` on a form ("is 12 bars") | it plays; mention DJs count in 8, 16 and 32 if the user cares |
 | A breakdown "didn't drop the bass" in techno | expected: techno's breakdown drops the kick and keeps the bass |
 | `skipped` in status.arrangement ("no longer plays") | the genre changed under a form: section energy only moves the groove it was started on |

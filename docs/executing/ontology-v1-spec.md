@@ -1,10 +1,12 @@
 # Whiplash ontology v1: spec
 
 Status:
-- **Spec only. Decisions settled** with Phil's orchestrator in two rounds (15 Nov 2026), resolved from genre research. **Fully decided 2026-11-19:** Phil confirmed every §10.1 question, with Q-H3 changed and Q-H4 delegated to Deck, and may revisit them in a later detailed review. **O1a is ready to start on Phil's go.** See §10.
-- Branch `docs/ontology-spec`, cut from `main` at `3f4f883` (v0.8.0 merged, PR #23; visualiser timeline, PR #24).
-- No code, tests, tool or version changes come with it.
-- Nothing here has been tested on a real Digitakt II. Every item marked **HW** is a check for Phil's Air (§8), not a result.
+- **Implemented** in v0.9.0-v0.9.4: O1a, O1b, O2, O3, O4 and O5, PRs #26-#31, one build plan each (`ontology-o1a-build-plan.md` to `ontology-o5-build-plan.md`; each lists where it deviated from this spec).
+- **Audited after O5** in [ontology-v1-audit.md](ontology-v1-audit.md); its fixes ship as v0.9.5.
+- The text below is the spec as decided, kept as written except for short "shipped" notes where the build settled something differently (§1.4, §4.2.1).
+- **Decisions settled** with Phil's orchestrator in two rounds (15 Nov 2026), resolved from genre research. **Fully decided 2026-11-19:** Phil confirmed every §10.1 question, with Q-H3 changed and Q-H4 delegated to Deck, and may revisit them in a later detailed review. See §10.
+- Written on branch `docs/ontology-spec`, cut from `main` at `3f4f883` (v0.8.0 merged, PR #23; visualiser timeline, PR #24). The demo-safe digests in `tests/test_audit.py` were taken on that commit.
+- Nothing here has been tested on a real Digitakt II. Every item marked **HW** is a check for Phil's Air, not a result. All of them are in one session: [v0.9-hardware-checklist.md](../testing/v0.9-hardware-checklist.md).
 
 Inputs:
 - Phil's DeepSeek V4 sessions. With a weaker model, the beats still come out slightly simplistic.
@@ -135,6 +137,8 @@ Today the tool descriptions total 4,033 of the 4,100-character cap. The caps are
 | forms and performance moves | `whiplash_arrange`: `form`, `then`, `move`, `bars`, and section keys `energy`, `fill_every`, `enter`, `exit` | O4 |
 
 Proposed caps once all phases ship: tools 4,350, params 10,300, JSON 24,000 bytes, **26 tools**. Each phase raises only what it uses, and says so in its PR.
+
+**Shipped (v0.9.4):** 26 tools; caps pinned at tools 4,350, params 10,200 and JSON 24,650 bytes. JSON went 650 bytes over the proposal in O4: the four `whiplash_arrange` additions, explained in its CHANGELOG entry. Measured: 4,322 / 10,170 / 24,625.
 
 ### 1.5 Aliases and moods (`patterns.ALIASES`, `patterns.MOODS`)
 
@@ -505,7 +509,7 @@ class Groove:              # a drum kit's feel at five energy levels
 | `clap.jacked` | clap | 4, 12 and the last 16th (15) | +0.5 | §2 Attack (late or jacked clap) | O1 |
 | `snare.2_4` | snare | 4, 12, layered under the clap | 0 | §3 TPS (layered clap/snare) | O1 |
 | `clap.every_other_bar` | clap | 2 bars: 4/12 in bar 2 only | 0 | §6 TPS | O3 |
-| `rim.bossa` | rim | syncopated 3-3-2 | 0 | **by ear** | O1 |
+| `rim.bossa` | rim | syncopated 3-3-2 (**shipped** as the bossa clave, 3-3-4-3-3 over 16: steps 0, 3, 6, 10, 13; kept by the audit) | 0 | **by ear** | O1 |
 | `rim.syncopated` | rim | 3, 6, 11 (plus 14 at energy 5) | 0 | §2 Attack (syncopated rim or cowbell) | O1 |
 | `rim.on_3` | rim | step 8 | 0 | §4 BeatKey | O3 |
 | `rim.sparse_2_4` | rim | 4, 12 at low velocity | +0.5 | §6 Attack | O3 |

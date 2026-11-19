@@ -7,7 +7,10 @@ repo: https://github.com/hejijunhao/whiplash
 sha: "<40-hex sha placeholder>"
 description: >-
   Let Hermes jam live on an Elektron Digitakt II over USB MIDI: genre/mood beats with MIDI clock, routed
-  onto a session kit map of what each track holds (tracks 1-16), in any key with chord progressions,
+  onto a session kit map of what each track holds (tracks 1-16), in any key with chord progressions, a named
+  library (whiplash_list_library) of eight electronic genres with grooves at five energy levels, named
+  progressions with darker/brighter/tension intents, bass and chord phrases that follow the chords, forms
+  and one-call moves (build to the drop, breakdown, slam), and read-only repetition/busyness feedback,
   arranged into song sections (whiplash_arrange: intro, build, drop, outro on bar lines), written melodies
   and rhythms, bar-quantized pattern switches with DJ-style transitions (filter swap, drop swap, riser),
   track levels and pan with saved mixes (whiplash_mix), listening to the unit's real output over USB audio
@@ -35,7 +38,7 @@ maintainer: pgbouncer
 tier: community
 category: tools
 requires_hermes: ">=0.19"
-version: "0.9.4"
+version: "0.9.5"
 readme: true
 platforms: [linux, macos]
 known_issues:

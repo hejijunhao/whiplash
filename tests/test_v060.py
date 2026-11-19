@@ -176,7 +176,7 @@ def test_write_part_key_current_uses_the_playing_key(fake):
 @pytest.mark.parametrize("symbol, key, root, shape, name", [
     ("i", AM, 9, (0, 3, 7), "Am"), ("VI", AM, 5, (0, 4, 7), "F"), ("III", AM, 0, (0, 4, 7), "C"),
     ("VII", AM, 7, (0, 4, 7), "G"), ("V7", AM, 4, (0, 4, 7, 10), "E7"), ("ii°", AM, 11, (0, 3, 6), "Bdim"),
-    ("iv7", AM, 2, (0, 3, 7, 10), "Dm7"), ("bVII", harmony.Key(0, "major"), 10, (0, 4, 7), "A#"),
+    ("iv7", AM, 2, (0, 3, 7, 10), "Dm7"), ("bVII", harmony.Key(0, "major"), 10, (0, 4, 7), "Bb"),
     ("bVII", harmony.Key(5, "major"), 3, (0, 4, 7), "Eb"), ("Imaj7", harmony.Key(0, "major"), 0, (0, 4, 7, 11), "Cmaj7"),
     ("Vsus4", harmony.Key(0, "major"), 7, (0, 5, 7), "Gsus4"), ("VI", harmony.Key(5, "minor"), 1, (0, 4, 7), "Db"),
     ("Am", AM, 9, (0, 3, 7), "Am"), ("F", AM, 5, (0, 4, 7), "F"), ("G7", AM, 7, (0, 4, 7, 10), "G7"),

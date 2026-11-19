@@ -405,7 +405,7 @@ def test_energy_up_shows_under_changed_at_its_bar(tool):
     assert out["success"] and out["lands_at_bar"] == 4
     run(tool, 4, 6)
     review = call("whiplash_status", review=4)
-    assert {"bar": 4, "what": "mutate action=energy amount=up", "by": "you"} in review["changed"]
+    assert {"bar": 4, "what": "mutate energy 3 -> 4", "by": "you"} in review["changed"]
     assert review["unchanged_for_bars"] == 2 and review["energy"] == 4
 
 

@@ -2537,6 +2537,8 @@ class Engine:
         pattern, compiled = grooves.compile(groove, new, base, kit)  # outside the lock the clock needs
         state = {"name": groove.name, "energy": new, "genre": groove.genre, "swing": groove.swing,
                  "lanes": compiled["lanes"], "unplaced": compiled["unplaced"]}
+        if compiled["clamped"]:  # audit: reported here too, as play_pattern and write_part(groove) do (spec §4.2)
+            state["pushed_downbeat_clamped"] = sorted(set(compiled["clamped"]))
         with self._lock:
             self._require_playing()
             at = max(at, self.bar + 1)
@@ -2546,6 +2548,8 @@ class Engine:
         if compiled["unplaced"]:
             out["unplaced"] = compiled["unplaced"]
             out["unplaced_note"] = UNPLACED_NOTE
+        if compiled["clamped"]:
+            out["pushed_downbeat_clamped"] = state["pushed_downbeat_clamped"]
         return out
 
     def schedule_drop(self, tracks, bars, fill=False):
@@ -2868,7 +2872,14 @@ class Engine:
                 if not given_density and genre_density is not None:
                     density = genre_density
             else:
-                entry = library.resolve("phrase", phrase)
+                try:
+                    entry = library.resolve("phrase", phrase)
+                except library.LibraryError as exc:  # audit: scope the listing to this track's role (spec §5.3)
+                    tag = role if any(role in p_.tags for p_ in phrases.PHRASES.values()) else None
+                    msg = str(exc)
+                    if tag and msg.endswith("kind: 'phrase')"):
+                        msg = msg[:-1] + f", tag: {tag!r})"
+                    raise library.LibraryError(msg) from None
             density = phrases.check_density(density, entry)
             seed = phrases.check_seed(seed)
             floor = phrases.check_register(register, entry)
@@ -3660,7 +3671,7 @@ class Engine:
                 current_energy = self._energy_next["groove"]["energy"]
             base_energy = (self._arr or {}).get("base_energy") or current_energy
             kit = dict(self._kit_tracks)
-        warnings, move_name, form_name = [], None, None
+        warnings, move_name, form_name, efilt = [], None, None, False
         try:
             if kind == "preset":
                 name, raw = arrange.preset(preset, bpm, seconds)
@@ -3681,13 +3692,14 @@ class Engine:
                     else:
                         name, items, filt = "form", _form_mod.parse(form), False
                     form_name = name
-                    raw, warnings = _form_mod.expand(items, record, filt if energy_filter is None else energy_filter,
-                                                     entry)
+                    efilt = filt if energy_filter is None else energy_filter
+                    raw, warnings = _form_mod.expand(items, record, efilt, entry)
             else:
                 move_name = _form_mod.move_name(move)
                 items, filt = _form_mod.move_sections(move_name, bars, record, drop_mix)
                 name = f"move {move_name}"
-                raw, warnings = _form_mod.expand(items, record, filt if energy_filter is None else energy_filter)
+                efilt = filt if energy_filter is None else energy_filter
+                raw, warnings = _form_mod.expand(items, record, efilt)
             secs = arrange.sections(raw, internal=raw is not sections)  # form.py's own keys only via form
             resolved = [self._arrange_section(sec, key) for sec in secs]
         except (arrange.ArrangeError, harmony.HarmonyError, _form_mod.FormError, library.LibraryError) as exc:
@@ -3723,6 +3735,7 @@ class Engine:
                              "what": f"the {name} arrangement"})
             if replaced:
                 self._cancel_owner(ARR_OWNER)  # closed cutoffs reopen on the new arrangement's first section
+                self._withdraw_pending(old, at)  # audit: replaced from the next bar (Q-A2), its last-bar drop too
                 if compiled:
                     self._unthin(old)  # the new arrangement's sections set the energy from here
                 else:
@@ -3731,7 +3744,9 @@ class Engine:
                          "offsets": offsets, "total": total, "index": None, "section_start": None, "skipped": [],
                          "ended_at_bar": None, "levels": compiled, "groove": groove.name if compiled else None,
                          "base_energy": base_energy if compiled else None, "events": {}, "every": None,
-                         "thinned": {}, "notes": []}
+                         "thinned": {}, "notes": [],
+                         # audit: a replaced arrangement's closed energy filter is reopened when this one ends
+                         "energy_filter": bool(efilt) or bool(replaced and old.get("energy_filter"))}
             roles = self._roles_playing()
             plan, bar = [], at
             for sec in resolved:
@@ -3813,6 +3828,11 @@ class Engine:
             if any(r[1] == ccmap.PARAMS["filter_freq"].cc for sec in resolved for r in sec["ramps"]):
                 out["filter_note"] = ("the build's ramp leaves filter_freq where it ends (127 in the presets) until "
                                       "the kit is reloaded on the unit; tell the user")
+                if efilt:  # audit: the energy filter ends below 127 in a quiet section (an outro is 48)
+                    out["filter_note"] = (f"the energy filter moves the music's filter_freq per section; when the "
+                                          f"arrangement ends with continue, clear or undo it reopens to "
+                                          f"{_form_mod.FILTER_DEFAULT}, but with stop it stays where it ended "
+                                          "until the kit is reloaded on the unit; tell the user")
             if any(sec["style"] == "filter_low_end" for sec in resolved):
                 out["breakdown_note"] = (f"the bass cutoff closes to {_form_mod.LOW_END_TO} and reopens to the value "
                                          f"Whiplash last sent, or {_form_mod.FILTER_DEFAULT} (the unit's default) "
@@ -3994,6 +4014,8 @@ class Engine:
         goes back to, or None."""
         self._unthin(arr)
         arr["events"], arr["every"] = {}, None
+        if arr.get("energy_filter"):
+            self._reopen_energy_filter()
         base = arr.get("base_energy")
         info = self._groove_info()
         if base is None or info is None or info["name"] != arr.get("groove") or base not in arr["levels"]:
@@ -4005,6 +4027,41 @@ class Engine:
             self._energy_next = {"pattern": pattern, "groove": state, "at": at}
             return base
         return base if self._section_energy(arr, base) else None
+
+    def _withdraw_pending(self, arr, at):
+        """audit: the running section's last-bar drop and fill that haven't landed by bar at, withdrawn when another
+        arrangement replaces it (caller holds _lock). Only what that section scheduled; the user's own stay."""
+        pending = arr.get("pending") or {}
+        for track, span in pending.get("drops", {}).items():
+            if span[0] >= at and self._drops.get(track) == span:
+                del self._drops[track]
+        if pending.get("fills") and pending["fills"][0] >= at:
+            bar, tracks = pending["fills"]
+            left = self._fills.get(bar, set()) - tracks
+            if left:
+                self._fills[bar] = left
+            else:
+                self._fills.pop(bar, None)
+            names = self._fill_names.get(bar)
+            if names:
+                for track in tracks:
+                    names.pop(track, None)
+                if not names:
+                    self._fill_names.pop(bar, None)
+        arr["pending"] = {"drops": {}, "fills": None}
+
+    def _reopen_energy_filter(self):
+        """audit: the energy filter (Q-A1) closes the music cutoffs from 127; as its arrangement ends (continue,
+        clear, undo) they ramp back to 127 over REOPEN_BARS, as a filter_swap's reopen does (caller holds _lock).
+        Dict work over at most 16 tracks."""
+        mido = None
+        for track in sorted(arrange.resolve(("music",), self._roles_playing())):
+            current = self._cc_values.get((track - 1, FILTER_CC))
+            if current is None or current >= _form_mod.FILTER_DEFAULT:
+                continue
+            mido = mido or __import__("mido")
+            self._start_ramp(mido, track, FILTER_CC, "filter_freq", current, _form_mod.FILTER_DEFAULT,
+                             _transition_mod.REOPEN_BARS * TICKS_PER_BAR, "log", owner=REOPEN)
 
     def _enter_section(self, arr, i, bar_n, start=None):
         """Schedule one section on its first bar (caller holds _lock): dict and set work over at most 16 tracks.
@@ -4083,8 +4140,9 @@ class Engine:
             else:
                 self.muted.add(track)
                 self._arr_muted.add(track)
+        pending = arr["pending"] = {"drops": {}, "fills": None}  # audit: what a replacing move withdraws
         for track in arrange.resolve(sec["drop"], roles) if sec["drop"] else ():
-            self._drops[track] = (last, last + 1)
+            self._drops[track] = pending["drops"][track] = (last, last + 1)
         fill, names = self._section_fill(sec, roles, active | entering if sec["fill_every"] else active)
         if sec["fill_every"]:
             if fill:
@@ -4093,6 +4151,7 @@ class Engine:
             events.setdefault(last, []).append(("fill", None))  # resolved on the last bar, from the level then
         elif fill:
             self._fills.setdefault(last, set()).update(fill)
+            pending["fills"] = (last, set(fill))
             if names:
                 self._fill_names.setdefault(last, {}).update(names)
         if sec["crash"]:  # the drop move: a crash on every cymbal-labelled track, on the one
@@ -4488,7 +4547,8 @@ class Engine:
         fired, _ = self.taste_hints()
         with self._lock:
             new = [k for k in fired if k not in self._taste_fired]
-            self._taste_fired = set(fired)
+            # audit: only the hint shown counts as delivered; another that fired at once rides the next result
+            self._taste_fired = set(fired) - set(new[1:])
         return fired[new[0]] if new else None
 
     def taste_line(self):
@@ -4514,9 +4574,17 @@ class Engine:
         changed = [{"bar": b, "what": f"{tool.removeprefix('whiplash_')} {summary}".strip(), "by": "you"}
                    for b, tool, summary in x["changes"] if first <= b <= last]
         changed += [{"bar": b, "what": what, "by": "user"} for b, what in x["moves"] if first <= b <= last]
+        marked = set()
         for prev, cur in zip(digest, digest[1:]):
             if first <= cur[0] <= last and cur[3] != prev[3] and cur[3] is not None:
                 changed.append({"bar": cur[0], "what": f"section {cur[3]}", "by": "you"})
+                marked.add(cur[0])
+            elif first <= cur[0] <= last and cur[3] is None and prev[3] is not None:
+                changed.append({"bar": cur[0], "what": "the arrangement ended", "by": "you"})
+                marked.add(cur[0])
+        logged = {c["bar"] for c in changed} | marked
+        changed += [{"bar": b, "what": what, "by": "you"}  # audit: enter/exit inside a section (spec §7.2, Q-T4)
+                    for b, what in taste.mute_changes(digest) if first <= b <= last and b not in logged]
         changed.sort(key=lambda c: c["bar"])
         limits = taste.thresholds(x["genre"])
         out = {"window": [first, last], "playing": x["playing"], "genre": x["genre"], "changed": changed,
