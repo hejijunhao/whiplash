@@ -81,7 +81,7 @@ def density(bars, amount, seed, track):
 # v0.9.0 named fills (grooves.FILLS) -> the shape they play. The first five are the v0.6.1 shapes, named.
 NAMED_SHAPES = {"kick.sit_out": "kick", "snare.roll": "snare", "clap.push": "clap", "hat.ratchet": "closed hat",
                 "open.clear": "open hat", "snare.flam_roll": "flam", "kick.double": "double",
-                "hat.open_choke": "choke", "perc.tom_run": "toms"}
+                "hat.open_choke": "choke", "perc.tom_run": "toms", "cymbal.crash": "crash"}
 TOM_NOTES = (60, 57, 53)  # perc.tom_run: native pitch down to the v0.5 floor (60 - NATIVE_FLOOR)
 
 
@@ -123,6 +123,8 @@ def fill(role, hits, name=None):
         return sorted(list(hits) + [(s, note, v, 1, 0.0) for s, v in ((14, 100), (15, 112)) if s not in used])
     if shape == "choke":  # v0.9.0: a long open hat on 12, choked by a short one on 14
         return early + [(12, note, 92, 2, 0.0), (14, note, 110, 0.5, 0.0)]
+    if shape == "crash":  # v0.9.3: a long crash on the one (the drop move, on a cymbal-labelled track)
+        return [(0, note, 112, 8, 0.0)] + [h for h in hits if h[0] != 0]
     if shape == "toms":  # v0.9.0: a falling tom run on the last six 16ths (pitched: only on a note-60 perc line)
         run = [(s, TOM_NOTES[(s - 10) // 2], 80 + (s - 10) * 6, 1, 0.0) for s in range(10, 16)]
         return [h for h in hits if h[0] < 10] + run

@@ -45,7 +45,7 @@ Inputs:
 - **Breakdown styles** resolve at the section's first bar from the roles playing, like group words:
   - `kick_bass_out`: kick and bass muted.
   - `kick_drop`: kick muted, bass stays.
-  - `filter_low_end` / `filter_bass`: the bass track's `filter_freq` closes to 40 over 2 bars from the value Whiplash last sent (else the unit's default, 127, reference §5), and reopens on the next section's one through the existing `_restore` / `_reopen` path that `filter_swap` uses. The result and status say when 127 was assumed.
+  - `filter_low_end` / `filter_bass`: the bass track's `filter_freq` closes to 40 over 2 bars from the value Whiplash last sent (else 127, the default midi.guide lists for it, reference §8.1), and reopens on the next section's one through the existing `_restore` / `_reopen` path that `filter_swap` uses. The result says so (`breakdown_note`).
   - `reduce_drums`: energy 1 when a groove with levels plays; otherwise snare, rim, clap and perc are muted.
   - `subtract_one`: the busiest non-kick drum track (most hits in the bar) is muted for the section.
 - **Fills.** `fill_every: N` plays the section's fill (a name, the named tracks, or the drums' own fills) on the last bar of every N. A named fill uses `schedule_fill`'s rules (its roles, `perc.tom_run` falls back to `snare.roll`).
@@ -56,7 +56,7 @@ Inputs:
 Researchable questions decided here from the spec and the research brief; the PR lists them.
 
 1. **Energy → groups** (when a section gives no `tracks` and its type gives none): 1 kick and hats; 2 kick, hats, perc and bass; 3-5 everything. A groove with levels also moves to that level.
-2. **`rising` energy** (the build, 2→4) steps 2 at the first bar, 3 at a third of the way, 4 at two thirds (an 8-bar build: bars 1, 3 and 6; 16 bars: 1, 6 and 11).
+2. **`rising` energy** (the build, 2→4) steps 2 at the first bar, 3 at a third of the way, 4 at two thirds (rounded: an 8-bar build steps on bars 1, 4 and 6; a 16-bar one on bars 1, 6 and 12).
 3. **Energy filter** (Q-A1, opt-in, on by default only in `progressive_journey` and `melodic_journey`, and in moves for those two genres): the music group's `filter_freq` moves to a per-level target (1: 48, 2: 72, 3: 100, 4: 116, 5: 127, **by ear**) over the section's first 4 bars, from the previous section's target (the first section from 127, the unit's default); a build uses the v0.6.1 build ramp, 20→127 exp, over the whole section. `energy_filter: true|false` overrides it on a form call.
 4. **Enter and exit.** `enter: {hats: -4}` mutes that group when the section starts and unmutes it at the 4th bar from the end (bar 13 of 16); a positive bar counts from the section's start (1 = its first bar). `exit` mutes it from that bar. A group in `enter` plays from then on even if `tracks` didn't list it.
 5. **The outro's thinning** ("density −0.3 on hats in the last 8"): the hats' density drops by 0.3 for the outro's last 8 bars (or its second half when shorter) and is restored on the next section, on `clear`, `continue`, undo and stop.

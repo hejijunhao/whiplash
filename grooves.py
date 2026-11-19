@@ -340,6 +340,7 @@ FILLS = {f.name: f for f in (
     Fill("hat.open_choke", frozenset({"open hat"}), "Long open hat on 12, choked short on 14", "by ear"),
     Fill("perc.tom_run", frozenset({"perc"}), "A falling tom run (notes 60, 57, 53) on a perc track",
          "§2 (simple tom rolls every 8)", fallback="snare.roll"),
+    Fill("cymbal.crash", frozenset({"cymbal"}), "A long crash on the one (the drop move, O4)", "spec §6.2"),
 )}
 
 

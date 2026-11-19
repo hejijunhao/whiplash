@@ -9,11 +9,12 @@ schema enums (hundreds of names would blow the tool-description budget); whiplas
 import difflib
 import re
 
+from . import form as forms
 from . import genres, grooves, phrases, progressions
 
 KINDS = ("genre", "progression", "groove", "lane", "phrase", "fill", "form", "move")
 LIST_MAX = 40
-LATER = {"form": "O4 (v0.9.3)", "move": "O4 (v0.9.3)"}
+LATER = {}  # kinds not built yet (O4 brought the last two, forms and moves)
 # Words a model may use for a genre, longest first when matching. Bare "house" is the classic-house id here, the
 # library prefix; as a genre word in play_pattern it still means deep house (patterns.ALIASES).
 GENRE_WORDS = {
@@ -53,7 +54,7 @@ def family_of(genre):
 
 def _tables():
     return {"genre": genres.GENRES, "progression": progressions.PROGRESSIONS, "groove": grooves.GROOVES,
-            "lane": grooves.LANES, "fill": grooves.FILLS, "phrase": phrases.PHRASES, "form": {}, "move": {}}
+            "lane": grooves.LANES, "fill": grooves.FILLS, "phrase": phrases.PHRASES, "form": forms.FORMS, "move": forms.MOVES}
 
 
 def table(kind):
@@ -83,6 +84,8 @@ def _hint(kind):
 def _aliases(kind):
     if kind == "groove":
         return {a.lower(): n for a, n in grooves.ALIASES.items()}
+    if kind == "move":
+        return {a.replace(" ", "_"): m.name for m in forms.MOVES.values() for a in m.aliases}
     return {}
 
 
@@ -138,12 +141,20 @@ def resolve(kind, text, genre=None):
     if kind == "genre":
         if hint_genre in names and not rest_key:
             return found(hint_genre)
+    elif kind == "form" and genre_word and not rest_key:  # "tech house" -> its record's form
+        record = genres.GENRES.get(hint_genre)
+        if record and record.form in names:
+            return found(record.form)
     elif kind == "groove" and genre_word and not rest_key:  # "chicago" -> house's default groove
         record = genres.GENRES.get(hint_genre)
         if record:
             return found(record.groove)
     if kind == "groove" and rest_key in ("classic",) and hint_genre in grooves.CLASSIC:
         return found(grooves.CLASSIC[hint_genre])
+    if kind == "form" and rest_key and hint_genre:  # "deep house dj" -> deephouse_dj, "minimal long"
+        for g in (hint_genre.replace(".", "_"), family_of(hint_genre)):
+            if f"{g}_{rest_key}" in by_lower:
+                return found(by_lower[f"{g}_{rest_key}"])
     if rest_key:
         if hint_genre:
             for g in (hint_genre, "deephouse" if genre_word == "house" else None):
@@ -214,6 +225,18 @@ def summary(kind, entry):
         out.update(roles=sorted(entry.roles))
         if entry.fallback:
             out["fallback"] = entry.fallback
+    elif kind == "form":
+        if entry.preset:
+            out.update(preset=entry.preset)
+        else:
+            out.update(genre=entry.genre, bars=sum(s["bars"] for s in entry.sections),
+                       sections=", ".join(f"{s['type']} {s['bars']}" for s in entry.sections),
+                       energy_filter=entry.energy_filter)
+    elif kind == "move":
+        if entry.bars:
+            out["bars"] = entry.bars
+        if entry.aliases:
+            out["aliases"] = list(entry.aliases)
     out["source"] = entry.source
     return out
 

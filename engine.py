@@ -41,6 +41,7 @@ from dataclasses import dataclass, replace
 
 from . import arrange, ccmap, genres, grooves, harmony, jam, kitmap, library, mixer, mutate, parts, patterns, progressions
 from . import phrases, taste
+from . import form as _form_mod  # arrange() has a `form` argument
 from . import transition as _transition_mod  # play() has a `transition` argument
 
 log = logging.getLogger("whiplash")
@@ -74,6 +75,7 @@ GUARD_FORCED = ("forced past the loudness guard: the last whiplash_listen showed
 REOPEN = "reopen"  # owner of the ramps that put a transition's closed cutoff back
 MIX_OWNER = "mix"
 ARR_OWNER = "arr"
+_SILENT = ((),) * patterns.BARS  # a line with no hits (a crash on a cymbal track that plays nothing else)
 HOLD_NOTE = 127  # amp_hold 127 = HOLD NOTE, a mode switch (manual 11.7 p. 56; midi.guide): never reached by clamp or ramp
 HOLD_NOTE_INFO = {"hold": "NOTE", "meaning": "HOLD = NOTE (AHD mode): the hold lasts from note-on to note-off, so "
                                             "note length is audible",
@@ -1053,6 +1055,8 @@ class Engine:
         lines = list(self._work.items())
         if prog is not None:  # chord tracks with no line of their own hold one tone per bar
             lines += [(t, None) for t in sorted(self._prog_pads)]
+        if names and fills:  # v0.9.3: a crash plays on a cymbal track that has no line of its own
+            lines += [(t, _SILENT) for t in sorted(fills) if t not in self._work and names.get(t) == _form_mod.CRASH]
         for track, bars in lines:
             drop = self._drops.get(track)
             if drop and drop[0] <= bar_n:
@@ -2075,6 +2079,8 @@ class Engine:
                 self._parts[entry["track"]] = entry["prev"]
             self._reroute()
             return
+        if self._arr is not None:
+            self._end_arrangement(self._arr)  # v0.9.3: its thinning and the energy it moved
         self.muted -= self._arr_muted
         self._cancel_owner(ARR_OWNER)
         if self._restore:
@@ -3567,7 +3573,8 @@ class Engine:
         raise WhiplashError("the beat kept changing while the key change was prepared; nothing changed, try again")
 
     # ---- arrangement ---------------------------------------------------
-    def arrange(self, sections=None, preset=None, seconds=None, loop=False, clear=False):
+    def arrange(self, sections=None, preset=None, seconds=None, loop=False, clear=False, form=None, move=None,
+                bars=None, then=None, energy_filter=None):
         """Play the beat as a song: sections on bar lines, from the next bar (whiplash_arrange).
 
         Each section names the tracks that play (others are muted by Whiplash), and can start ramps on its
@@ -3575,11 +3582,16 @@ class Engine:
         schedules primitives that already exist; the sequencer just looks up whether a section starts at a
         bar. Presets: club, short_demo (about `seconds` long at the current tempo). loop: false (default)
         stops the run on the bar line after the last section. Everything is validated before anything changes.
+
+        v0.9.3 (ontology O4): form (a library form or 'intro 16, build 8, drop 16'), move (build, drop, breakdown,
+        slam) with bars, then (stop, loop, continue), energy_filter, and the section keys type, energy, fill_every,
+        enter and exit (form.py). A move replaces a running arrangement from the next bar (undoable).
         """
         clear = check_flag(clear, "clear")
         if clear:
             extra = [k for k, v in (("sections", sections), ("preset", preset), ("seconds", seconds),
-                                    ("loop", loop)) if v not in (None, "", [], False)]
+                                    ("loop", loop), ("form", form), ("move", move), ("bars", bars), ("then", then),
+                                    ("energy_filter", energy_filter)) if v not in (None, "", [], False)]
             if extra:
                 raise WhiplashError(f"clear: true takes nothing else (got {', '.join(extra)})")
             with self._lock:
@@ -3589,6 +3601,7 @@ class Engine:
                     self._push_undo({"kind": "arrangement", "prev": (had, set(self._arr_muted)),
                                      "what": f"clearing the {had['name']} arrangement"})
                 unmuted = sorted(self._arr_muted & self.muted)
+                energy_back = self._end_arrangement(had, at=self.bar + 1) if had is not None else None
                 self.muted -= self._arr_muted
                 self._arr, self._arr_muted = None, set()
                 cancelled = self._cancel_owner(ARR_OWNER)
@@ -3602,26 +3615,94 @@ class Engine:
                     out["transition_ramps_cancelled"] = cancelled
                 if reopened:
                     out["cutoff_reopening"] = reopened
+                if energy_back is not None:
+                    out["energy_back_to"] = energy_back
                 return out
         loop = check_flag(loop, "loop")
-        given = [k for k, v in (("sections", sections), ("preset", preset)) if v not in (None, "", [])]
+        energy_filter = None if energy_filter in (None, "") else check_flag(energy_filter, "energy_filter")
+        given = [k for k, v in (("sections", sections), ("preset", preset), ("form", form), ("move", move))
+                 if v not in (None, "", [])]
         if len(given) != 1:
-            raise WhiplashError(f"give exactly one of sections or preset ({', '.join(arrange.PRESETS)}), or clear: "
-                                f"true (got {', '.join(given) or 'none'})")
+            raise WhiplashError(f"give exactly one of sections, preset ({', '.join(arrange.PRESETS)}), form or move, "
+                                f"or clear: true (got {', '.join(given) or 'none'})")
+        kind = given[0]
+        if bars not in (None, "") and kind != "move":
+            raise WhiplashError("bars is the length of a move (build, drop, breakdown); a form or sections give "
+                                "each section's bars")
+        if energy_filter is not None and kind not in ("form", "move"):
+            raise WhiplashError("energy_filter is for a form or a move; a section can ramp filter_freq itself")
+        default_then = {"form": "stop", "move": "continue"}.get(kind, "stop")
+        try:
+            then = _form_mod.check_then(then, None)
+        except _form_mod.FormError as exc:
+            raise WhiplashError(str(exc)) from None
+        if loop and then not in (None, "loop"):
+            raise WhiplashError(f"loop: true and then: {then!r} disagree; give one of them")
+        then = "loop" if loop else (then or default_then)
+        if kind == "move" and then == "loop":
+            raise WhiplashError("a move ends with then: continue (or stop); loop is for a form or sections")
         with self._lock:
             self._require_playing()
             bpm, key = self.bpm, self.effective_key() or harmony.Key(0, "major")
+            raw_pattern = self._raw_pattern
+            record = genres.of(raw_pattern)
+            drop_mix = _form_mod.DROP_MIX in self._mixes
+            info = self._groove_info()
+            groove = grooves.GROOVES.get(info["name"]) if info else None
+            current_energy = info["energy"] if info else None
+            if self._energy_next is not None:
+                current_energy = self._energy_next["groove"]["energy"]
+            base_energy = (self._arr or {}).get("base_energy") or current_energy
+            kit = dict(self._kit_tracks)
+        warnings, move_name, form_name = [], None, None
         try:
-            if preset not in (None, ""):
+            if kind == "preset":
                 name, raw = arrange.preset(preset, bpm, seconds)
-            else:
-                if seconds is not None:
-                    raise arrange.ArrangeError("seconds only applies to the short_demo preset")
+            elif seconds is not None and not (kind == "form" and _form_mod._word(form) == "short demo"):
+                raise arrange.ArrangeError("seconds only applies to the short_demo preset")
+            elif kind == "sections":
                 name, raw = "custom", sections
-            secs = arrange.sections(raw)
+                if isinstance(raw, list) and any(isinstance(s, dict) and ("type" in s or "energy" in s)
+                                                 for s in raw):
+                    raw, warnings = _form_mod.expand(raw, record)
+            elif kind == "form":
+                entry = self._resolve_form(form, record)
+                if entry is not None and entry.preset:
+                    name, raw = arrange.preset(entry.preset, bpm, seconds)
+                else:
+                    if entry is not None:
+                        name, items, filt = entry.name, _form_mod.form_sections(entry), entry.energy_filter
+                    else:
+                        name, items, filt = "form", _form_mod.parse(form), False
+                    form_name = name
+                    raw, warnings = _form_mod.expand(items, record, filt if energy_filter is None else energy_filter,
+                                                     entry)
+            else:
+                move_name = _form_mod.move_name(move)
+                items, filt = _form_mod.move_sections(move_name, bars, record, drop_mix)
+                name = f"move {move_name}"
+                raw, warnings = _form_mod.expand(items, record, filt if energy_filter is None else energy_filter)
+            secs = arrange.sections(raw, internal=raw is not sections)  # form.py's own keys only via form
             resolved = [self._arrange_section(sec, key) for sec in secs]
-        except (arrange.ArrangeError, harmony.HarmonyError) as exc:
+        except (arrange.ArrangeError, harmony.HarmonyError, _form_mod.FormError, library.LibraryError) as exc:
             raise WhiplashError(str(exc)) from None
+        # v0.9.3: every groove level a section needs, compiled here in the tool thread (as set_energy does).
+        levels = set()
+        for sec in secs:
+            if sec.energy == _form_mod.RISING:
+                levels |= set(_form_mod.RISING_LEVELS)
+            elif sec.energy is not None:
+                levels.add(sec.energy)
+        compiled = {}
+        if levels and groove is not None and len(groove.levels) > 1:
+            if base_energy is not None:
+                levels.add(base_energy)
+            base = patterns.PATTERNS[groove.genre]
+            for level in sorted(levels):
+                pattern, info_ = grooves.compile(groove, level, base, kit)
+                compiled[level] = (pattern, {"name": groove.name, "energy": level, "genre": groove.genre,
+                                             "swing": groove.swing, "lanes": info_["lanes"],
+                                             "unplaced": info_["unplaced"]})
         total = sum(sec.bars for sec in secs)
         offsets, offset = {}, 0
         for i, sec in enumerate(secs):
@@ -3631,21 +3712,56 @@ class Engine:
             self._require_playing()
             at = self.bar + 1
             replaced = self._arr is not None
+            old = self._arr
             self._push_undo({"kind": "arrangement", "prev": (self._arr, set(self._arr_muted)) if replaced else None,
                              "what": f"the {name} arrangement"})
             if replaced:
                 self._cancel_owner(ARR_OWNER)  # closed cutoffs reopen on the new arrangement's first section
-            self._arr = {"name": name, "sections": resolved, "start": at, "loop": loop, "offsets": offsets,
-                         "total": total, "index": None, "section_start": None, "skipped": [], "ended_at_bar": None}
+                if compiled:
+                    self._unthin(old)  # the new arrangement's sections set the energy from here
+                else:
+                    self._end_arrangement(old, at=at)  # no levels of its own: the energy the old one moved goes back
+            self._arr = {"name": name, "sections": resolved, "start": at, "loop": then == "loop", "then": then,
+                         "offsets": offsets, "total": total, "index": None, "section_start": None, "skipped": [],
+                         "ended_at_bar": None, "levels": compiled, "groove": groove.name if compiled else None,
+                         "base_energy": base_energy if compiled else None, "events": {}, "every": None,
+                         "thinned": {}, "notes": []}
             roles = self._roles_playing()
             plan, bar = [], at
             for sec in resolved:
                 plays = (set(roles) - arrange.resolve(sec["mute"], roles)) if sec["mute"] else \
                     arrange.resolve(sec["tracks"], roles)
+                plays -= {t for s_, _ in sec["enter"] for t in arrange.resolve((s_,), roles)}
                 item = {"name": sec["name"], "bars": sec["bars"], "starts_at_bar": bar,
                         "plays_now": sorted(t for t in plays if t in roles)}
-                if sec["fill"]:
+                if sec["energy"] is not None:
+                    item["energy"] = sec["energy"] if sec["energy"] != _form_mod.RISING else "rising 2->4"
+                if sec["fill_every"]:
+                    item["fills_at_bars"] = [bar + k - 1 for k in range(sec["fill_every"], sec["bars"] + 1,
+                                                                        sec["fill_every"])]
+                    if sec["fill_name"]:
+                        item["fill"] = sec["fill_name"]
+                elif sec["fill"]:
                     item["fill_at_bar"] = bar + sec["bars"] - 1
+                    if sec["fill_name"]:
+                        item["fill"] = sec["fill_name"]
+                for what in ("enter", "exit"):
+                    if sec[what]:
+                        item[what] = {str(s_): bar + off for s_, off in sec[what]}
+                if sec["style"]:
+                    item["breakdown"] = (record.breakdown if record else _form_mod.DEFAULT_BREAKDOWN)
+                    item["does"] = _form_mod.BREAKDOWN_ABOUT[item["breakdown"]]
+                elif sec["name"].startswith("breakdown") and record is not None:
+                    item["breakdown"] = record.breakdown
+                    item["does"] = _form_mod.BREAKDOWN_ABOUT.get(record.breakdown, "")
+                if item.get("breakdown") and record is not None and record.recommends.get("breakdown_chords"):
+                    item["try"] = (f"write_part(track: <chord track>, phrase: "
+                                   f"'{record.recommends['breakdown_chords']}') for a held breakdown pad")
+                if sec["thin"]:
+                    item["thins"] = f"hats' density -{_form_mod.THIN_AMOUNT} over the last bars"
+                if sec["crash"]:
+                    crash = sorted(t for t, (r, _) in self._kit_tracks.items() if r == "cymbal")
+                    item["crash"] = crash or "no cymbal-labelled track: no crash"
                 if sec["drop"]:
                     item["drop_last_bar"] = sorted(arrange.resolve(sec["drop"], roles))
                 if sec["ramps"]:
@@ -3663,19 +3779,38 @@ class Engine:
                     item["mix"] = sec["mix"]
                 plan.append(item)
                 bar += sec["bars"]
+            ends = {"loop": "loops back to the first section",
+                    "stop": f"stops on the bar line at bar {at + total}",
+                    "continue": (f"the beat keeps playing from bar {at + total}: the arrangement's mutes lift"
+                                 + (f" and energy goes back to {base_energy}" if compiled else ""))}[then]
             out = {"arrangement": name, "starts_at_bar": at, "total_bars": total,
-                   "seconds": round(total * 4 * 60 / self.bpm, 1), "loop": loop,
-                   "ends": "loops back to the first section" if loop else f"stops on the bar line at bar {at + total}",
-                   "sections": plan, "replaced": replaced, "applies": "next bar",
+                   "seconds": round(total * 4 * 60 / self.bpm, 1), "loop": then == "loop", "then": then,
+                   "ends": ends, "sections": plan, "replaced": replaced, "applies": "next bar",
                    "note": ("plays_now resolves group words (kick, hats, perc, music, all) from the roles playing now; "
                             "each section resolves them again at its first bar, so a switch is followed. Tracks "
                             "outside a section are muted by Whiplash (no CC). whiplash_stop or clear: true ends it.")}
+            if move_name:
+                out = {"move": move_name, "lands_at_bar": at, "then": then, **out}
+                if replaced:
+                    out["replaced_arrangement"] = old["name"]
+            if form_name:
+                out["form"] = form_name
+            if warnings:
+                out["warnings"] = warnings
+            if any(sec["energy"] is not None for sec in resolved):
+                out["energy_note"] = (f"sections move the groove {groove.name} between levels on their first bar"
+                                      if compiled else
+                                      "energy picks which groups play; this pattern has no groove levels to move")
             if any(r[3] is None for sec in resolved for r in sec["ramps"]):
                 out["ramp_note"] = ("a ramp without 'from' starts from the last value Whiplash sent; with none it "
                                     "is skipped (status shows skipped_ramps)")
             if any(r[1] == ccmap.PARAMS["filter_freq"].cc for sec in resolved for r in sec["ramps"]):
                 out["filter_note"] = ("the build's ramp leaves filter_freq where it ends (127 in the presets) until "
                                       "the kit is reloaded on the unit; tell the user")
+            if any(sec["style"] == "filter_low_end" for sec in resolved):
+                out["breakdown_note"] = (f"the bass cutoff closes to {_form_mod.LOW_END_TO} and reopens to the value "
+                                         f"Whiplash last sent, or {_form_mod.FILTER_DEFAULT} (the unit's default) "
+                                         "if it never sent one")
             if any(sec["transition"] for sec in resolved):
                 out["transition_note"] = ("a section's transition runs over its last bars into the next section; "
                                           "filter_swap needs the cutoff Whiplash last sent (or the section's "
@@ -3684,6 +3819,22 @@ class Engine:
                 out["bars_note"] = (f"the run was started with bars: {self.bars_total}; it stops at bar "
                                     f"{self.pattern_start + self.bars_total} if that comes first")
             return out
+
+    def _resolve_form(self, text, record):
+        """form: a library form, a genre word (its record's form), or None for a 'type bars, ...' string."""
+        if isinstance(text, str) and ("," in text or any(c.isdigit() for c in text)):
+            return None
+        if not isinstance(text, str) or not text.strip():
+            raise _form_mod.FormError("form is a library name (whiplash_list_library(kind: 'form')) or a string "
+                                      "like 'intro 16, groove 16, build 8, drop 16'")
+        try:
+            return library.resolve("form", text, genre=record.name if record else None)
+        except library.LibraryError as exc:
+            try:  # a bare section type ("build") is a one-section form string
+                _form_mod.section_type(text)
+                return None
+            except _form_mod.FormError:
+                raise exc from None
 
     def _arrange_section(self, sec, key):
         """Resolve one validated arrange.Section: ramp params and values, chords voiced (no lock needed)."""
@@ -3723,15 +3874,29 @@ class Engine:
                                         f"({', '.join(mixer.PRESETS)})") from None
         return {"name": sec.name, "bars": sec.bars, "tracks": sec.tracks, "mute": sec.mute, "drop": sec.drop,
                 "fill": sec.fill, "ramps": tuple(ramps), "prog": prog, "transition": sec.transition,
-                "transition_bars": sec.transition_bars, "filter_from": sec.filter_from, "mix": mix}
+                "transition_bars": sec.transition_bars, "filter_from": sec.filter_from, "mix": mix,
+                "energy": sec.energy, "fill_every": sec.fill_every, "fill_name": sec.fill_name, "enter": sec.enter,
+                "exit": sec.exit, "style": sec.style, "thin": sec.thin, "crash": sec.crash}
 
     def _arrange_step(self, bar_n):
-        """At a bar line (caller holds _lock): start a section if one starts here. False = the song ended."""
+        """At a bar line (caller holds _lock): start a section if one starts here. False = the song ended.
+
+        v0.9.3: then "continue" ends the arrangement like clear and keeps playing. Inside the running section, one
+        dict lookup (enter, exit, a rising energy step, the outro's thinning) and one modulo (fill_every)."""
         arr = self._arr
         offset = bar_n - arr["start"]
         if offset < 0:
             return True
         if offset >= arr["total"]:
+            if arr.get("then") == "continue":
+                self._end_arrangement(arr)
+                self.muted -= self._arr_muted
+                self._arr, self._arr_muted = None, set()
+                if self._restore:
+                    self._reopen()
+                self._mark("section", "continue")
+                log.info("whiplash: arrangement %s ended at bar %d, the beat continues", arr["name"], bar_n)
+                return True
             if not arr["loop"]:
                 arr["ended_at_bar"] = bar_n
                 return False
@@ -3739,7 +3904,101 @@ class Engine:
         i = arr["offsets"].get(offset)
         if i is not None:
             self._enter_section(arr, i, bar_n)
+        events = arr.get("events")
+        if events:
+            for op, value in events.pop(bar_n, ()):
+                self._section_event(arr, op, value, bar_n)
+        every = arr.get("every")
+        if every is not None and (bar_n - every[1] + 1) % every[0] == 0 and bar_n <= every[2]:
+            tracks = [t for t in every[3] if t not in self.muted]
+            if tracks:
+                self._fills.setdefault(bar_n, set()).update(tracks)
+                if every[4]:
+                    self._fill_names.setdefault(bar_n, {}).update({t: every[4][t] for t in tracks if t in every[4]})
         return True
+
+    def _section_event(self, arr, op, value, bar_n):
+        """One of a section's mid-section events on its bar (sequencer, caller holds _lock)."""
+        if op == "unmute":
+            for t in value:
+                self.muted.discard(t)
+                self._arr_muted.discard(t)
+        elif op == "mute":
+            for t in value:
+                self.muted.add(t)
+                self._arr_muted.add(t)
+        elif op == "energy":
+            self._section_energy(arr, value)
+        elif op == "fill":  # a rising section's last-bar fill, from the roles its level plays now
+            roles = self._roles_playing()
+            fill, names = self._section_fill(arr["sections"][arr["index"]], roles,
+                                             {t for t in roles if t not in self.muted})
+            if fill:
+                self._fills.setdefault(bar_n, set()).update(fill)
+                if names:
+                    self._fill_names.setdefault(bar_n, {}).update(names)
+        elif op == "thin":
+            for t in value:
+                if t in arr["thinned"] or not self._base(t):
+                    continue
+                prev = self._density.get(t, 0)
+                new = round(max(-1.0, prev - _form_mod.THIN_AMOUNT), 3)
+                arr["thinned"][t] = (prev, new)
+                self._density[t] = new
+                self._rebuild(t)
+
+    def _section_energy(self, arr, level):
+        """Move the groove to a precompiled level (sequencer, caller holds _lock): the _reroute path, as an energy
+        change. True when that level now plays; skipped (and listed) when another groove plays than the one the
+        levels were compiled for."""
+        levels = arr.get("levels")
+        if not levels or level not in levels:
+            return False
+        info = self._groove_info()
+        if info is None or info["name"] != arr["groove"]:
+            note = f"energy {level}: {arr['groove']} no longer plays"
+            if note not in arr["notes"]:
+                arr["notes"] = (arr["notes"] + [note])[-8:]
+            return False
+        if info["energy"] == level and self._energy_next is None:
+            return True
+        pattern, state = levels[level]
+        self._energy_next = None
+        self._raw_pattern, self._groove = pattern, state
+        self._reroute()
+        self._mark("energy", level)
+        return True
+
+    def _unthin(self, arr):
+        """Put back the densities a section thinned, unless something changed them since (caller holds _lock)."""
+        for t, (prev, new) in (arr or {}).get("thinned", {}).items():
+            if self._density.get(t) == new:
+                if prev:
+                    self._density[t] = prev
+                else:
+                    self._density.pop(t, None)
+                self._rebuild(t)
+        if arr:
+            arr["thinned"] = {}
+
+    def _end_arrangement(self, arr, at=None):
+        """What an arrangement changed besides mutes, undone as it ends (continue, clear, undo; caller holds
+        _lock): thinned densities, and the energy it moved. at: from a tool call, the energy lands on that bar
+        line (through _energy_next, as mutate energy); None: on this bar line (sequencer). Returns the energy it
+        goes back to, or None."""
+        self._unthin(arr)
+        arr["events"], arr["every"] = {}, None
+        base = arr.get("base_energy")
+        info = self._groove_info()
+        if base is None or info is None or info["name"] != arr.get("groove") or base not in arr["levels"]:
+            return None
+        if info["energy"] == base and self._energy_next is None:
+            return None
+        if at is not None:
+            pattern, state = arr["levels"][base]
+            self._energy_next = {"pattern": pattern, "groove": state, "at": at}
+            return base
+        return base if self._section_energy(arr, base) else None
 
     def _enter_section(self, arr, i, bar_n, start=None):
         """Schedule one section on its first bar (caller holds _lock): dict and set work over at most 16 tracks.
@@ -3753,6 +4012,23 @@ class Engine:
         self._mark("section", sec["name"])
         if self._restore:  # the previous section's filter_swap: reopen on this section's one
             self._reopen()
+        # v0.9.3: the previous section's thinning and events end here; this section's energy lands first, so the
+        # roles below are the ones its level plays.
+        self._unthin(arr)
+        arr["events"], arr["every"] = {}, None
+        events = arr["events"]
+        energy_applied = False
+        if sec["energy"] is not None:
+            if sec["energy"] == _form_mod.RISING:
+                steps = _form_mod.rising_steps(sec["bars"])
+                into = bar_n - begin
+                now = max((off for off in steps if off <= into), default=0)
+                energy_applied = self._section_energy(arr, steps[now])
+                for off, level in steps.items():
+                    if off > into:
+                        events.setdefault(begin + off, []).append(("energy", level))
+            else:
+                energy_applied = self._section_energy(arr, sec["energy"])
         if sec["prog"] == "clear":
             self._prog = None
             self._refresh_harmony()
@@ -3764,6 +4040,36 @@ class Engine:
             active = set(roles) - arrange.resolve(sec["mute"], roles)
         else:
             active = arrange.resolve(sec["tracks"], roles)
+        if sec["style"] == "reduce_drums" and not energy_applied:  # no groove levels: thin the drums by hand
+            active -= arrange.resolve(("perc",), roles)
+        elif sec["style"] == "subtract_one":  # the busiest non-kick drum element sits out
+            idx = (bar_n - self.pattern_start) % patterns.BARS
+            busy = sorted(((len(self._work.get(t, [[]] * patterns.BARS)[idx]), -t), t) for t in active
+                          if roles.get(t) in arrange.DRUM_ROLES and roles.get(t) != "kick")
+            if busy:
+                active.discard(busy[-1][1])
+                arr["subtracted"] = busy[-1][1]
+        into = bar_n - begin
+        entering = set()
+        for what, op in (("enter", "unmute"), ("exit", "mute")):
+            for spec, off in sec[what]:
+                tracks = sorted(arrange.resolve((spec,), roles))
+                if what == "enter":
+                    entering.update(tracks)
+                    (active.difference_update if off > into else active.update)(tracks)
+                elif off <= into:
+                    active.difference_update(tracks)
+                if off > into and tracks:
+                    events.setdefault(begin + off, []).append((op, tracks))
+        if sec["thin"]:
+            hats = sorted(t for t in arrange.resolve(("hats",), roles) if t in active)
+            first = begin + max(0, sec["bars"] - _form_mod.THIN_BARS) if sec["bars"] > _form_mod.THIN_BARS \
+                else begin + sec["bars"] // 2
+            if hats:
+                if first <= bar_n:
+                    self._section_event(arr, "thin", hats, bar_n)
+                else:
+                    events.setdefault(first, []).append(("thin", hats))
         for track in roles:
             if track in active:
                 self.muted.discard(track)
@@ -3773,15 +4079,21 @@ class Engine:
                 self._arr_muted.add(track)
         for track in arrange.resolve(sec["drop"], roles) if sec["drop"] else ():
             self._drops[track] = (last, last + 1)
-        if sec["fill"] == "default":
-            fill = self._default_fill(roles)
-        elif sec["fill"]:
-            fill = [t for t in arrange.resolve(sec["fill"], roles) if roles.get(t) in mutate.FILL_SHAPES]
-        else:
-            fill = []
-        fill = [t for t in fill if t in active]
-        if fill:
+        fill, names = self._section_fill(sec, roles, active | entering if sec["fill_every"] else active)
+        if sec["fill_every"]:
+            if fill:
+                arr["every"] = (sec["fill_every"], begin, last, tuple(fill), names)
+        elif sec["fill"] and any(op == "energy" for acts in events.values() for op, _ in acts):
+            events.setdefault(last, []).append(("fill", None))  # resolved on the last bar, from the level then
+        elif fill:
             self._fills.setdefault(last, set()).update(fill)
+            if names:
+                self._fill_names.setdefault(last, {}).update(names)
+        if sec["crash"]:  # the drop move: a crash on every cymbal-labelled track, on the one
+            crash = [t for t, (r, _) in self._kit_tracks.items() if r == "cymbal" and t not in self.muted]
+            if crash and bar_n == begin:
+                self._fills.setdefault(bar_n, set()).update(crash)
+                self._fill_names.setdefault(bar_n, {}).update({t: _form_mod.CRASH for t in crash})
         if sec["mix"] is not None:  # recalled on the one, before this section's own ramps
             kind, name = sec["mix"]
             if kind == "saved" and name in self._mixes:
@@ -3798,6 +4110,14 @@ class Engine:
                     continue
                 self._restore.pop((track, cc), None)  # the section's own ramp takes over that cutoff
                 self._start_ramp(mido, track, cc, label, begin, to, ticks, curve)
+        if sec["style"] == "filter_low_end":  # the bass cutoff closes over 2 bars; reopens on the next section
+            mido = __import__("mido")
+            for track in sorted(t for t, r in roles.items() if r == "bass" and t in active):
+                was = self._cc_values.get((track - 1, FILTER_CC))
+                was = _form_mod.FILTER_DEFAULT if was is None else was
+                self._restore[(track, FILTER_CC)] = was
+                self._start_ramp(mido, track, FILTER_CC, "filter_freq", was, _form_mod.LOW_END_TO,
+                                 _form_mod.LOW_END_BARS * TICKS_PER_BAR, "log", owner=ARR_OWNER)
         if sec["transition"]:  # over the section's last bars, into the next section
             n = sec["transition_bars"]
             plays = {t: r for t, r in roles.items() if t in active}
@@ -3807,6 +4127,36 @@ class Engine:
                 arr["skipped"] = (arr["skipped"] + [f"{sec['name']}: {x}" for x in plan["skipped"]])[-8:]
             self._commit_plan(plan, ARR_OWNER)
         log.info("whiplash: section %s at bar %d", sec["name"], bar_n)
+
+    def _section_fill(self, sec, roles, active):
+        """(tracks, {track: fill name}) a section fills (caller holds _lock): its tracks, a fill name's roles (with
+        its fallback), or the drums with the playing groove's own fills; only tracks the section plays."""
+        names = {}
+        if sec["fill_name"]:
+            entry = grooves.FILLS[sec["fill_name"]]
+            tracks = [t for t, r in roles.items() if r in entry.roles and t in active]
+            used = entry.name
+            if not tracks and entry.fallback:
+                used = entry.fallback
+                tracks = [t for t, r in roles.items() if r in grooves.FILLS[used].roles and t in active]
+            return sorted(tracks), {t: used for t in tracks}
+        if sec["fill"] == "default":
+            fill = self._default_fill(roles)
+            groove = self._groove_record() if sec["fill_every"] else None
+            if groove is not None and groove.fills:  # the groove's own fill per role, as mutate fill does
+                for role, fname in groove.fills.items():
+                    fitting = [t for t, r in roles.items() if r == role]
+                    if not fitting and grooves.FILLS[fname].fallback:
+                        continue
+                    names.update({t: fname for t in fitting if t in active})
+                fill = sorted(set(fill) | set(names))
+        elif sec["fill"]:
+            fill = [t for t in arrange.resolve(sec["fill"], roles) if roles.get(t) in mutate.FILL_SHAPES]
+        elif sec["fill_every"]:
+            return self._section_fill({**sec, "fill": "default"}, roles, active)
+        else:
+            fill = []
+        return [t for t in fill if t in active], names
 
     def arrangement_status(self):
         """The arrangement for whiplash_status (caller holds _lock), or None."""
@@ -3818,10 +4168,18 @@ class Engine:
             item = {"name": sec["name"], "bars": sec["bars"], "starts_at_bar": bar}
             if sec["transition"]:
                 item["transition"] = sec["transition"]
+            if sec.get("energy") is not None:
+                item["energy"] = sec["energy"]
             sections.append(item)
             bar += sec["bars"]
         out = {"name": arr["name"], "loop": arr["loop"], "starts_at_bar": arr["start"], "total_bars": arr["total"],
                "sections": sections}
+        if arr.get("then") not in (None, "stop", "loop"):
+            out["then"] = arr["then"]
+        if arr.get("subtracted") is not None:
+            out["subtracted"] = arr["subtracted"]
+        if arr.get("notes"):
+            out["skipped"] = list(arr["notes"])
         if arr["ended_at_bar"] is not None:
             out["ended_at_bar"] = arr["ended_at_bar"]
         elif arr["index"] is not None:

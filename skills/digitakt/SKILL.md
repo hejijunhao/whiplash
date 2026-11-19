@@ -1,6 +1,6 @@
 ---
 name: digitakt
-description: How to drive an Elektron Digitakt II through the Whiplash tools - named grooves, energy levels and progressions from the library, the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, playing along with the user (their knob moves, ramps that yield, call and response, undo), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
+description: How to drive an Elektron Digitakt II through the Whiplash tools - named grooves, energy levels and progressions from the library, the kit map, one-call start, keys and chord progressions, song arrangement (intro, build, drop, outro; forms, breakdown styles and moves like "build to the drop"), DJ-style transitions and mix levels, listening to the unit's audio (loudness, clipping, kick timing) and the loudness guard, playing along with the user (their knob moves, ramps that yield, call and response, undo), writing melodies and rhythms, pitch and register, sample slots, note length vs AMP MODE/HOLD, transport overlap, and a checklist for sounds that come out wrong.
 ---
 
 # Whiplash on a Digitakt II
@@ -16,7 +16,7 @@ Whiplash sends MIDI notes, clock, transport and CCs to the Digitakt II, one MIDI
 ## Named things first (v0.9.0): list, pick, combine
 
 Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does the timing and the harmony.
-1. **List** what exists: `whiplash_list_library(kind: "groove", genre: "house")`. Kinds: `genre`, `progression`, `groove`, `lane`, `phrase`, `fill` (forms and moves come in a later version). `tag` filters (`warm`, `dark`, `jacking`; for lanes a role, `perc`).
+1. **List** what exists: `whiplash_list_library(kind: "groove", genre: "house")`. Kinds: `genre`, `progression`, `groove`, `lane`, `phrase`, `fill`, `form`, `move`. `tag` filters (`warm`, `dark`, `jacking`; for lanes a role, `perc`).
 2. **Pick** by name. Names are `<genre>.<name>` or `<role>.<name>`; any case, spaces or `-` work, and a bare name works when it is unambiguous (`"gospel"`, `"shuffle"`). An unknown name answers with the closest matches.
 3. **Combine** in as few calls as possible:
    - "Chicago house, jack groove, energy 3": `whiplash_play_pattern(groove: "house.jack", energy: 3)`. A full groove name picks its genre.
@@ -26,6 +26,8 @@ Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does 
    - "Shuffled hats on track 10": `whiplash_write_part(track: 10, groove: "hat.offbeat_shuffle")` (a named lane).
    - "A rolling deep house bass": `whiplash_write_part(track: 6, phrase: "bass.rolling_deep")`. It follows whatever chords play, from then on. `phrase: "genre"` takes the genre's own line for that track. Don't pass `notes` with a phrase.
    - "How's it sounding?" / "is it getting stale?": `whiplash_status(review: 16)`. Quote it; don't act on it unless the user agrees.
+   - "Build to the drop in 16 bars": `whiplash_arrange(move: "build", bars: 16)`. "Break it down", "drop it", "slam it": `move: "breakdown"`, `"drop"`, `"slam"`. The beat keeps playing afterwards (v0.9.3, see Arrangement).
+   - "Make it a tech house DJ track": `whiplash_arrange(form: "techhouse_dj")` (or `form: "tech house"`: each genre has its own form).
    - "Darker" / "brighter": `whiplash_set_progression(intent: "darker")`. "More tension", then "let it go": `intent: "tension"`, then `"release"`. "Change key to F minor": `whiplash_set_progression(key: "Fm")` (v0.9.1, see Keys below).
 
 **The house words, plainly:** bare "house" still means **deep house**. Classic/Chicago house is `chicago`, `chicago house` or `classic house` (`genre: "chicago"`); its library prefix is `house.` (`house.jack`). The mood "peak time" means **techno** now; "peak time tech house" keeps tech house. Bare "minimal" means **minimal house**; say "minimal techno" for the other preset. Both share the library prefix `minimal.` (`minimal.house_shuffle`, `minimal.techno_kick`, `minimal.fifth`).
@@ -98,7 +100,7 @@ Each genre plays its own groove, chords and bass from `play_pattern` alone: "pro
 
 - `whiplash_arrange(preset: "short_demo")` turns the playing beat into a song from the next bar line: intro, build, drop, outro, about 75 s at the current tempo (`seconds: 90` for "a 90-second track"; it rounds to 4-bar phrases). `preset: "club"` is intro 16 / build 8 / drop 16 / break 8 / drop 16 / outro 16 bars (80 bars, about 2.5 minutes at 128 BPM).
 - In both presets: the intro plays kick and hats; the build adds perc and the music tracks with a rising filter (`filter_freq` 20 → 127, exp curve) and the kick sits out its last bar; the drop plays everything; the break drops kick and bass; the outro thins to drums. Every section but the outro ends on a fill.
-- **It stops by itself:** with `loop: false` (the default) the run stops cleanly on the bar line after the last section (note-offs, MIDI Stop). `loop: true` starts over from the first section. `clear: true` ends the arrangement and unmutes what it muted; the beat keeps playing. `whiplash_stop` ends everything.
+- **It stops by itself:** by default (`then: "stop"`, or `loop: false`) the run stops cleanly on the bar line after the last section (note-offs, MIDI Stop). `then: "loop"` (or `loop: true`) starts over from the first section. `then: "continue"` ends the arrangement there and keeps the beat playing: its mutes lift and the energy goes back to where it was. `clear: true` ends the arrangement and unmutes what it muted; the beat keeps playing. `whiplash_stop` ends everything.
 - **Custom sections:** `sections: [{name, bars, tracks, mute, drop, fill, chords, bars_per_chord, ramps, transition, transition_bars, filter_from, mix}]`, 1-16 sections of 1-64 bars.
   - `tracks`: what plays (everything else is muted by Whiplash, never with the unit's CC 94). Track numbers or groups: `all`, `drums`, `kick`, `hats` (closed, open, cymbal), `perc` (snare, rim, clap, perc), `bass`, `music` (pad, chord, stab, lead, fx, other), or any kit role. Or `mute`: what doesn't play. Groups resolve again at each section's first bar from the roles playing then, so the arrangement follows a switch or relabel.
   - `drop`: tracks that sit out the section's last bar. `fill: true`: a drum fill on its last bar.
@@ -109,6 +111,21 @@ Each genre plays its own groove, chords and bass from `play_pattern` alone: "pro
   - The presets carry no transition or mix, so they play exactly as in v0.6.1.
 - The result lists each section's `starts_at_bar`, `plays_now` (the groups resolved now), fills, drops, ramps and chords, plus `seconds` and when it `ends`. `whiplash_status.arrangement.current` gives the section playing, `bars_left`, `next` and `next_at_bar`. Read these back instead of guessing.
 - Typical request, "make it a 90-second track: intro, build, drop, outro": `whiplash_play_pattern(genre: ...)` if nothing plays, then `whiplash_arrange(preset: "short_demo", seconds: 90)`.
+
+### Forms, section types, energy and moves (v0.9.3)
+
+- **Moves act now and keep playing** (`then: "continue"`), from the next bar. A move while an arrangement runs replaces it (`replaced_arrangement`); `whiplash_undo` brings the old one back in its section.
+  - `move: "build"`, `bars` (default 8): the hats come in for the last 4 bars, the kick sits out the last bar under a snare roll, then a 16-bar drop at energy 5. "Build to the drop in 16 bars" is `bars: 16`.
+  - `move: "drop"` (`bars` default 16): everything in at energy 5, the saved `drop mix` if there is one (`whiplash_mix(save_as: "drop mix")`), a crash on a cymbal-labelled track.
+  - `move: "breakdown"` (`bars` default 16): in the genre's style (below).
+  - `move: "slam"`: one bar of only fx, then everything back with a fill. No `bars`.
+- **Forms:** `form: "intro 16, groove 16, build 8, drop 16, breakdown 8, drop 16, outro 16"`, or a library form (`whiplash_list_library(kind: "form")`): `deephouse_dj`, `house_jack`, `techhouse_dj`, `techno_plateau`, `progressive_journey`, `melodic_journey`, `minimal_long`, `tropical_song`, or a genre word for its own (`form: "techno"`). Forms stop at their end unless `then` says otherwise. A section that isn't a multiple of 8 bars plays anyway and comes back under `warnings`: pass it on.
+- **Section types** (`type` on a section, or a word in a form string) bring their defaults; a section's own keys win:
+  - `intro` energy 1, kick and hats, a fill every 8 · `groove` energy 3, everything · `build` rising 2→4 (above) · `breakdown` energy 2, in the genre's style · `drop` energy 5, a fill every 8 · `outro` energy 1, drums, the hats thinning in its last 8 bars.
+- **Breakdown styles** by genre: deep house, progressive and melodic techno take kick and bass out; techno drops the kick and keeps the bass; tech house and classic house close the bass's `filter_freq` to 40 over 2 bars and reopen it on the next section (if Whiplash never sent a cutoff it assumes 127, the default; `breakdown_note` says so); tropical drops the drums to energy 1 and keeps the chords; minimal takes out its busiest element besides the kick. Progressive house's result suggests `write_part(phrase: "pad.hold")` for a held breakdown pad: offer it, don't do it unasked.
+- **Section keys:** `energy` (1-5 or `"rising"`) moves the groove's level on the section's first bar, like `mutate energy`, and with no `tracks` picks the groups (1 kick and hats; 2 adds perc and bass; 3-5 everything). `fill_every: 8` plays the section's fill (or `fill: "perc.tom_run"`, any fill name) on the last bar of every 8. `enter: {"hats": -4}` brings the hats in at the 4th bar from the end; `exit: {"bass": 9}` takes the bass out from bar 9 of the section.
+- **Energy filter** (`energy_filter: true`): the music's `filter_freq` follows each section's energy and a build opens it 20→127. On by default only for progressive house and melodic techno. Like the build ramp it leaves the cutoff changed until the kit is reloaded: tell the user.
+- Read back each section's `energy`, `fills_at_bars`, `enter`/`exit` bars, `breakdown` and `does` in the result, and `status.arrangement.current`.
 
 ## Transitions: handing over like a DJ
 
@@ -265,7 +282,13 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "Change key", "up a tone", "into F minor" | `whiplash_set_progression(key: ...)` with no chords |
 | A written melody ignores the chords | `follow: true` on `whiplash_write_part` |
 | "Play house" sounds like deep house | expected: bare "house" is deep house; `genre: "chicago"` for classic house |
-| "Make it a whole track", "intro, build, drop", "90 seconds" | `whiplash_arrange` (`preset: "short_demo"`, `seconds`) |
+| "Make it a whole track", "intro, build, drop", "90 seconds" | `whiplash_arrange` (`preset: "short_demo"`, `seconds`), or `form` |
+| "Build to the drop", "break it down", "drop it now" | `whiplash_arrange(move: ..., bars: ...)`; the beat keeps going after it |
+| "unknown section type" / "unknown move" | use one of the names the error lists |
+| "bar 20 is outside build (8 bars)" | `enter`/`exit` bars count inside the section: 1-8, or -1..-8 from its end |
+| `warnings` on a form ("is 12 bars") | it plays; mention DJs count in 8, 16 and 32 if the user cares |
+| A breakdown "didn't drop the bass" in techno | expected: techno's breakdown drops the kick and keeps the bass |
+| `skipped` in status.arrangement ("no longer plays") | the genre changed under a form: section energy only moves the groove it was started on |
 | "Switch with a filter swap", "drop the bass then switch", "riser into the drop" | `transition` on `whiplash_play_pattern` (or a section) |
 | filter_swap refused: "hasn't sent filter_freq" | ask the user, then `filter_from` (127 if the filters are open) |
 | "Bass down", "hats left", "save this mix" | `whiplash_mix` (`levels`, `pan`, `save_as`, `recall`) |

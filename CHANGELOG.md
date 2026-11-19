@@ -42,6 +42,29 @@ Changed
   - **Now:** it measures lateness against the engine's absolute grid, in real time. Ticks later than 4 ms, or than the machine's p99 for a 1 ms sleep (measured by the canary), form stalls. A stall is excused only if a separate canary process saw the machine stall then. A segment may have 1 unexcused stall plus 1 per 10 s of real time, so one burst of runner noise passes and a stall that repeats every bar or every call fails. Unexcused stalls are named by run, bar and tick.
   - The rerun in `tests/test_rehearsal.py` is removed. On CI the check stays report-only, like every wall-clock bound since v0.7.0 (`conftest.STRICT_TIMING`). `wall_clock()` recognises its lines. Locally it must pass.
 
+## 0.9.3
+
+Ontology v1, O4: the arrangement grammar ([docs/executing/ontology-o4-build-plan.md](docs/executing/ontology-o4-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §6 and §9). "Build to the drop in 16 bars" is one call: `whiplash_arrange(move: "build", bars: 16)`. "Play it as a tech house DJ track" is `whiplash_arrange(form: "techhouse_dj")`, with tech house's own breakdown. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks (O18-O20).
+
+Added
+- **`form.py`** (new, pure): section types, energy per section, breakdown styles, forms and moves. Everything compiles in the tool thread into the `arrange` sections the engine already runs.
+  - **Section types:** `intro` (energy 1, kick and hats, a fill every 8), `groove` (3, everything), `build` (rising 2→4, the hats in for the last 4 bars, the kick out and a `snare.roll` on its last bar), `breakdown` (2, in the genre's style), `drop` (5, a fill every 8), `outro` (1, kick, hats and perc; the hats thin over its last 8 bars). A section's own keys win over its type's.
+  - **Breakdown styles** by genre: `kick_bass_out` (deep house, progressive house, melodic techno), `kick_drop` (techno), `filter_low_end` (tech house) and `filter_bass` (house, soul, breaks): the bass cutoff closes to 40 over 2 bars and reopens on the next section; `reduce_drums` (tropical house: energy 1, chords and hook stay); `subtract_one` (minimal: the busiest non-kick element sits out).
+  - **Eight forms**, one per genre: `deephouse_dj`, `house_jack`, `techhouse_dj`, `techno_plateau`, `progressive_journey`, `melodic_journey`, `minimal_long`, `tropical_song`; and the presets `club` and `short_demo` as forms. Each genre record's `form` names its own, so `form: "techno"` plays `techno_plateau`.
+  - **Moves:** `build` (N bars, default 8, then a 16-bar drop), `drop` (energy 5, the saved `drop mix` if there is one, a crash on a labelled cymbal), `breakdown` (N bars, default 16) and `slam` (one bar of only fx, then all in with a fill). Each ends with `then: "continue"`.
+- **`whiplash_arrange`** gains `form` (a library name, a genre word, or a string like `"intro 16, groove 16, build 8, drop 16"`), `move` and `bars`, `then` (`stop`, `loop`, `continue`) and `energy_filter`. Sections gain `type`, `energy` (1-5 or `rising`), `fill_every` (the section's fill on the last bar of every N), `enter` and `exit` (`{"hats": -4}`: a group comes in, or goes, at a bar of the section; negative counts from its end), and `fill` takes a fill name.
+  - **A move while an arrangement runs replaces it from the next bar** (Q-A2); the result names it (`replaced_arrangement`) and `whiplash_undo` brings it back in the section it would be in.
+  - **Energy per section** moves the playing groove between levels on the section's first bar, through the same path as `whiplash_mutate(action: "energy")`. Every level is compiled in the tool thread before anything changes. `continue`, `clear` and undo put back the energy the beat had before.
+  - **Energy filter** (Q-A1, opt-in): the music group's `filter_freq` follows the energy (by ear: 48, 72, 100, 116, 127), and a build opens it 20→127. On by default only in `progressive_journey`, `melodic_journey` and their genres' build moves.
+  - **Warnings, not refusals,** for a form or move section that isn't a multiple of 8 bars (Q-A4).
+- **Named fill `cymbal.crash`:** a long hit on the one, on a cymbal track. The drop move plays it on every cymbal-labelled track, even one that plays nothing else.
+- **`whiplash_list_library(kind: "form")` and `kind: "move"`** list them (they said "arrive in O4" before). The library reads "tech house dj", "deep house dj", "minimal long", "build up".
+
+Changed
+- `whiplash_arrange`'s `loop: true` is the same as `then: "loop"`; both still work, and a contradiction is refused. Forms and sections default to `stop`, moves to `continue`.
+- Budget pins: tools 4,350, params 10,200, JSON 24,650 bytes (measured 4,322 / 10,170 / 24,625). The JSON passes the spec's proposed 24,000: the grammar's schema is about 700 bytes and O3 left 81.
+- Every pre-0.9.3 call plays bit for bit as before: `club`, `short_demo` (with and without `loop`) and plain `sections` are pinned against digests taken on `main` in deep house, techno and classic house.
+
 ## 0.9.2
 
 Ontology v1, O3: the other four genres ([docs/executing/ontology-o3-build-plan.md](docs/executing/ontology-o3-build-plan.md), from [docs/executing/ontology-v1-spec.md](docs/executing/ontology-v1-spec.md) §9). "Progressive house", "melodic techno", "minimal" and "tropical house" each play their own groove, chords and bass from one call. **Nothing here has been tested on a real Digitakt II;** checklist Part O lists the checks (O14-O17).
