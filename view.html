@@ -759,7 +759,7 @@ function drawRoll(ctx, w, h, lane, shown, cur, cw, gap) {
 // S.harmony: the key the beat plays in and, after whiplash_set_progression, the progression. The chord
 // playing at any bar is ((bar - start) / bars_per_chord) mod chords, the same lookup the sequencer
 // makes at the bar line, so the highlight moves on the extrapolated playhead, exactly on the bar.
-const MODE_TITLE = { CHD: "chords: one chord tone per hit", STK: "stack: every chord tone on every hit", ROOT: "root: the chord root", SNAP: "snap: nearest scale note" };
+const MODE_TITLE = { CHD: "chords: one chord tone per hit", STK: "stack: every chord tone on every hit", ROOT: "root: the chord root", SNAP: "snap: nearest scale note", PED: "pedal: the key's tonic under every chord" };
 const harm = { sig: null, cells: [], shownIdx: null, shownBar: null };
 const keyCase = (name) => { const [root, ...rest] = String(name).split(" "); return [root, ...rest.map((w) => w.toUpperCase())].join(" "); };   // Bb, never BB
 function chordAt(P, bar) {

@@ -19,6 +19,8 @@ Track modes:
   phrase  (v0.9.0, O1b) each Rel note resolves against the chord playing: its tone (R, 3, 5, oct, chord, ...)
           from the chord root in the line's register window. A track gets it by carrying Rel notes (phrases.py),
           not by asking.
+  pedal   (v0.9.1, O2) every hit plays the key's tonic, nearest the hit's own note: a pedal under every chord
+          (set_progression(intent: "tension") turns it on for the bass, or tracks asks for it).
 """
 import re
 import statistics
@@ -34,7 +36,11 @@ CHORD_HIGH = 79
 MAX_CHORDS = 16
 BARS_PER_CHORD_MAX = 16
 VOICINGS = ("close", "root", "open", "power", "shell")
-MODES = ("chords", "stack", "root", "snap", "off")  # what set_progression(tracks) may ask for
+MODES = ("chords", "stack", "root", "snap", "pedal", "off")  # what set_progression(tracks) may ask for
+PEDAL = "pedal"  # v0.9.1 (O2): the key's tonic under every chord
+FOLLOW_MODES = ("snap", "root", "chords", "pedal")  # v0.9.1: what write_part(follow) may ask for
+# v0.9.1 (O2) the mode ladder darker/brighter step along, brightest first. Locrian is never chosen.
+LADDER = ("lydian", "major", "mixolydian", "dorian", "minor", "phrygian")
 PHRASE = "phrase"  # v0.9.0 (O1b): a track whose line carries Rel notes; never asked for, it comes with the line
 ROLE_MODES = {"chord": "chords", "pad": "chords", "stab": "chords", "bass": "root", "lead": "snap"}
 NEVER = frozenset({"kick", "snare", "rim", "clap", "closed hat", "open hat", "cymbal", "perc", "fx"})
@@ -42,6 +48,7 @@ PAD_VELOCITY, PAD_GATE = 90, 16  # a chord track with no line holds one chord to
 SHARP_NAMES = patterns.NOTE_NAMES
 FLAT_NAMES = ("C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B")
 _FLAT_MAJORS = frozenset({5, 10, 3, 8, 1, 6})  # F Bb Eb Ab Db Gb
+_MODE_PARENT = {"dorian": 2, "phrygian": 4, "lydian": 5, "mixolydian": 7, "locrian": 11}  # semitones above the parent
 _SPLIT = re.compile(r"[\s,|\-–—]+")
 _ROMAN = re.compile(r"^([b#♭♯]?)(vii|iii|vi|iv|ii|v|i|VII|III|VI|IV|II|V|I)(.*)$")
 _NAME = re.compile(r"^([A-Ga-g])([#b♯♭]?)(.*)$")
@@ -55,11 +62,15 @@ SHAPES = {"maj": (0, 4, 7), "min": (0, 3, 7), "dim": (0, 3, 6), "aug": (0, 4, 8)
           # v0.9.0 (ontology O1a): 9ths, 11ths, 6ths and 7sus4. "11" (dominant) and "minmaj9" keep the case rule total.
           "min9": (0, 3, 7, 10, 14), "maj9": (0, 4, 7, 11, 14), "9": (0, 4, 7, 10, 14), "minmaj9": (0, 3, 7, 11, 14),
           "min11": (0, 3, 7, 10, 14, 17), "11": (0, 4, 7, 10, 14, 17), "6": (0, 4, 7, 9), "m6": (0, 3, 7, 9),
-          "7sus4": (0, 5, 7, 10)}
+          "7sus4": (0, 5, 7, 10),
+          # v0.9.1 (O2): what a mode step makes of a 9th or 7th (A minor -> A phrygian: Am9 -> Am7b9). Names only;
+          # not in the suffix tables, so they aren't typed in a progression.
+          "min7b9": (0, 3, 7, 10, 13), "7b9": (0, 4, 7, 10, 13), "7b5": (0, 4, 6, 10)}
 SHAPE_SUFFIX = {"maj": "", "min": "m", "dim": "dim", "aug": "aug", "sus2": "sus2", "sus4": "sus4", "7": "7",
                 "min7": "m7", "maj7": "maj7", "minmaj7": "m(maj7)", "dim7": "dim7", "m7b5": "m7b5", "add9": "add9",
                 "madd9": "madd9", "5": "5", "min9": "m9", "maj9": "maj9", "9": "9", "minmaj9": "m(maj9)",
-                "min11": "m11", "11": "11", "6": "6", "m6": "m6", "7sus4": "7sus4"}
+                "min11": "m11", "11": "11", "6": "6", "m6": "m6", "7sus4": "7sus4", "min7b9": "m7b9", "7b9": "7b9",
+                "7b5": "7b5"}
 # Roman numeral suffix -> (shape for an upper-case numeral, shape for a lower-case one)
 ROMAN_SUFFIX = {"": ("maj", "min"), "7": ("7", "min7"), "maj7": ("maj7", "minmaj7"), "M7": ("maj7", "minmaj7"),
                 "Δ": ("maj7", "minmaj7"), "Δ7": ("maj7", "minmaj7"), "°": ("dim", "dim"), "o": ("dim", "dim"),
@@ -92,6 +103,8 @@ class Key(NamedTuple):
     @property
     def flats(self):
         steps = self.steps
+        if self.scale in _MODE_PARENT:  # v0.9.1: a church mode spells like its parent major (A phrygian as F major)
+            return (self.pc - _MODE_PARENT[self.scale]) % 12 in _FLAT_MAJORS
         relative_major = (self.pc + 3) % 12 if 3 in steps and 4 not in steps else self.pc
         return relative_major in _FLAT_MAJORS
 
@@ -119,6 +132,8 @@ class Progression:
     overrides: dict = field(default_factory=dict)  # track -> mode the user asked for
     colours: tuple = ()  # v0.9.0 shell voicing: per chord, the tones pad tracks play on top (harmony.colours)
     library: str = None  # v0.9.0: the library entry it came from (progressions.PROGRESSIONS), if any
+    pedal: bool = False  # v0.9.1: bass tracks hold the key's tonic (mode pedal) instead of following the roots
+    thinned_from: tuple = ()  # v0.9.1: the voicings before a register darker dropped their top voices, else ()
 
     @property
     def length(self):
@@ -532,10 +547,21 @@ def _chordal(bars):
     return any(isinstance(h[1], Rel) and h[1].tone == "chord" for bar in bars or () for h in bar)
 
 
-def phrase_modes(work):
-    """With no progression: {track: phrase} for every phrase line, and the chord-tone ones' ranks."""
+def _follows(written):
+    """{track: mode} for written parts that follow (v0.9.1 write_part(follow)); written may be a set (none follow)."""
+    return {t: m for t, m in written.items() if m} if isinstance(written, dict) else {}
+
+
+def phrase_modes(work, written=None):
+    """With no progression: {track: phrase} for every phrase line, plus followed written parts (v0.9.1) with their
+    mode, and the chord-tone ones' ranks."""
     out = {t: PHRASE for t, bars in sorted(work.items()) if is_phrase(bars)}
-    return out, {t: i for i, t in enumerate(t for t in out if _chordal(work[t]))}
+    for track, mode in _follows(written or {}).items():
+        if track in work and track not in out:
+            out[track] = mode
+    out = dict(sorted(out.items()))
+    ranks = [t for t, m in out.items() if m == "chords" or (m == PHRASE and _chordal(work[t]))]
+    return out, {t: i for i, t in enumerate(ranks)}
 
 
 def role_of(track, pattern, kit_tracks):
@@ -556,12 +582,13 @@ def modes(pattern, kit_tracks, overrides, written, work):
     """-> (modes {track: mode}, ranks {track: chord-track rank}, pad tracks).
 
     Roles pick the default (chord/pad/stab -> chords, bass -> root, lead -> snap; drums, cymbal, fx and
-    other never change). Written parts play as written unless the user named the track. A chord or stack
+    other never change). Written parts play as written unless the user named the track, or wrote it with
+    follow (v0.9.1: written maps track -> follow mode, None to play as written). A chord or stack
     track with no line at all gets a held tone per bar (pads). A line carrying Rel notes (a phrase, v0.9.0 O1b)
     takes mode phrase, written or generated; chord-tone phrase lines rank with the chord tracks.
     """
     tracks = set(pattern.bars if pattern is not None else ()) | set(kit_tracks) | set(overrides)
-    tracks |= {t for t, bars in work.items() if is_phrase(bars)}
+    tracks |= {t for t, bars in work.items() if is_phrase(bars)} | set(_follows(written))
     out = {}
     for track in sorted(tracks):
         if track in overrides:
@@ -569,7 +596,9 @@ def modes(pattern, kit_tracks, overrides, written, work):
         elif is_phrase(work.get(track)):
             mode = PHRASE
         elif track in written:
-            continue
+            mode = _follows(written).get(track)
+            if not mode:
+                continue
         else:
             mode = ROLE_MODES.get(role_of(track, pattern, kit_tracks))
         if mode and mode != "off":
@@ -628,7 +657,67 @@ def apply(mode, hits, notes, root, key, rank, chord=None, nxt=None):
         return [(s, note, v, g, o) for s, _, v, g, o in hits]
     if mode == "snap":
         return [(s, snap(n, key), v, g, o) for s, n, v, g, o in hits]
+    if mode == PEDAL:
+        return [(s, nearest(key.pc, int(n)), v, g, o) for s, n, v, g, o in hits]
     return hits
+
+
+# ---- intents and key changes (v0.9.1, ontology O2) ----------------------------------
+
+_SHAPE_NAMES = {}
+for _name, _shape in SHAPES.items():
+    _SHAPE_NAMES.setdefault(_shape, _name)
+
+
+def chord_name(root, shape, flats=False):
+    """A chord's name from its root pitch class and shape: 'Am7', 'Gm7'; an unnamed shape lists its tones."""
+    name = _SHAPE_NAMES.get(tuple(shape))
+    if name is not None:
+        return pc_name(root, flats) + SHAPE_SUFFIX[name]
+    return pc_name(root, flats) + "(" + " ".join(pc_name(root + x, flats) for x in shape[1:]) + ")"
+
+
+def tonic_shift(old, new):
+    """The smallest move between two keys' tonics, -6..+5 semitones (as in_key moves a pattern)."""
+    return ((new.pc - old.pc + 6) % 12) - 6
+
+
+def move_chord(chord, old, new):
+    """chord moved from key old into key new: by the tonics' interval, then degree by degree when the scales
+    differ (A minor -> A phrygian turns G7 into Gm7 and Em into Edim; Am7 and Dm7 stay). The symbol becomes
+    the chord's new name, since a numeral read in another mode would change its quality."""
+    shift = tonic_shift(old, new)
+    base = 36 + (chord.root - old.pc) % 12 + old.pc  # low enough that an 11th stays inside 16-84; only intervals count
+    notes = [remap(base + x, old, new, shift) for x in chord.shape]
+    root = notes[0]
+    shape = tuple(n - root for n in notes)
+    name = chord_name(root % 12, shape, new.flats)
+    return Chord(name, root % 12, shape, name)
+
+
+def is_numeral(symbol):
+    return bool(_ROMAN.match(symbol))
+
+
+def step_mode(scale, darker):
+    """The next scale down (darker) or up the ladder, or None at phrygian / lydian. Raises off the ladder."""
+    if scale not in LADDER:
+        raise HarmonyError(f"{scale} isn't on the mode ladder ({' > '.join(LADDER)})")
+    i = LADDER.index(scale) + (1 if darker else -1)
+    return LADDER[i] if 0 <= i < len(LADDER) else None
+
+
+def thin(voicings):
+    """Each voicing of three or more notes without its top voice (register darker thins the highs)."""
+    return tuple(tuple(v[:-1]) if len(v) >= 3 else tuple(v) for v in voicings)
+
+
+def dominant(key, ninth=False):
+    """The key's dominant 7th (or 9th): root a 5th above the tonic, major 3rd, as harmonic minor gives it."""
+    root = (key.pc + 7) % 12
+    shape = SHAPES["9" if ninth else "7"]
+    name = pc_name(root, key.flats) + SHAPE_SUFFIX["9" if ninth else "7"]
+    return Chord("V9" if ninth else "V7", root, shape, name)
 
 
 def describe(prog):

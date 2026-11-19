@@ -26,6 +26,7 @@ Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does 
    - "Shuffled hats on track 10": `whiplash_write_part(track: 10, groove: "hat.offbeat_shuffle")` (a named lane).
    - "A rolling deep house bass": `whiplash_write_part(track: 6, phrase: "bass.rolling_deep")`. It follows whatever chords play, from then on. `phrase: "genre"` takes the genre's own line for that track. Don't pass `notes` with a phrase.
    - "How's it sounding?" / "is it getting stale?": `whiplash_status(review: 16)`. Quote it; don't act on it unless the user agrees.
+   - "Darker" / "brighter": `whiplash_set_progression(intent: "darker")`. "More tension", then "let it go": `intent: "tension"`, then `"release"`. "Change key to F minor": `whiplash_set_progression(key: "Fm")` (v0.9.1, see Keys below).
 
 **The house words, plainly:** bare "house" still means **deep house**. Classic/Chicago house is `chicago`, `chicago house` or `classic house` (`genre: "chicago"`); its library prefix is `house.` (`house.jack`). The mood "peak time" means **techno** now; "peak time tech house" keeps tech house.
 
@@ -69,11 +70,21 @@ Don't place 16 steps by hand or invent theory. Pick named things; Whiplash does 
   - lead → `snap`: notes snap to the scale.
   - Drums, hats, perc, cymbal and fx tracks never change, and `tracks` overrides on them are refused. Never promise chords on a cymbal.
 - **One note at a time:** the manual gives the Digitakt II 16 audio voices for 16 tracks and documents chords only on MIDI tracks, so an audio track probably plays one note at a time (not yet checked on hardware). That is why `chords` spreads the chord over tracks and hits. `stack` sends every tone on every hit: only for a MIDI track or a polyphonic target, or if the user finds their unit layers notes.
-- **Overrides:** `tracks: {"9": "chords", "6": "off"}` with modes `chords`, `stack`, `root`, `snap`, `off`. A chord track with no line of its own (a labelled pad that got no part) holds one chord tone per bar.
+- **Overrides:** `tracks: {"9": "chords", "6": "off"}` with modes `chords`, `stack`, `root`, `snap`, `pedal` (the key's tonic under every chord), `off`. A chord track with no line of its own (a labelled pad that got no part) holds one chord tone per bar.
 - **"Pads on track 7":** label it first (`whiplash_label_tracks(tracks: {"7": "pad"})`), or pass `tracks: {"7": "chords"}`.
 - Written parts play as written unless `tracks` names them (the result lists `written_unchanged`). Transpose, mutes, drops, fills and density still apply on top. The progression carries across switches and `whiplash_mutate reset`; `clear: true` or `whiplash_stop` ends it.
 - `whiplash_status` shows `progression.now` (the chord playing and `next_change_at_bar`), every voiced chord with note names, and `tracks[n].progression`. Read the chord names back to the user.
-- A melody in the playing key: `whiplash_write_part(track: 8, rhythm: "8ths", key: "current", notes: "1 3 5 8")`.
+- A melody in the playing key: `whiplash_write_part(track: 8, rhythm: "8ths", key: "current", notes: "1 3 5 8")`. Add `follow: true` and it follows the chords (and later key changes) like a generated line; `follow: "root"` makes it a root line.
+- **Change key alone (v0.9.1):** `whiplash_set_progression(key: "Fm")` (or `scale: "dorian"` to keep the root). From the next bar the melodic tracks, the progression (numerals re-read, chord names shifted) and phrases move; drums never do. Read `key`, `from` and `progression` back. "already in A minor" means nothing changed.
+- **Intents (v0.9.1): say what it should feel like, not the theory.** `whiplash_set_progression(intent: ...)`, from the next bar:
+  - `darker` / `brighter` take `how`, one or a list; with none, `harmonic`:
+    - `harmonic`: a library progression swaps to its genre's next darker (brighter) one; otherwise the key steps one mode along lydian > major > mixolydian > dorian > minor > phrygian, chords moving with it.
+    - `timbral`: the melodic tracks' filter closes (opens) one step. Drums are never touched. It needs a cutoff Whiplash has sent (`whiplash_set_param filter_freq` first, e.g. 127 if the filters are open); brighter never opens past where darker started.
+    - `register`: the top chord voice drops out and the lead goes down an octave; brighter puts them back.
+  - Read back `did`, and offer one of `other_options` if the user wants more ("I made it phrygian; I could also close the filters a little").
+  - `tension`: each call adds one step: a dominant 7th at the loop's end, then a 9th, then a bass pedal. `release` brings the old loop back exactly.
+  - Every intent and key change is undoable with `whiplash_undo` (key, chords, filter values, the lead's octave).
+- **Key lock on/off:** `whiplash_set_progression(lock: false)` lets written notes play out of key for the session (`lock: true` turns it back on). Prefer `out_of_key: true` on one part for one chromatic note.
 - Typical request, "deep house in A minor, i-VI-III-VII, two bars per chord, pads on track 7", is three calls: `whiplash_label_tracks(tracks: {"7": "pad"})`, `whiplash_play_pattern(genre: "deephouse", key: "Am")`, then `whiplash_set_progression(chords: "i VI III VII", bars_per_chord: 2)`.
 
 ## Arrangement: a whole track (`whiplash_arrange`)
@@ -226,7 +237,7 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | Plays non-stop, droney | amp hold/decay, and `amp_mode` (see above); then shorter `length` in `whiplash_write_part` |
 | "Wrong rhythm", "make it 4/4", "lock to the kick" | `whiplash_write_part` with `rhythm` or `lock_to`, not density |
 | "Play a melody", "different notes" | `whiplash_write_part` with `notes` (and `key`, or `key: "current"`) |
-| "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern`, then `whiplash_set_progression` |
+| "In A minor", "change the chords", "i-VI-III-VII" | `key` on `whiplash_play_pattern` (or key alone on `whiplash_set_progression`), then `whiplash_set_progression` |
 | "Deep house chords", "something gospel", "a Chicago groove" | `whiplash_list_library`, then `name` on `whiplash_set_progression` or `groove` on `whiplash_play_pattern` |
 | "A bass that follows the chords", "the bass stays on one note" | `whiplash_write_part(phrase: ...)` on the bass track (`whiplash_list_library(kind: "phrase", tag: "bass")`) |
 | "phrase brings its own notes" | drop `notes` (and any rhythm/grid) from the call, or write `rhythm` + `notes` instead |
@@ -236,7 +247,13 @@ You **can write melodies and rhythms**: `whiplash_write_part` replaces one track
 | "has no energy levels yet" (soul, breaks) | switch to a genre with grooves, or use `density` |
 | `unplaced` in a play or energy result | that kit has no track for the lane: offer a label (`{"8": "perc"}`), then call again |
 | "is a clap part; track 6 ..." (a lane on a melodic track) | put the lane on a drum or perc track |
-| A written note came out different (`snapped`) | key lock: `out_of_key: true` if the user wants the chromatic note |
+| A written note came out different (`snapped`) | key lock: `out_of_key: true` if the user wants the chromatic note (or `set_progression(lock: false)` for the session) |
+| "Darker", "brighter", "moodier", "more tension", "resolve it" | `whiplash_set_progression(intent: ...)`; read `did` and offer `other_options` |
+| intent refused: "hasn't sent filter_freq" (`how: "timbral"`) | ask where the filters are, `whiplash_set_param filter_freq` (127 if open), then again; or `how: "harmonic"` |
+| "already at the floor" / "nothing to restore" on an intent | expected: nothing changed; try another `how` from `other_options` |
+| "no tension to release" | nothing to undo; the chords play as they were |
+| "Change key", "up a tone", "into F minor" | `whiplash_set_progression(key: ...)` with no chords |
+| A written melody ignores the chords | `follow: true` on `whiplash_write_part` |
 | "Play house" sounds like deep house | expected: bare "house" is deep house; `genre: "chicago"` for classic house |
 | "Make it a whole track", "intro, build, drop", "90 seconds" | `whiplash_arrange` (`preset: "short_demo"`, `seconds`) |
 | "Switch with a filter swap", "drop the bass then switch", "riser into the drop" | `transition` on `whiplash_play_pattern` (or a section) |

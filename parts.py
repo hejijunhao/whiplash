@@ -68,6 +68,7 @@ class Part:
     unused_notes: int = 0  # notes that did not fit in 4 bars of hits
     key: str = None
     snapped: tuple = ()  # v0.9.0 key lock: (from, to) for each explicit note moved into the key
+    follow: str = None  # v0.9.1 write_part(follow): the mode it follows the chords in (snap, root, ...), else None
 
 
 def _accidental(text):

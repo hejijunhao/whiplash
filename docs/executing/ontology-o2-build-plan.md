@@ -72,7 +72,7 @@ Researchable questions were decided here from the spec and the research brief; t
 | `whiplash_write_part` | `follow` (true, or a mode) |
 | `whiplash_undo` | reverts intents and key changes |
 
-Caps (`tests/test_v053.py::test_description_size_budget`) rise only as far as O2 uses; the PR states the measured values. All stay inside the spec's final targets (tools 4,350, params 10,300, JSON 24,000 bytes). 26 tools, unchanged.
+Caps (`tests/test_v053.py::test_description_size_budget`) rise only as far as O2 uses (measured: tools 4,300, params 10,140, JSON 23,921 bytes): tools 4,250 → **4,300**, params 10,000 → **10,150**, JSON 23,600 → **23,950** bytes. All stay inside the spec's final targets (tools 4,350, params 10,300, JSON 24,000 bytes). 26 tools, unchanged.
 
 ## 5. Tests (fake and virtual ports only)
 

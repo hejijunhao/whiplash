@@ -391,7 +391,7 @@ def _descriptions(node):
 def test_description_size_budget():
     # v0.5.2: 7302 characters of tool descriptions over 16 tools, 11357 counting params, 18108 bytes of JSON.
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
-    assert sum(tool_text.values()) <= 4250, tool_text  # v0.7.0: 3300 (listen); v0.7.1: 3500; v0.8.0: 4100; v0.9.0: 4250
+    assert sum(tool_text.values()) <= 4300, tool_text  # v0.7.0: 3300; v0.7.1: 3500; v0.8.0: 4100; v0.9.0: 4250; v0.9.1: 4300
     assert max(tool_text.values()) <= 400, tool_text
     # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params.
     # v0.6.1 adds whiplash_arrange (its section schema) and trims other tool descriptions to stay under 3000.
@@ -407,8 +407,10 @@ def test_description_size_budget():
     # names on existing tools: the tool total rises to 4250, params to 9900 and the JSON to 23500 bytes
     # (docs/executing/ontology-o1a-build-plan.md §4). O1b adds phrase/density/seed/register on write_part and review
     # on status: tools stay under 4250, params rise to 10000 and the JSON to 23600 (ontology-o1b-build-plan.md §4).
-    assert _descriptions(schemas.SCHEMAS) <= 10000
-    assert len(json.dumps(schemas.SCHEMAS)) <= 23600
+    # v0.9.1 (O2) adds intent/how/lock on set_progression and follow on write_part: tools 4300, params 10150, JSON
+    # 23950 bytes (measured 4300 / 10140 / 23921; ontology-o2-build-plan.md §4), inside the spec's final caps.
+    assert _descriptions(schemas.SCHEMAS) <= 10150
+    assert len(json.dumps(schemas.SCHEMAS)) <= 23950
 
 
 def test_short_descriptions_keep_the_safety_caveats():

@@ -262,7 +262,7 @@ def _hits(bar_hits, track):
     return [[s, n, v, g] for s in sorted(bar_hits) for (t, n, v, g, _o) in bar_hits[s] if t == track]
 
 
-MODE_TAGS = {"chords": "CHD", "stack": "STK", "root": "ROOT", "snap": "SNAP"}  # the page's short mode labels
+MODE_TAGS = {"chords": "CHD", "stack": "STK", "root": "ROOT", "snap": "SNAP", "pedal": "PED"}  # short mode labels
 
 
 def _line(track, bars, bar, pattern_start, hm):

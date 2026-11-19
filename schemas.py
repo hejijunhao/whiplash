@@ -11,6 +11,8 @@ from .kitmap import ROLES
 from .listen import BARS_MAX as LISTEN_BARS_MAX
 from .patterns import MOODS, PATTERNS, resolve as _resolve_genre
 from .library import KINDS as LIBRARY_KINDS
+from .engine import INTENT_WORDS
+from .progressions import HOWS
 
 # v0.9.0: bare "house" still means deep house (patterns.ALIASES), so the enum offers "chicago" for classic house.
 GENRES = sorted({g for g in PATTERNS if _resolve_genre(g).name == g} | {"chicago"})
@@ -177,6 +179,7 @@ SCHEMAS = {
             "seed": {"type": ["integer", "string"], "description": "phrase: varies a seeded phrase"},
             "register": {"type": ["string", "integer"], "description": "phrase: low, mid, high or an anchor note"},
             "out_of_key": {"type": "boolean", "description": "Keep notes the key lock would snap"},
+            "follow": {"type": ["boolean", "string"], "description": "true (snap), root, chords or pedal: follow the chords"},
             "envelope": {"type": "string", "enum": ["note"],
                          "description": ("'note': also send amp_hold 127 (HOLD = NOTE, CC 80) so length is audible "
                                          "in AHD mode. Changes the kit's sound until reloaded; only when the user agrees.")},
@@ -184,8 +187,9 @@ SCHEMAS = {
     },
     "whiplash_set_progression": {
         "name": "whiplash_set_progression",
-        "description": ("Loop chords from the next bar: chord/pad/stab tracks voice them, bass plays roots, leads snap to "
-                        "the key. Never on drum, cymbal or fx tracks. clear ends it." + SKILL),
+        "description": ("Loop chords from the next bar (chord/pad/stab tracks voice them, bass the roots; never drum, "
+                        "cymbal or fx); clear ends it. intent: darker, brighter (how), tension, release; key alone "
+                        "changes key." + SKILL),
         "parameters": {"type": "object", "properties": {
             "chords": {"type": ["array", "string"], "items": {"type": "string"}, "maxItems": MAX_CHORDS,
                        "description": "Roman numerals in the key ('i VI III VII', 'ii7 V7 Imaj7') or names ('Am F C G')"},
@@ -197,6 +201,9 @@ SCHEMAS = {
             "tracks": {"type": "object", "additionalProperties": {"type": "string", "enum": list(MODES)},
                        "description": 'Override a track\'s mode, e.g. {"9": "chords", "6": "off"}'},
             "clear": {"type": "boolean", "description": "End the progression"},
+            "intent": {"type": "string", "enum": list(INTENT_WORDS)},
+            "how": {"type": ["string", "array"], "description": f"darker/brighter: {', '.join(HOWS)} (default harmonic)"},
+            "lock": {"type": "boolean", "description": "Key lock (default on)"},
         }},
     },
     "whiplash_arrange": {
@@ -352,7 +359,7 @@ SCHEMAS = {
     },
     "whiplash_undo": {
         "name": "whiplash_undo",
-        "description": "Revert the last written part, mix or arrangement change, on the next bar.",
+        "description": "Revert the last written part, mix, arrangement, intent or key change, on the next bar.",
         "parameters": EMPTY,
     },
     "whiplash_list_library": {

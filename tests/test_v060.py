@@ -459,7 +459,8 @@ def test_schemas_for_keys_and_progressions():
     assert set(play["scale"]["enum"]) == set(parts.SCALES) and "key" in play
     prog = schemas.SCHEMAS["whiplash_set_progression"]
     props = prog["parameters"]["properties"]
-    assert set(props) == {"chords", "bars_per_chord", "voicing", "key", "scale", "tracks", "clear", "name"}  # v0.9.0
+    assert set(props) == {"chords", "bars_per_chord", "voicing", "key", "scale", "tracks", "clear", "name",  # v0.9.0
+                          "intent", "how", "lock"}  # v0.9.1
     assert props["voicing"]["enum"] == list(harmony.VOICINGS)
     assert props["tracks"]["additionalProperties"]["enum"] == list(harmony.MODES)
     assert "whiplash:digitakt" in prog["description"] and "cymbal" in prog["description"]
