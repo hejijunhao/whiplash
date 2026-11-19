@@ -70,8 +70,10 @@ def test_every_pattern_has_a_home_key_its_lines_fit():
             if not patterns.is_melodic(bars):
                 continue
             outside = [n for n in patterns.notes_of(bars) if (n - key.pc) % 12 not in key.steps]
-            # deep house and soul lean on G# (the harmonic-minor leading tone of A minor)
-            assert all((n - key.pc) % 12 == 11 for n in outside), (name, track, outside)
+            # deep house and soul lean on G# (the harmonic-minor leading tone of A minor); v0.9.0's classic house
+            # plays its piano-stab progression i-III-bII-i, whose Bb is the phrygian flat second
+            allowed = {11, 1} if name == "house" else {11}
+            assert all((n - key.pc) % 12 in allowed for n in outside), (name, track, outside)
 
 
 @pytest.mark.parametrize("name", sorted(P))
@@ -211,6 +213,9 @@ def test_voicings_sit_near_native_and_hold_the_chord(voicing):
             want = {(chord.root + i) % 12 for i in chord.shape}
             if voicing == "power":
                 assert pcs(ns) <= want and chord.root in pcs(ns)
+            elif voicing == "shell":  # v0.9.0: root, 3rd and 7th of a 7th chord; other chords voice close
+                shell = harmony.shell_tones(chord.shape)
+                assert pcs(ns) == ({(chord.root + i) % 12 for i in shell} if shell else want)
             else:
                 assert pcs(ns) == want
 
@@ -454,7 +459,7 @@ def test_schemas_for_keys_and_progressions():
     assert set(play["scale"]["enum"]) == set(parts.SCALES) and "key" in play
     prog = schemas.SCHEMAS["whiplash_set_progression"]
     props = prog["parameters"]["properties"]
-    assert set(props) == {"chords", "bars_per_chord", "voicing", "key", "scale", "tracks", "clear"}
+    assert set(props) == {"chords", "bars_per_chord", "voicing", "key", "scale", "tracks", "clear", "name"}  # v0.9.0
     assert props["voicing"]["enum"] == list(harmony.VOICINGS)
     assert props["tracks"]["additionalProperties"]["enum"] == list(harmony.MODES)
     assert "whiplash:digitakt" in prog["description"] and "cymbal" in prog["description"]

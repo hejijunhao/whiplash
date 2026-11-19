@@ -24,6 +24,7 @@ Pause/resume (v0.5 plan item 11) is **not** in v0.5.3, so there is nothing to te
 - **Part P** (after E) covers v0.6.0 keys and chord progressions (plan HW 6.0-1 to 6.0-5). P1 is the demo's optional encore: run it before using the encore on stage.
 - **Part R** (after P) covers v0.6.1: arrangement, fills by role, and the routing report (PR #17's HW 6.1-1 to 6.1-9). R1 is the demo's optional arrangement beat: run it before using that beat on stage.
 - **Part V** (after R) covers v0.7.0's listening loop (PR #20's HW 7.0-1 to 7.0-9). It needs USB AUDIO/MIDI, numpy and sounddevice on the Air, and microphone permission. V6 unplugs the cable, so do it last, with Part L.
+- **Part O** (after W) covers v0.9.0's ontology O1a: grooves, energy, microtiming, ghosts, Chicago house, named progressions and the shell voicing, and key lock (spec §8 HW O-1 to O-6).
 - **Part W** (after V) covers v0.7.1's kit scan (PR #22's HW 7.1-1 to 7.1-8), with the same setup as V. W8 unplugs the cable, so do it last, with Part L.
 - **Parts F-K** go deeper into older features, most important first.
 - **Part L** unplugs the cable, so it comes last.
@@ -688,6 +689,57 @@ Rehearse R1 offline first: `uv run python scripts/rehearse_demo.py --speed 4 --v
 ### W8. Unplug mid-scan (HW 7.1-6; do it last, with Part L)
 - **Action:** start a scan, then pull the USB cable.
 - **Expect:** a clean error, and no stuck note after replugging.
+- [ ] Pass · [ ] Fail. Notes:
+
+---
+
+## O. Ontology O1a: grooves, energy, named progressions, key lock, v0.9.0 (ontology spec §8 HW O-1 to O-6; §15.1 #38; §15.3 Q32-37)
+
+v0.9.0 (O1a) adds named grooves with five energy levels, microtiming, ghost notes, named fills, classic/Chicago house, named chord progressions with the `shell` voicing, and key lock. It sends **no new message type and no new CC**: only notes, and the existing CCs when you ask for them. All of it is **untested on hardware**. Every value below is a proposed default from the spec.
+
+**Setup:** `hermes plugins list` should show whiplash v0.9.0 with 26 tools. Select an empty pattern on the unit. Keep `docs/testing/clock-jitter.md` at hand for O1.
+
+### O1. Microtiming vs USB jitter (HW O-1; §15.3 Q32)
+- **Type:** *"Play deep house, shuffle groove, energy 3."* Listen for 8 bars. Then *"Switch to tech house, rolling groove."*
+- **Expect:**
+  - Deep house: the clap sits **behind** the beat (+0.75 tick, about 15 ms at 122 BPM), audibly, not lost in jitter.
+  - Tech house: the closed hats **push ahead** of the grid (−0.25 tick, about 5 ms at 126 BPM).
+- **If it fails:** note whether you hear nothing at all, or a flam. The fix is wider offsets in `grooves.LANES`, or dropping the negative compile.
+- [ ] Pass · [ ] Fail. Clap late? ____ Hats early? ____
+
+### O2. Ghost notes vs VELOCITY TO VOL (HW O-2; §15.3 Q33)
+- **Type:** *"Play deep house, shuffle groove."* then *"Chicago house."*
+- **Expect:** the clap ghosts (steps 7 and 15) and the ghosted hats are **audible but quiet** (`GHOST_VEL` 28-40).
+- **If they vanish:** note the track's VELOCITY TO VOL setting. The fix is `GHOST_VEL = (40, 55)` in one place.
+- [ ] Pass · [ ] Fail. VELOCITY TO VOL on the clap track: ____
+
+### O3. Chicago house: octave bounce and stabs (HW O-3; §15.3 Q34)
+- **Type:** *"Play Chicago house."* (123 BPM; the bass on track 6, piano stabs on 7 and 8.)
+- **Expect:**
+  - The bass bounces root (on the beat) and octave (on the off-beat 8th), **clean retriggers** near native pitch, not smeared by the AMP envelope.
+  - The stabs sit on the off-beats over Am, C, B♭, Am (one chord a bar), never on the kick.
+  - The late, jacked clap (+0.5 tick, plus a clap on the last 16th).
+- [ ] Pass · [ ] Fail. Notes:
+
+### O4. Shell voicing on your samples (HW O-4; §15.3 Q35)
+- **Type:** *"Play deep house. Deep house gospel progression."* (two chord tracks: the result says `voicing: shell`). Then label a pad: *"Track 9 is a pad."* and ask for the progression again.
+- **Expect:** it sounds like Am7, Fmaj7, G7, Am7 with **clean low-mids** (root, 3rd and 7th only). With the pad, the pad adds the 9th's colour without mud.
+- **If it fails:** the default becomes `close` (say which sounded better).
+- [ ] Pass · [ ] Fail. Notes:
+
+### O5. Every new progression by ear (HW O-5; §15.3 Q36)
+- **Type:** *"List the deep house progressions."* then play each by name (*"Play the deep house afro progression."*). Repeat for house (in Chicago house), tech house and techno.
+- **Expect:** each loop sounds like its genre on your kit. **List the ones to drop or revoice:** the deep house six, the house five, tech house two, techno four.
+- [ ] Pass · [ ] Fail. Drop / revoice: ____
+
+### O6. Energy changes (HW O-6; §15.3 Q37)
+- **Type:** *"Play techno, rolling groove."* then *"Energy 5."* then *"Energy 1."* then *"Energy up."*
+- **Expect:** each change lands **on the one**, with no stuck notes and no Stop or Start on the unit. Energy 1 is kick and open hat; 5 adds the ghost kick and the rim.
+- [ ] Pass · [ ] Fail. Notes:
+
+### O7. Key lock (§15.3 Q37)
+- **Type:** *"Play deep house. Write C sharp 5 on every beat on track 7."*
+- **Expect:** track 7 plays **C5** (the result lists `snapped`). Then *"Same, but keep the C sharp"* (`out_of_key: true`): it plays C#5. The kick and the other drums never change pitch.
 - [ ] Pass · [ ] Fail. Notes:
 
 ---

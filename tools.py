@@ -5,6 +5,8 @@ import logging
 
 from . import ccmap
 from . import engine as eng
+from . import grooves
+from . import library
 from . import listen as _listen
 from . import patterns
 from . import scan as _scan
@@ -98,13 +100,50 @@ def list_params(p):
                       "stays blocked.")}
 
 
+def groove_pattern(p, pattern):
+    """v0.9.0: play_pattern's groove and energy -> (pattern to play, groove info or None). Validates only."""
+    groove, energy = p.get("groove"), p.get("energy")
+    if groove in (None, ""):
+        if energy not in (None, ""):
+            raise eng.WhiplashError("energy needs a groove; try groove: 'A' (the genre's classic groove) or see "
+                                    "whiplash_list_library(kind: 'groove')")
+        return pattern, None
+    level = 3 if energy in (None, "") else eng.check_whole(energy, 1, 5, "energy", " (1 intro feel .. 5 busiest)")
+    given = p.get("genre") not in (None, "") or p.get("mood") not in (None, "")
+    hint = pattern.family if given else ENGINE.playing_family()
+    entry = library.resolve("groove", groove, genre=hint)
+    if given and entry.genre != pattern.family:
+        raise eng.WhiplashError(f"groove {entry.name} belongs to {entry.genre}, not {pattern.family}: drop genre/mood "
+                                f"(the groove picks its genre) or pick a {pattern.family} groove, see "
+                                f"whiplash_list_library(kind: 'groove', genre: '{pattern.family}')")
+    base = patterns.PATTERNS[entry.genre]
+    compiled, info = grooves.compile(entry, level, base, ENGINE.kit_map())
+    state = {"name": entry.name, "energy": level, "genre": entry.genre, "swing": entry.swing,
+             "lanes": info["lanes"], "unplaced": info["unplaced"]}
+    if info["clamped"]:
+        state["pushed_downbeat_clamped"] = sorted(set(info["clamped"]))
+    return compiled, state
+
+
+def groove_echo(state):
+    out = {"groove": {k: state[k] for k in ("name", "energy", "lanes", "swing")}}
+    if state.get("unplaced"):
+        out["unplaced"] = state["unplaced"]
+        out["unplaced_note"] = eng.UNPLACED_NOTE
+    if state.get("pushed_downbeat_clamped"):
+        out["groove"]["pushed_downbeat_clamped"] = state["pushed_downbeat_clamped"]
+    return out
+
+
 @_tool
 def play_pattern(p):
     pattern = patterns.resolve(p.get("genre"), p.get("mood"))
+    pattern, groove = groove_pattern(p, pattern)
     result = ENGINE.play(pattern, bpm=p.get("bpm"), bars=p.get("bars"), port=p.get("port"),
                          send_transport=p.get("send_transport"), transpose=p.get("transpose"), tracks=p.get("tracks"),
                          key=p.get("key"), scale=p.get("scale"), transition=p.get("transition"),
-                         transition_bars=p.get("transition_bars"), filter_from=p.get("filter_from"))
+                         transition_bars=p.get("transition_bars"), filter_from=p.get("filter_from"), groove=groove)
+    extra = groove_echo(groove) if groove else {}
     transport = {"send_transport": result["send_transport"],
                  "transport_mode": eng.transport_mode(result["send_transport"]),
                  "overlap_warning": overlap_warning(result["send_transport"])}
@@ -133,7 +172,7 @@ def play_pattern(p):
             out["progression_carried"] = status["progression"]["names"]
         if status["arrangement"] and status["arrangement"].get("ended_at_bar") is None:
             out["arrangement_carried"] = status["arrangement"]["name"]
-        return {**out, **high_track_notes(out)}
+        return {**out, **extra, **high_track_notes(out)}
     out = {"mode": "started", "playing": pattern.name, "key": ENGINE.key_name(), "bpm": ENGINE.bpm, "swing": pattern.swing,
            "bars": ENGINE.bars_total, "port": ENGINE.port_name, "virtual": ENGINE.virtual,
            "tracks": ENGINE.tracks_summary(), "routing": ENGINE.routing(),
@@ -144,7 +183,7 @@ def play_pattern(p):
     for key in ("transition_note", "cutoff_restored"):
         if result.get(key):
             out[key] = result[key]
-    return {**out, **high_track_notes(out)}
+    return {**out, **extra, **high_track_notes(out)}
 
 
 def high_track_notes(out):
@@ -217,7 +256,8 @@ def write_part(p):
     out = ENGINE.write_part(p["track"], rhythm=p.get("rhythm"), grid=p.get("grid"), steps=p.get("steps"),
                             hits=p.get("hits"), lock_to=p.get("lock_to"), notes=p.get("notes"), key=p.get("key"),
                             scale=p.get("scale"), length=p.get("length"), velocity=p.get("velocity"),
-                            bars=p.get("bars"), reset=p.get("reset"), envelope=p.get("envelope"))
+                            bars=p.get("bars"), reset=p.get("reset"), envelope=p.get("envelope"),
+                            groove=p.get("groove"), out_of_key=p.get("out_of_key"))
     if not out.get("reset"):
         out["pitch_note"] = eng.PITCH_NOTE
     return out
@@ -227,7 +267,7 @@ def write_part(p):
 def set_progression(p):
     return ENGINE.set_progression(chords=p.get("chords"), bars_per_chord=p.get("bars_per_chord"),
                                   voicing=p.get("voicing"), key=p.get("key"), scale=p.get("scale"),
-                                  tracks=p.get("tracks"), clear=p.get("clear"))
+                                  tracks=p.get("tracks"), clear=p.get("clear"), name=p.get("name"))
 
 
 @_tool
@@ -253,7 +293,7 @@ def ramp_param(p):
                        force=p.get("force"))
 
 
-MUTATIONS = ("density", "fill", "swing", "humanize", "drop", "reset")
+MUTATIONS = ("density", "fill", "swing", "humanize", "drop", "reset", "energy")
 
 
 @_tool
@@ -264,13 +304,15 @@ def mutate(p):
     if action == "density":
         out = ENGINE.mutate_density(p.get("tracks"), p.get("amount"))
     elif action == "fill":
-        out = ENGINE.schedule_fill(p.get("tracks"))
+        out = ENGINE.schedule_fill(p.get("tracks"), fill=p.get("fill"))
     elif action == "swing":
         out = ENGINE.mutate_swing(p.get("amount"))
     elif action == "humanize":
         out = ENGINE.mutate_humanize(p.get("amount"))
     elif action == "drop":
         out = ENGINE.schedule_drop(p.get("tracks"), p.get("bars", 2), fill=bool(p.get("fill")))
+    elif action == "energy":
+        out = ENGINE.set_energy(p.get("amount"))
     else:
         out = ENGINE.reset_mutations()
     status = ENGINE.status()
@@ -349,6 +391,12 @@ def undo(p):
 
 
 @_tool
+def list_library(p):
+    """v0.9.0: named genres, progressions, grooves, lanes and fills (phrases, forms and moves come later)."""
+    return library.entries(p.get("kind"), genre=p.get("genre"), tag=p.get("tag"))
+
+
+@_tool
 def open_view(p):
     port = p.get("port")
     if port not in (None, ""):
@@ -371,4 +419,4 @@ HANDLERS = {PREFIX + f.__name__: f for f in (list_midi_ports, list_params, play_
                                              select_sample, label_tracks, transpose, write_part, set_progression, arrange,
                                              mix, ramp_param, mutate, mute_track, unmute_track, set_tempo, stop,
                                              status, listen, scan_kit, play_along, follow, undo,
-                                             open_view, close_view)}
+                                             list_library, open_view, close_view)}

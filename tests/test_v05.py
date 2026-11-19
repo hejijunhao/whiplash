@@ -48,7 +48,7 @@ def test_register_moves_whole_octaves_and_keeps_the_line(name):
     for track, bars in raw.bars.items():
         shift = p.shifts.get(track, 0)
         assert shift % 12 == 0
-        expected = [[(s, n + shift, v, g) for s, n, v, g in bar] for bar in bars]
+        expected = [[(s, n + shift, v, g, *o) for s, n, v, g, *o in bar] for bar in bars]  # v0.9.0: lane offsets
         assert p.bars[track] == expected  # same steps, velocities, gates and intervals
         if not patterns.is_melodic(bars):
             assert track not in p.shifts and p.bars[track] == bars  # drums untouched

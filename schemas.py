@@ -9,7 +9,11 @@ from .harmony import BARS_PER_CHORD_MAX, MAX_CHORDS, MODES, VOICINGS
 from .parts import LENGTH_MAX, LENGTH_MIN, SCALES, rhythm_names
 from .kitmap import ROLES
 from .listen import BARS_MAX as LISTEN_BARS_MAX
-from .patterns import MOODS, PATTERNS
+from .patterns import MOODS, PATTERNS, resolve as _resolve_genre
+from .library import KINDS as LIBRARY_KINDS
+
+# v0.9.0: bare "house" still means deep house (patterns.ALIASES), so the enum offers "chicago" for classic house.
+GENRES = sorted({g for g in PATTERNS if _resolve_genre(g).name == g} | {"chicago"})
 from .jam import MODES as FOLLOW_MODES
 
 TRACK = {"type": "integer", "minimum": 1, "maximum": 16, "description": "Track 1-16 (= MIDI channel)"}
@@ -47,7 +51,7 @@ SCHEMAS = {
                         "result's overlap_warning (and any 'warning': virtual port, hardware silent) on to the user. "
                         "Roles follow whiplash_label_tracks." + SKILL),
         "parameters": {"type": "object", "properties": {
-            "genre": {"type": "string", "enum": sorted(PATTERNS), "description": "Pattern genre"},
+            "genre": {"type": "string", "enum": GENRES, "description": "Pattern genre (chicago = classic house)"},
             "mood": {"type": "string", "description": f"Mood word if no genre, e.g. {', '.join(sorted(MOODS))}"},
             "bpm": {"type": "number", "minimum": BPM_MIN, "maximum": BPM_MAX,
                     "description": "Default: the genre's"},
@@ -70,6 +74,8 @@ SCHEMAS = {
             "transition": {**TRANSITION, "description": "Queued switch: hand over over transition_bars, then switch"},
             "transition_bars": TX_BARS,
             "filter_from": FILTER_FROM,
+            "groove": {"type": "string", "description": "Named groove: 'house.jack', 'shuffle', 'A' (classic)"},
+            "energy": {"type": "integer", "minimum": 1, "maximum": 5, "description": "Groove level, default 3"},
         }},
     },
     "whiplash_set_param": {
@@ -164,6 +170,8 @@ SCHEMAS = {
             "bars": {"type": "integer", "enum": [1, 2, 4],
                      "description": "Bars before the part repeats (default: the shortest that plays every note)"},
             "reset": {"type": "boolean", "description": "true: drop the written part and go back to the generated line"},
+            "groove": {"type": "string", "description": "A named drum lane, e.g. 'hat.offbeat_shuffle'"},
+            "out_of_key": {"type": "boolean", "description": "Keep notes the key lock would snap"},
             "envelope": {"type": "string", "enum": ["note"],
                          "description": ("'note': also send amp_hold 127 (HOLD = NOTE, CC 80) so length is audible "
                                          "in AHD mode. Changes the kit's sound until reloaded; only when the user agrees.")},
@@ -176,6 +184,7 @@ SCHEMAS = {
         "parameters": {"type": "object", "properties": {
             "chords": {"type": ["array", "string"], "items": {"type": "string"}, "maxItems": MAX_CHORDS,
                        "description": "Roman numerals in the key ('i VI III VII', 'ii7 V7 Imaj7') or names ('Am F C G')"},
+            "name": {"type": "string", "description": "Library progression instead, e.g. 'deephouse.gospel'"},
             "bars_per_chord": {"type": "integer", "minimum": 1, "maximum": BARS_PER_CHORD_MAX, "description": "Default 1"},
             "voicing": {"type": "string", "enum": list(VOICINGS), "description": "Default close (voice-led)"},
             "key": {**KEY, "description": "Default: the key playing; a new one moves the pattern too"},
@@ -255,13 +264,15 @@ SCHEMAS = {
     "whiplash_mutate": {
         "name": "whiplash_mutate",
         "description": ("Change the running pattern on the bar: density, fill, swing, humanize, drop "
-                        "(silence tracks for some bars), or reset."),
+                        "(silence tracks for some bars), energy (the groove's level), or reset."),
         "parameters": {"type": "object", "required": ["action"], "properties": {
-            "action": {"type": "string", "enum": ["density", "fill", "swing", "humanize", "drop", "reset"]},
+            "action": {"type": "string", "enum": ["density", "fill", "swing", "humanize", "drop", "reset", "energy"]},
             "tracks": TRACKS,
-            "amount": {"type": ["number", "string"], "description": "density: -1..1 or thin/thicken; swing: 50-80; humanize: 0-1"},
+            "amount": {"type": ["number", "string"],
+                       "description": "density: -1..1 or thin/thicken; swing: 50-80; humanize: 0-1; energy: 1-5, up, down"},
             "bars": {"type": "integer", "minimum": 1, "maximum": DROP_BARS_MAX, "description": "drop: how many bars (default 2)"},
-            "fill": {"type": "boolean", "description": "drop: also play a drum fill on the last dropped bar"},
+            "fill": {"type": ["boolean", "string"],
+                     "description": "fill: a fill name (snare.flam_roll); drop: true also fills the last bar"},
         }},
     },
     "whiplash_mute_track": {
@@ -336,6 +347,16 @@ SCHEMAS = {
         "name": "whiplash_undo",
         "description": "Revert the last written part, mix or arrangement change, on the next bar.",
         "parameters": EMPTY,
+    },
+    "whiplash_list_library": {
+        "name": "whiplash_list_library",
+        "description": ("List named genres, progressions, grooves, lanes and fills (with tags) to use by name in other "
+                        "tools."),
+        "parameters": {"type": "object", "required": ["kind"], "properties": {
+            "kind": {"type": "string", "enum": list(LIBRARY_KINDS)},
+            "genre": {"type": "string"},
+            "tag": {"type": "string", "description": "e.g. warm, dark, jacking, bass"},
+        }},
     },
     "whiplash_open_view": {
         "name": "whiplash_open_view",

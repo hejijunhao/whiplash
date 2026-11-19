@@ -391,7 +391,7 @@ def _descriptions(node):
 def test_description_size_budget():
     # v0.5.2: 7302 characters of tool descriptions over 16 tools, 11357 counting params, 18108 bytes of JSON.
     tool_text = {name: len(s["description"]) for name, s in schemas.SCHEMAS.items()}
-    assert sum(tool_text.values()) <= 4100, tool_text  # v0.7.0: 3300 (listen); v0.7.1: 3500; v0.8.0: 4100
+    assert sum(tool_text.values()) <= 4250, tool_text  # v0.7.0: 3300 (listen); v0.7.1: 3500; v0.8.0: 4100; v0.9.0: 4250
     assert max(tool_text.values()) <= 400, tool_text
     # v0.6.0 adds whiplash_set_progression and key/scale on play_pattern: about 700 characters of params.
     # v0.6.1 adds whiplash_arrange (its section schema) and trims other tool descriptions to stay under 3000.
@@ -403,8 +403,11 @@ def test_description_size_budget():
     # 3500, params to 8550 characters and the JSON to 20400 bytes.
     # v0.8.0 adds whiplash_play_along, whiplash_follow and whiplash_undo: the tool total rises to 4100, params to
     # 9300 characters and the JSON to 22000 bytes (docs/executing/v08-build-plan.md §5.9).
-    assert _descriptions(schemas.SCHEMAS) <= 9300
-    assert len(json.dumps(schemas.SCHEMAS)) <= 22000
+    # v0.9.0 (ontology O1a) adds whiplash_list_library and groove/energy, name, groove/out_of_key and energy/fill
+    # names on existing tools: the tool total rises to 4250, params to 9900 and the JSON to 23500 bytes
+    # (docs/executing/ontology-o1a-build-plan.md §4).
+    assert _descriptions(schemas.SCHEMAS) <= 9900
+    assert len(json.dumps(schemas.SCHEMAS)) <= 23500
 
 
 def test_short_descriptions_keep_the_safety_caveats():

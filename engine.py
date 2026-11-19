@@ -39,7 +39,7 @@ import time
 import time as _walltime  # the input reader's sleeps (tests may swap the module's `time` for a virtual clock)
 from dataclasses import dataclass, replace
 
-from . import arrange, ccmap, harmony, jam, kitmap, mixer, mutate, parts, patterns
+from . import arrange, ccmap, genres, grooves, harmony, jam, kitmap, library, mixer, mutate, parts, patterns, progressions
 from . import transition as _transition_mod  # play() has a `transition` argument
 
 log = logging.getLogger("whiplash")
@@ -107,6 +107,8 @@ MODE_WORDS = {"echo": "your phrase played back, in key",
               "answer": "a reply that mirrors your contour and resolves on the tonic",
               "harmonize": "your phrase a diatonic third above"}  # v0.8.0 whiplash_follow modes, for its result
 CURRENT_KEY = {"current", "session", "playing"}  # write_part key: use the key the beat is playing in
+UNPLACED_NOTE = ("these lanes have no track on this kit (no default track for that role and none labelled), so they "
+                 "don't play. Label one with whiplash_label_tracks, e.g. {\"8\": \"perc\"}, then call again.")
 POLY_NOTE = ("chords mode plays one chord tone per hit, and each chord track starts on a different tone, so it works "
              "on a track that plays one note at a time. The manual gives the Digitakt II 16 audio voices for 16 "
              "tracks and documents chords only on MIDI tracks, so a stacked chord on an audio track probably "
@@ -451,6 +453,14 @@ class Engine:
         self._follow = None  # {"track", "answer", "mode", "since_bar", "replies", "last"} while following
         self._phrase = collections.deque(maxlen=jam.PHRASE_BUFFER)  # (time, note, velocity) on the call track
         self._undo = []  # newest last: {"kind": "part" | "mix" | "arrangement", "what", ...}
+        # v0.9.0 (ontology O1a). _groove: the groove playing ({"name", "energy", "genre", "lanes", "unplaced", ...}),
+        # None for a plain genre call. _energy_next: an energy change compiled in the tool thread, landing at its bar
+        # through _reroute. _fill_names: bar -> {track: fill name}, read once per filling track at the bar line.
+        # _prog_full: pad tracks that play a shell progression's colour tones (the 9th first).
+        self._groove = None
+        self._energy_next = None
+        self._fill_names = {}
+        self._prog_full = frozenset()
 
     # ---- port handling -------------------------------------------------
     def ensure_port(self, port=None, allow_virtual=True):
@@ -564,8 +574,11 @@ class Engine:
         return default_send_transport() if self.send_transport is None else self.send_transport
 
     def play(self, pattern, bpm=None, bars=None, port=None, send_clock=True, send_transport=None, transpose=None,
-             tracks=None, key=None, scale=None, transition=None, transition_bars=None, filter_from=None):
+             tracks=None, key=None, scale=None, transition=None, transition_bars=None, filter_from=None, groove=None):
         """Start a pattern, or queue a live switch to it at the next bar line.
+
+        groove (v0.9.0): what grooves.compile() said about the pattern ({"name", "energy", ...}), kept for
+        whiplash_mutate energy and status; None for a plain genre pattern.
 
         send_transport: True sends MIDI Start/Stop around the clock, False sends clock only,
         None keeps the running mode (or uses the WHIPLASH_SEND_TRANSPORT default on a fresh start).
@@ -626,7 +639,8 @@ class Engine:
                     if tx is not None:
                         self._commit_plan(plan, tx["id"])
                     self._queued = {"pattern": pattern, "bpm": bpm, "bars": bars, "at": at, "transpose": transpose,
-                                    "ccs": ccs, "mutes": mutes, "key": keyspec, "transition": tx}
+                                    "ccs": ccs, "mutes": mutes, "key": keyspec, "transition": tx, "groove": groove}
+                    self._energy_next = None  # a switch replaces any energy change still waiting for its bar
                 out = {"mode": "queued", "switch_at_bar": at, "replaced_queued": replaced,
                        "send_transport": self.send_transport}
                 if tx is not None:
@@ -650,6 +664,7 @@ class Engine:
             with self._lock:
                 self.send_transport = send_transport
                 self._key = keyspec
+                self._groove = groove
                 self._load(pattern, bpm, bars, start_bar=0)
                 self._transpose = {t: v for t, v in transpose.items() if v}
                 self._apply_setup(ccs, mutes)  # before the thread starts: before MIDI Start and the first note
@@ -729,11 +744,15 @@ class Engine:
 
     def _refresh_harmony(self):
         """Recompute which tracks follow the progression and how (caller holds _lock)."""
+        self._prog_full = frozenset()
         if self._prog is None:
             self._prog_modes, self._prog_ranks, self._prog_pads = {}, {}, frozenset()
             return
         self._prog_modes, self._prog_ranks, self._prog_pads = harmony.modes(
             self.pattern, self._kit_tracks, self._prog.overrides, set(self._parts), self._work)
+        if self._prog.colours:  # v0.9.0 shell voicing: pad tracks carry the colour tones, ranked among themselves
+            self._prog_full, self._prog_ranks = harmony.colour_ranks(self._prog_modes, self._prog_ranks, self.pattern,
+                                                                     self._kit_tracks)
 
     def effective_key(self):
         """The key the beat plays in: the session key, else the playing pattern's home key."""
@@ -780,6 +799,7 @@ class Engine:
                     self._timed, self._owned = {}, {}
                     self._queued = None
                     self._drops, self._fills = {}, {}
+                    self._fill_names, self._energy_next = {}, None
                     self._transpose = {}
                     self._parts = {}
                     self._key, self._prog = None, None
@@ -876,6 +896,7 @@ class Engine:
             self._queued = None
             if queued.get("key") is not None:
                 self._key = queued["key"]
+            self._groove = queued.get("groove")
             self._load(queued["pattern"], queued["bpm"], queued["bars"], start_bar=bar_n)
             self._mark("pattern", queued["pattern"].name, at)
             self._set_transposes(queued.get("transpose") or {})
@@ -883,6 +904,12 @@ class Engine:
             if self._restore:  # a filter_swap closed the outgoing cutoff: the incoming one reopens from the one
                 self._reopen()
             log.info("whiplash: switched to %s at bar %d", queued["pattern"].name, bar_n)
+        nxt = self._energy_next
+        if nxt is not None and bar_n >= nxt["at"]:  # v0.9.0: the same groove at another level, through _reroute
+            self._energy_next = None
+            self._raw_pattern, self._groove = nxt["pattern"], nxt["groove"]
+            self._kit_dirty = True
+            self._mark("energy", nxt["groove"]["energy"], at)
         if self._kit_dirty:
             self._reroute()
         if self.bars_total and bar_n - self.pattern_start >= self.bars_total:
@@ -898,6 +925,10 @@ class Engine:
         for old in [b for b in self._fills if b < bar_n]:
             del self._fills[old]
         fills = self._fills.pop(bar_n, set())
+        names = self._fill_names.pop(bar_n, None) if self._fill_names else None
+        if self._fill_names:
+            for old in [b for b in self._fill_names if b < bar_n]:
+                del self._fill_names[old]
         self.bar_fills = (bar_n, frozenset(fills))
         self._bar_exact = frozenset(self._parts)
         idx = (bar_n - self.pattern_start) % patterns.BARS
@@ -917,10 +948,12 @@ class Engine:
             if bars is None:
                 hits = harmony.pad_line()
             else:
-                hits = (mutate.fill(harmony.role_of(track, self.pattern, self._kit_tracks), bars[idx])
+                hits = (mutate.fill(harmony.role_of(track, self.pattern, self._kit_tracks), bars[idx],
+                                    names.get(track) if names else None)
                         if track in fills else bars[idx])
             if prog is not None and track in self._prog_modes:
-                hits = harmony.apply(self._prog_modes[track], hits, chord_notes, chord_root, prog.key,
+                notes = prog.colours[chord_i] if track in self._prog_full else chord_notes
+                hits = harmony.apply(self._prog_modes[track], hits, notes, chord_root, prog.key,
                                      self._prog_ranks.get(track, 0))
             shift = self._transpose.get(track, 0)
             for step, note, vel, gate, offset in hits:
@@ -1371,7 +1404,7 @@ class Engine:
             preset_name = preset_levels = None
             if preset not in (None, ""):
                 try:
-                    preset_name, preset_levels = mixer.preset(preset, self._raw_pattern.name if self._raw_pattern
+                    preset_name, preset_levels = mixer.preset(preset, self._raw_pattern.family if self._raw_pattern
                                                               else None)
                 except mixer.MixError as exc:
                     raise WhiplashError(str(exc)) from None
@@ -2179,17 +2212,27 @@ class Engine:
         roles = self._roles_playing() if roles is None else roles
         return sorted(t for t, r in roles.items() if r in mutate.DEFAULT_FILL_ROLES)
 
-    def schedule_fill(self, tracks=None):
+    def schedule_fill(self, tracks=None, fill=None):
         """A one-bar fill on the next bar. Fill shapes follow each track's role (the kit map label, else the
-        pattern's), so a kick labelled on track 9 gets the kick fill. Default: the drum tracks playing."""
+        pattern's), so a kick labelled on track 9 gets the kick fill. Default: the drum tracks playing.
+
+        fill (v0.9.0): a fill name (grooves.FILLS, e.g. "snare.flam_roll") plays that shape on the tracks of its
+        roles, or on the named tracks; True or None keeps the role shapes, with the playing groove's own fills.
+        """
         named = None if tracks is None else check_tracks(tracks, high=16)
+        entry = None
+        if fill not in (None, True, "", "true"):
+            if fill is False:
+                raise WhiplashError("fill: false schedules nothing; give true or a fill name, e.g. 'snare.roll'")
+            try:
+                entry = library.resolve("fill", fill)
+            except library.LibraryError as exc:
+                raise WhiplashError(str(exc)) from None
         with self._lock:
             self._require_playing()
-            if named is None:
-                tracks = self._default_fill()
-                if not tracks:
-                    raise WhiplashError("no drum track is playing, so there is nothing to fill")
-            else:
+            roles = self._roles_playing()
+            names, used = {}, None
+            if named is not None:
                 tracks = named
                 bad = {t: harmony.role_of(t, self.pattern, self._kit_tracks) for t in tracks}
                 bad = {t: r for t, r in bad.items() if r not in mutate.FILL_SHAPES}
@@ -2197,9 +2240,143 @@ class Engine:
                     names = ", ".join(f"{t} ({r})" for t, r in sorted(bad.items()))
                     raise WhiplashError(f"track(s) {names} aren't drum tracks: fills work on kick, snare/rim, clap, "
                                         "hat, cymbal and perc tracks (label the kit with whiplash_label_tracks)")
+                if entry is not None:
+                    if entry.name == "perc.tom_run":
+                        off = [t for t in tracks if harmony.role_of(t, self.pattern, self._kit_tracks) != "perc"]
+                        if off:
+                            raise WhiplashError(f"perc.tom_run is pitched (notes 60, 57, 53), so it plays only on a "
+                                                f"perc track; track(s) {off} aren't perc")
+                    used = entry.name
+                    names = {t: used for t in tracks}
+            elif entry is not None:
+                tracks = sorted(t for t, r in roles.items() if r in entry.roles)
+                used = entry.name
+                if not tracks and entry.fallback:
+                    fallback = grooves.FILLS[entry.fallback]
+                    tracks = sorted(t for t, r in roles.items() if r in fallback.roles)
+                    used = fallback.name
+                if not tracks:
+                    raise WhiplashError(f"no {' or '.join(sorted(entry.roles))} track is playing for {entry.name}; "
+                                        "label one with whiplash_label_tracks, or pick another fill "
+                                        "(whiplash_list_library(kind: 'fill'))")
+                names = {t: used for t in tracks}
+            else:
+                tracks = self._default_fill(roles)
+                groove = self._groove_record()
+                if groove is not None and groove.fills:  # the groove's own fill per role (v0.9.0)
+                    for role, fname in groove.fills.items():
+                        fitting = [t for t, r in roles.items() if r == role]
+                        shape = grooves.FILLS[fname]
+                        if not fitting and shape.fallback:
+                            continue  # perc.tom_run with no perc track: the snare/rim roll plays anyway
+                        names.update({t: fname for t in fitting})
+                    tracks = sorted(set(tracks) | set(names))
+                if not tracks:
+                    raise WhiplashError("no drum track is playing, so there is nothing to fill")
             at = self.bar + 1
             self._fills.setdefault(at, set()).update(tracks)
-            return {"fill_at_bar": at, "tracks": tracks}
+            if names:
+                self._fill_names.setdefault(at, {}).update(names)
+            out = {"fill_at_bar": at, "tracks": tracks}
+            if used:
+                out["fill"] = used
+                if entry is not None and used != entry.name:
+                    out["fallback"] = (f"no perc track is playing, so {used} plays instead of {entry.name}")
+            elif names:
+                out["fills"] = {str(t): n for t, n in sorted(names.items())}
+            return out
+
+    # ---- grooves and energy (v0.9.0) -----------------------------------
+    def _groove_info(self):
+        """The groove playing (caller holds _lock): the one play_pattern named, else the classic groove a plain
+        hand-written genre is, at energy 3. None for a pattern with no groove (soul, breaks)."""
+        if self._groove is not None:
+            return self._groove
+        raw = self._raw_pattern
+        if raw is None or raw.family not in grooves.CLASSIC or raw is not patterns.PATTERNS.get(raw.family):
+            return None
+        return {"name": grooves.CLASSIC[raw.family], "energy": 3, "genre": raw.family}
+
+    def _groove_record(self):
+        info = self._groove_info()
+        return grooves.GROOVES.get(info["name"]) if info else None
+
+    def kit_map(self):
+        """A copy of the kit map {track: (role, label)}, for compiling a groove in the tool thread."""
+        with self._lock:
+            return dict(self._kit_tracks)
+
+    def playing_family(self):
+        """The genre playing (a groove's genre, or the pattern's name), or None: a bare groove name's hint."""
+        with self._lock:
+            raw = self._raw_pattern if self.playing() else None
+            return raw.family if raw is not None else None
+
+    def groove_status(self):
+        """The groove for status (caller holds _lock), or None."""
+        info = self._groove_info()
+        if info is None:
+            return None
+        out = {"name": info["name"], "energy": info["energy"], "genre": info["genre"]}
+        for key in ("lanes", "unplaced", "swing"):
+            if info.get(key):
+                out[key] = info[key]
+        if self._energy_next is not None:
+            out["next"] = {"energy": self._energy_next["groove"]["energy"], "at_bar": self._energy_next["at"]}
+        return out
+
+    def set_energy(self, amount):
+        """whiplash_mutate(action: "energy"): the same groove at another level (1-5, up, down) from the next bar.
+
+        The new level compiles in the tool thread and lands through _reroute, which keeps swing, humanize, density,
+        mutes, ramps, written parts, the progression and the arrangement.
+        """
+        word = str(amount).strip().lower() if amount is not None else ""
+        if word not in ("up", "down"):
+            value = _number(amount)
+            if isinstance(amount, bool) or not (1 <= value <= 5 and value == int(value)):
+                raise WhiplashError("energy amount must be 1-5, 'up' or 'down'")
+        with self._lock:
+            self._require_playing()
+            if self._queued:
+                raise WhiplashError(f"a switch to {self._queued['pattern'].name} is queued for bar "
+                                    f"{self._queued['at']}: give energy on that whiplash_play_pattern call instead")
+            info = self._groove_info()
+            if info is None:
+                family = self._raw_pattern.family if self._raw_pattern is not None else "this pattern"
+                raise WhiplashError(f"{family} has no energy levels yet; pick a genre with grooves "
+                                    f"({', '.join(sorted(grooves.CLASSIC) + ['house'])}) or whiplash_list_library("
+                                    "kind: 'groove')")
+            groove = grooves.GROOVES[info["name"]]
+            current = self._energy_next["groove"]["energy"] if self._energy_next else info["energy"]
+            if word == "up":
+                if current >= 5:
+                    raise WhiplashError("already at energy 5")
+                new = current + 1
+            elif word == "down":
+                if current <= 1:
+                    raise WhiplashError("already at energy 1")
+                new = current - 1
+            else:
+                new = int(value)
+                if new == current:
+                    raise WhiplashError(f"already at energy {new}")
+            base = patterns.PATTERNS[groove.genre]
+            kit = dict(self._kit_tracks)
+            at = self.bar + 1
+        pattern, compiled = grooves.compile(groove, new, base, kit)  # outside the lock the clock needs
+        state = {"name": groove.name, "energy": new, "genre": groove.genre, "swing": groove.swing,
+                 "lanes": compiled["lanes"], "unplaced": compiled["unplaced"]}
+        with self._lock:
+            self._require_playing()
+            at = max(at, self.bar + 1)
+            self._energy_next = {"pattern": pattern, "groove": state, "at": at}
+        out = {"groove": groove.name, "energy": new, "from": current, "lands_at_bar": at, "lanes": compiled["lanes"],
+               "keeps": "swing, humanize, density, mutes, ramps, written parts, the progression and the arrangement"}
+        if compiled["unplaced"]:
+            out["unplaced"] = compiled["unplaced"]
+            out["unplaced_note"] = UNPLACED_NOTE
+        return out
 
     def schedule_drop(self, tracks, bars, fill=False):
         tracks = check_tracks(tracks, high=16)
@@ -2304,7 +2481,8 @@ class Engine:
         return LENGTH_NOTE
 
     def write_part(self, track, rhythm=None, grid=None, steps=None, hits=None, lock_to=None, notes=None, key=None,
-                   scale=None, length=None, velocity=None, bars=None, reset=False, envelope=None):
+                   scale=None, length=None, velocity=None, bars=None, reset=False, envelope=None, groove=None,
+                   out_of_key=False):
         """Write a track's line from the next bar line: where the hits go, and what notes they play.
 
         Exactly one of rhythm / grid / steps / hits / lock_to places the hits. lock_to (and rhythm
@@ -2317,11 +2495,12 @@ class Engine:
         track = check_track(track)
         reset = check_flag(reset, "reset")
         envelope = check_envelope(envelope)
+        out_of_key = check_flag(out_of_key, "out_of_key")
         if reset:
             extra = [k for k, v in (("rhythm", rhythm), ("grid", grid), ("steps", steps), ("hits", hits),
                                     ("lock_to", lock_to), ("notes", notes), ("key", key), ("scale", scale),
                                     ("length", length), ("velocity", velocity), ("bars", bars),
-                                    ("envelope", envelope)) if v not in (None, "", [])]
+                                    ("envelope", envelope), ("groove", groove)) if v not in (None, "", [])]
             if extra:
                 raise WhiplashError(f"reset: true takes only track (got {', '.join(extra)})")
             with self._lock:
@@ -2334,6 +2513,18 @@ class Engine:
                 return {"track": track, "reset": True, "was_written": had is not None,
                         "part": "generated" if any(self._work.get(track) or []) else None,
                         "applies": "next bar", "at_bar": self.bar + 1}
+        lane = None
+        if groove not in (None, ""):  # v0.9.0: a named lane is a sixth placement
+            others = [k for k, v in (("rhythm", rhythm), ("grid", grid), ("steps", steps), ("hits", hits),
+                                     ("lock_to", lock_to), ("length", length), ("velocity", velocity),
+                                     ("bars", bars)) if v not in (None, "", [])]
+            if others:
+                raise WhiplashError(f"groove brings its own hits, velocities and timing: drop {', '.join(others)}")
+            try:
+                lane = library.resolve("lane", groove)
+            except library.LibraryError as exc:
+                raise WhiplashError(str(exc)) from None
+            return self._write_lane(track, lane, notes, envelope)
         try:
             kind, value = parts.placement(rhythm, grid, steps, hits, lock_to)
             source = None
@@ -2344,6 +2535,9 @@ class Engine:
             with self._lock:
                 self._require_playing()
                 source_bars = self._base(source) if source else None
+                role = harmony.role_of(track, self.pattern, self._kit_tracks)
+                own_key = key not in (None, "") and not (isinstance(key, str) and key.strip().lower() in CURRENT_KEY)
+                lock_key = self.lock_key() if role in kitmap.MELODIC and not (out_of_key or own_key) else None
                 if isinstance(key, str) and key.strip().lower() in CURRENT_KEY:
                     playing = self.effective_key()
                     if playing is None:
@@ -2351,8 +2545,9 @@ class Engine:
                     if scale in (None, ""):
                         scale = playing.scale
                     key = harmony.pc_name(playing.pc, playing.flats)
+            lock = (lambda n: harmony.snap(n, lock_key)) if lock_key is not None else None
             part = parts.build(kind, source if source else value, notes=notes, key=key, scale=scale, length=length,
-                               velocity=velocity, bars=bars, source_bars=source_bars)
+                               velocity=velocity, bars=bars, source_bars=source_bars, lock=lock)
         except parts.PartError as exc:
             raise WhiplashError(str(exc)) from None
         sent = None
@@ -2375,6 +2570,17 @@ class Engine:
                    "length_audible": self._length_note(track)}
             if part.key:
                 out["key"] = part.key
+            if lock_key is not None:
+                out["key_lock"] = lock_key.name
+                if part.snapped:
+                    out["snapped"] = [{"from": patterns.note_name(a), "to": patterns.note_name(b)}
+                                      for a, b in part.snapped]
+                    out["snap_note"] = (f"key lock moved {len(part.snapped)} note(s) into {lock_key.name}; pass "
+                                        "out_of_key: true to keep a deliberate chromatic note")
+            elif out_of_key:
+                out["key_lock"] = "off for this part (out_of_key)"
+            elif own_key and role in kitmap.MELODIC:
+                out["key_lock"] = f"off: the part is written in its own key ({part.key}); key: 'current' locks it"
             hidden = self._hidden_by(track)
             if hidden:
                 out["replaces_generated"] = hidden
@@ -2405,9 +2611,62 @@ class Engine:
             out["channel_note"] = HIGH_TRACK_NOTE
         return out
 
+    def lock_key(self):
+        """The key explicit melodic notes snap to (caller holds _lock): the progression's while one plays, else
+        the session key, else the pattern's home key. None with nothing set (v0.9.0 key lock, Q-H2)."""
+        if self._prog is not None:
+            return self._prog.key
+        return self.effective_key()
+
+    def _write_lane(self, track, lane, notes, envelope):
+        """write_part(groove: "<lane>"): the lane's own hits, velocities and microtiming on track (v0.9.0)."""
+        note_list = None
+        if notes not in (None, "", []):
+            try:
+                note_list = [n for n in parts.parse_notes(notes) if n is not None]
+            except parts.PartError as exc:
+                raise WhiplashError(str(exc)) from None
+        sent = None
+        with self._lock:
+            self._require_playing()
+            role = harmony.role_of(track, self.pattern, self._kit_tracks)
+            if role in kitmap.MELODIC or role in ("fx",):
+                label = self._kit_tracks.get(track)
+                what = f"is labelled {label[1]}" if label else f"plays the {role}"
+                raise WhiplashError(f"lane {lane.name} is a {lane.role} part; track {track} {what}. Put it on a "
+                                    "drum or perc track, or relabel with whiplash_label_tracks")
+            swing = self.swing
+        bars, clamped = grooves.lane_bars(lane, swing, notes=note_list)
+        part = parts.Part(bars=bars, source=f"lane {lane.name}", bars_written=len(lane.grid))
+        if envelope == "note":
+            self.ensure_port()
+            sent = self.set_param(track, "note", param="amp_hold")
+        with self._lock:
+            self._require_playing()
+            replaced = track in self._parts
+            self._push_undo({"kind": "part", "track": track, "prev": self._parts.get(track),
+                             "what": f"lane {lane.name} on track {track}"})
+            self._parts[track] = part
+            self._reroute()
+            out = {"track": track, "part": "written", "placed_by": part.source, "bars": part.bars_written,
+                   "applies": "next bar", "at_bar": self.bar + 1, "replaced_written": replaced,
+                   "lane": lane.name, "role": lane.role, "velocity_curve": lane.curve,
+                   "micro": sorted({m for m in lane.micro if m}) if lane.micro else [],
+                   "written": parts.describe(part)}
+            if clamped:
+                out["pushed_downbeat_clamped"] = True
+            hidden = self._hidden_by(track)
+            if hidden:
+                out["replaces_generated"] = hidden
+        if sent is not None:
+            out["envelope"] = {"amp_hold": sent["value"], "cc": sent["cc"], **HOLD_NOTE_INFO}
+        if track > 8:
+            out["channel_note"] = HIGH_TRACK_NOTE
+        return out
+
     # ---- keys and progressions ----------------------------------------
     def set_progression(self, chords=None, bars_per_chord=None, voicing=None, key=None, scale=None, tracks=None,
-                        clear=False):
+                        clear=False, name=None):
         """Play a chord progression from the next bar line: chord tracks voice it, bass follows the roots.
 
         chords are Roman numerals in the key ("i VI III VII") or names ("Am F C G"). The key is the one given,
@@ -2419,7 +2678,8 @@ class Engine:
         clear = check_flag(clear, "clear")
         if clear:
             extra = [k for k, v in (("chords", chords), ("bars_per_chord", bars_per_chord), ("voicing", voicing),
-                                    ("key", key), ("scale", scale), ("tracks", tracks)) if v not in (None, "", [], {})]
+                                    ("key", key), ("scale", scale), ("tracks", tracks), ("name", name))
+                     if v not in (None, "", [], {})]
             if extra:
                 raise WhiplashError(f"clear: true takes nothing else (got {', '.join(extra)})")
             with self._lock:
@@ -2428,26 +2688,51 @@ class Engine:
                 self._prog = None
                 self._refresh_harmony()
                 return {"cleared": had is not None, "applies": "next bar", "at_bar": self.bar + 1, "key": self.key_name()}
-        if chords in (None, "", []):
-            raise WhiplashError("give chords, e.g. ['i', 'VI', 'III', 'VII'] or 'Am F C G' (or clear: true)")
+        named = name not in (None, "")
+        if named and chords not in (None, "", []):
+            raise WhiplashError("give chords or name, not both (name brings its own chords)")
+        if not named and chords in (None, "", []):
+            raise WhiplashError("give chords, e.g. ['i', 'VI', 'III', 'VII'] or 'Am F C G', or a library name, e.g. "
+                                "name: 'deephouse.gospel' (or clear: true)")
+        entry = None
+        if named:
+            with self._lock:
+                hint = self._raw_pattern.family if self._raw_pattern is not None else None
+            try:
+                entry = library.resolve("progression", name, genre=hint)
+            except library.LibraryError as exc:
+                raise WhiplashError(str(exc)) from None
+            chords = entry.chords
         try:
             symbols = harmony.split_chords(chords)
-            per_chord = harmony.check_bars_per_chord(bars_per_chord)
-            voicing = harmony.check_voicing(voicing)
+            per_chord = (harmony.check_bars_per_chord(bars_per_chord) if entry is None or bars_per_chord not in
+                         (None, "") else entry.bars_per_chord)
+            if entry is not None and voicing in (None, ""):
+                voicing = entry.voicing  # None: the shell rule below
+            else:
+                voicing = harmony.check_voicing(voicing)
             overrides = harmony.check_modes(tracks)
         except harmony.HarmonyError as exc:
             raise WhiplashError(str(exc)) from None
         keyspec = check_key(key, scale)
         with self._lock:  # read only; parsing, voicing and re-keying happen outside the lock the clock needs
             self._require_playing()
-            prog_key = keyspec or self.effective_key() or harmony.Key(0, "major")
+            session_key = keyspec or self.effective_key() or harmony.Key(0, "major")
             raw = self._raw_pattern
+        key_note = None
+        prog_key = session_key
+        if entry is not None:  # its own scale on the session root; major <-> minor take the relative key
+            prog_key, key_note = progressions.key_for(entry, session_key)
         try:
             resolved = [harmony.parse_chord(sym, prog_key) for sym in symbols]
         except harmony.HarmonyError as exc:
             raise WhiplashError(str(exc)) from None
-        voicings = harmony.voice(resolved, voicing)
-        routed = self._routed(raw, prog_key) if raw is not None else None
+        rule = voicing is None
+        sevenths = any(harmony.has_seventh(c.shape) for c in resolved)
+        close = harmony.voice(resolved, "close") if rule or voicing == "shell" else None
+        shell = harmony.voice(resolved, "shell") if (rule and sevenths) or voicing == "shell" else None
+        voicings = shell if voicing == "shell" else close if rule else harmony.voice(resolved, voicing)
+        routed = self._routed(raw, session_key) if raw is not None else None
         with self._lock:
             self._require_playing()
             if self._raw_pattern is not raw:  # a switch landed meanwhile: route what plays now
@@ -2460,17 +2745,38 @@ class Engine:
                                     "whiplash_label_tracks")
             at = self.bar + 1
             replaced = self._prog is not None
-            prog = harmony.Progression(tuple(resolved), voicings, per_chord, voicing, prog_key, at, overrides)
-            key_changed = prog_key != self.effective_key()
-            self._key, self._prog = prog_key, prog
+            rule_note = None
+            if rule:  # v0.9.0 (Q-H4): shell for 7th/9th/11th chords on <= 3 one-voice chord tracks, else close
+                modes_now, _, _ = harmony.modes(routed, self._kit_tracks, overrides, set(self._parts), self._work)
+                count = harmony.chord_track_count(modes_now, routed, self._kit_tracks)
+                if sevenths and count <= 3:
+                    voicing, voicings = "shell", shell
+                    rule_note = (f"shell (root, 3rd, 7th): {count} one-voice chord track(s) voice it; pad tracks add "
+                                 "the 9th and other colour tones")
+                else:
+                    voicing, voicings = "close", close
+                    rule_note = ("close: no 7th, 9th or 11th chords" if not sevenths else
+                                 f"close: {count} chord tracks can carry the full chord")
+            colours = harmony.colours(resolved, close) if voicing == "shell" else ()
+            prog = harmony.Progression(tuple(resolved), voicings, per_chord, voicing, prog_key, at, overrides,
+                                       colours=colours, library=entry.name if entry is not None else None)
+            key_changed = session_key != self.effective_key()
+            self._key, self._prog = session_key, prog
             if key_changed:
                 self._kit_dirty = True  # re-key the pattern at the same bar line the progression starts on
                 self.pattern = routed  # so the modes below see the routing that bar will use
             self._refresh_harmony()
-            out = {"progression": harmony.describe(prog), "key": prog_key.name, "bars_per_chord": per_chord,
-                   "voicing": voicing, "loop_bars": prog.length, "applies": "next bar", "starts_at_bar": at,
-                   "replaced": replaced, "tracks": self._prog_summary(),
+            out = {"progression": harmony.describe(prog), "key": key_note or prog_key.name,
+                   "bars_per_chord": per_chord, "voicing": voicing, "loop_bars": prog.length, "applies": "next bar",
+                   "starts_at_bar": at, "replaced": replaced, "tracks": self._prog_summary(),
                    "polyphony_note": POLY_NOTE}
+            if entry is not None:
+                out["library"] = {"name": entry.name, "about": entry.about, "source": entry.source,
+                                  "chords": entry.chords, "scale": entry.scale}
+            if rule_note:
+                out["voicing_rule"] = rule_note
+            if self._prog_full:
+                out["pad_tones"] = {str(t): "colour tones (the 9th first)" for t in sorted(self._prog_full)}
             if key_changed:
                 out["key_changed"] = "the pattern's melodic tracks move into this key at the same bar"
             if not any(m in ("chords", "stack") for m in self._prog_modes.values()):
@@ -2633,7 +2939,7 @@ class Engine:
                 mix = ("saved", sec.mix)
             else:
                 try:
-                    mix = ("preset", mixer.preset(sec.mix, self._raw_pattern.name if self._raw_pattern else None)[0])
+                    mix = ("preset", mixer.preset(sec.mix, self._raw_pattern.family if self._raw_pattern else None)[0])
                 except mixer.MixError:
                     raise WhiplashError(f"section {sec.name}: mix {sec.mix!r} is not a saved mix "
                                         f"({', '.join(sorted(self._mixes)) or 'none saved'}) or a preset "
@@ -2768,6 +3074,8 @@ class Engine:
                "key": prog.key.name, "bars_per_chord": prog.bars_per_chord, "voicing": prog.voicing,
                "loop_bars": prog.length, "starts_at_bar": prog.start, "tracks": self._prog_summary(),
                "voicings": harmony.describe(prog)}
+        if prog.library:
+            out["library"] = prog.library
         if self.bar >= prog.start:
             i = prog.index(self.bar)
             into = (self.bar - prog.start) % prog.bars_per_chord
@@ -2961,6 +3269,7 @@ class Engine:
                 "key": self.key_name(), "key_source": ("set" if self._key is not None else
                                                        "pattern" if self._raw_pattern is not None else None),
                 "progression": self.progression_status(),
+                "groove": self.groove_status(),
                 "arrangement": self.arrangement_status(),
                 "mix": self.mix_status(),
                 "listen": self.listen_status(),

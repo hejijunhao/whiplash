@@ -67,6 +67,7 @@ class Part:
     bars_written: int  # 1, 2 or 4: the part repeats every bars_written bars
     unused_notes: int = 0  # notes that did not fit in 4 bars of hits
     key: str = None
+    snapped: tuple = ()  # v0.9.0 key lock: (from, to) for each explicit note moved into the key
 
 
 def _accidental(text):
@@ -285,11 +286,13 @@ def _slots(kind, value, source_bars):
 
 
 def build(kind, value, notes=None, key=None, scale=None, length=None, velocity=None, bars=None,
-          source_bars=None, default_note=None):
+          source_bars=None, default_note=None, lock=None):
     """Validate and build a Part. Raises PartError on any bad input; never touches the engine.
 
     source_bars: the lock_to source track's bars (working hit shape) when kind == 'lock_to'.
     default_note: what plays when no notes are given (the drum note 60, the sample's own pitch).
+    lock: v0.9.0 key lock, a function note -> note applied to explicit notes only (notes and per-hit notes, never
+    the default note), so a melodic part stays in key; what it moved is listed in Part.snapped.
     """
     keyspec = None
     key_name = None
@@ -328,16 +331,24 @@ def build(kind, value, notes=None, key=None, scale=None, length=None, velocity=N
             while bars_n < LOOP_BARS and _count(slots, bars_n) < len(note_list):
                 bars_n *= 2
     laid = [slots[i % len(slots)] for i in range(bars_n)]  # a 3-bar grid plays bars 1, 2, 3, 1
-    out, n = [], 0
+    out, n, snapped = [], 0, []
     for bar in laid:
         hits = []
         for step, accented, over in bar:
+            explicit = True
             if "note" in over:
                 note = parse_note(over["note"], keyspec)
             elif note_list:
                 note = note_list[n % len(note_list)]
             else:
                 note = patterns.DRUM if default_note is None else default_note
+                explicit = False
+            if lock is not None and explicit and note is not None:
+                locked = lock(note)
+                if locked != note:
+                    if (note, locked) not in snapped:
+                        snapped.append((note, locked))
+                    note = locked
             hit_len = check_length(over["length"]) if "length" in over else lengths[n % len(lengths)]
             if "velocity" in over:
                 vel = check_velocity(over["velocity"])
@@ -358,7 +369,8 @@ def build(kind, value, notes=None, key=None, scale=None, length=None, velocity=N
     source = kind if kind != "rhythm" else value
     if kind == "lock_to":
         source = f"lock_to {value}"
-    return Part(bars=loop, source=source, bars_written=bars_n, unused_notes=unused, key=key_name)
+    return Part(bars=loop, source=source, bars_written=bars_n, unused_notes=unused, key=key_name,
+                snapped=tuple(snapped))
 
 
 def _count(slots, bars_n):

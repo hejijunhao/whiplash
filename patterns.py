@@ -1,6 +1,7 @@
 """Genre patterns for Digitakt II tracks 1-8 (MIDI channels 1-8).
 
-Each pattern is 4 bars of 16 steps. A hit is (step, note, velocity, gate_steps).
+Each pattern is 4 bars of 16 steps. A hit is (step, note, velocity, gate_steps), or (step, note, velocity,
+gate_steps, offset_ticks) for a groove lane's microtiming (v0.9.0, grooves.py).
 Deep house and soul are ported from Phil's ~/digitakt-deephouse and
 ~/digitakt-soul-beat scripts; techno and breaks are new, and techhouse came in v0.5.3.
 The track layout here is the default; kitmap.route() moves parts onto the user's labelled tracks.
@@ -36,6 +37,12 @@ class Pattern:
     bars: dict = field(default_factory=dict)  # track -> [bar0 hits, bar1, bar2, bar3]
     shifts: dict = field(default_factory=dict)  # track -> semitones register() moved it (melodic tracks only)
     key: tuple = None  # (pitch class, scale name): the key the melodic tracks are written in (v0.6)
+    genre: str = None  # v0.9.0: the genre a groove or compiled pattern belongs to (None: the name is the genre)
+
+    @property
+    def family(self):
+        """The genre this pattern plays: its name for the hand-written tables, else the groove's genre."""
+        return self.genre or self.name
 
 
 def note_name(note):
@@ -182,20 +189,26 @@ HOME_KEYS = {"deephouse": (9, "minor"), "soul": (9, "minor"), "techno": (5, "min
              "techhouse": (9, "minor")}
 RAW = {p.name: replace(p, key=HOME_KEYS[p.name])
        for p in (_deep_house(), _soul(), _techno(), _breaks(), _tech_house())}  # the note tables as written
-PATTERNS = {name: register(p) for name, p in RAW.items()}
+PATTERNS = {name: register(p) for name, p in RAW.items()}  # genres.py adds the compiled genres (house) on import
 
 ALIASES = {
     "deep house": "deephouse", "deep-house": "deephouse", "house": "deephouse",
     "soul chop": "soul", "hiphop": "soul", "hip hop": "soul", "boom bap": "soul",
     "breakbeat": "breaks", "dnb": "breaks",
     "tech house": "techhouse", "tech-house": "techhouse", "tech_house": "techhouse",
+    # v0.9.0 (ontology §1.5): bare "house" still means deep house; classic/Chicago house has its own words.
+    "classic house": "house", "classic-house": "house", "classichouse": "house", "chicago": "house",
+    "chicago house": "house", "chicago-house": "house", "chicagohouse": "house",
+    "peak time techno": "techno", "peak time tech house": "techhouse",
 }
 MOODS = {
     "groovy": "deephouse", "warm": "deephouse", "late night": "deephouse",
     "chill": "soul", "mellow": "soul", "nostalgic": "soul", "sad": "soul",
     "dark": "techno", "driving": "techno", "hypnotic": "techno", "intense": "techno",
     "energetic": "breaks", "playful": "breaks", "hyped": "breaks", "happy": "breaks",
-    "bouncy": "techhouse", "funky": "techhouse", "rolling": "techhouse", "peak time": "techhouse",
+    "bouncy": "techhouse", "funky": "techhouse", "rolling": "techhouse",
+    "peak time": "techno",  # v0.9.0: was techhouse; "peak time tech house" keeps the old choice (research §5)
+    "jacking": "house",
 }
 
 
