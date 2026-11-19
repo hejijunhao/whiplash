@@ -9,11 +9,11 @@ schema enums (hundreds of names would blow the tool-description budget); whiplas
 import difflib
 import re
 
-from . import genres, grooves, progressions
+from . import genres, grooves, phrases, progressions
 
 KINDS = ("genre", "progression", "groove", "lane", "phrase", "fill", "form", "move")
 LIST_MAX = 40
-LATER = {"phrase": "O1b (v0.9.0's second part)", "form": "O4 (v0.9.3)", "move": "O4 (v0.9.3)"}
+LATER = {"form": "O4 (v0.9.3)", "move": "O4 (v0.9.3)"}
 # Words a model may use for a genre, longest first when matching. Bare "house" is the classic-house id here, the
 # library prefix; as a genre word in play_pattern it still means deep house (patterns.ALIASES).
 GENRE_WORDS = {
@@ -32,7 +32,7 @@ class LibraryError(ValueError):
 
 def _tables():
     return {"genre": genres.GENRES, "progression": progressions.PROGRESSIONS, "groove": grooves.GROOVES,
-            "lane": grooves.LANES, "fill": grooves.FILLS, "phrase": {}, "form": {}, "move": {}}
+            "lane": grooves.LANES, "fill": grooves.FILLS, "phrase": phrases.PHRASES, "form": {}, "move": {}}
 
 
 def table(kind):
@@ -177,6 +177,8 @@ def summary(kind, entry):
     elif kind == "lane":
         out.update(role=entry.role, bars=len(entry.grid), grid=list(entry.grid), velocity_curve=entry.curve,
                    micro=sorted({m for m in entry.micro if m}) if entry.micro else [])
+    elif kind == "phrase":
+        out.update(phrases.describe(entry))
     elif kind == "fill":
         out.update(roles=sorted(entry.roles))
         if entry.fallback:
@@ -213,7 +215,8 @@ def entries(kind, genre=None, tag=None):
         rows = [e for e in rows if _genre_of(e) == genre_id or genre_id in _tags(e)]
     if tag not in (None, ""):
         word = _norm(tag)
-        rows = [e for e in rows if word in {_norm(t) for t in _tags(e)} or (kind == "lane" and _norm(e.role) == word)
+        rows = [e for e in rows if word in {_norm(t) for t in _tags(e)}
+                or (kind in ("lane", "phrase") and _norm(e.role) == word)
                 or (kind == "fill" and word in e.roles)]
     rows.sort(key=lambda e: e.name)
     if not rows:

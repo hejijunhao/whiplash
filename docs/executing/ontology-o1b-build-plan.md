@@ -75,7 +75,7 @@ Researchable questions were decided here from the spec and the research brief; t
 | every musical tool | `taste_hint`, one line, only when a threshold newly fires |
 | `whiplash_list_library` | kind `phrase` lists entries (it was empty until now) |
 
-Caps (`tests/test_v053.py::test_description_size_budget`): tools 4,250 → **4,350**, params 9,900 → **10,300**, JSON 23,500 → **24,300** bytes (the spec's final targets for tools and params; JSON a little over the spec's 24,000 estimate, which the PR states). 26 tools, unchanged.
+Caps (`tests/test_v053.py::test_description_size_budget`), raised only as far as O1b uses (measured: tools 4,248, params 9,951, JSON 23,472 bytes): tools stay at **4,250**, params 9,900 → **10,000**, JSON 23,500 → **23,600** bytes. All inside the spec's final targets (4,350 / 10,300 / 24,000). 26 tools, unchanged.
 
 ## 5. Tests (fake and virtual ports only)
 

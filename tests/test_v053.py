@@ -405,9 +405,10 @@ def test_description_size_budget():
     # 9300 characters and the JSON to 22000 bytes (docs/executing/v08-build-plan.md §5.9).
     # v0.9.0 (ontology O1a) adds whiplash_list_library and groove/energy, name, groove/out_of_key and energy/fill
     # names on existing tools: the tool total rises to 4250, params to 9900 and the JSON to 23500 bytes
-    # (docs/executing/ontology-o1a-build-plan.md §4).
-    assert _descriptions(schemas.SCHEMAS) <= 9900
-    assert len(json.dumps(schemas.SCHEMAS)) <= 23500
+    # (docs/executing/ontology-o1a-build-plan.md §4). O1b adds phrase/density/seed/register on write_part and review
+    # on status: tools stay under 4250, params rise to 10000 and the JSON to 23600 (ontology-o1b-build-plan.md §4).
+    assert _descriptions(schemas.SCHEMAS) <= 10000
+    assert len(json.dumps(schemas.SCHEMAS)) <= 23600
 
 
 def test_short_descriptions_keep_the_safety_caveats():

@@ -171,6 +171,11 @@ SCHEMAS = {
                      "description": "Bars before the part repeats (default: the shortest that plays every note)"},
             "reset": {"type": "boolean", "description": "true: drop the written part and go back to the generated line"},
             "groove": {"type": "string", "description": "A named drum lane, e.g. 'hat.offbeat_shuffle'"},
+            "phrase": {"type": "string",
+                       "description": "A named line that follows the chords, e.g. 'bass.octave_pump', or 'genre'"},
+            "density": {"type": "number", "minimum": 0, "maximum": 1, "description": "phrase: share of its hits kept"},
+            "seed": {"type": ["integer", "string"], "description": "phrase: varies a seeded phrase"},
+            "register": {"type": ["string", "integer"], "description": "phrase: low, mid, high or an anchor note"},
             "out_of_key": {"type": "boolean", "description": "Keep notes the key lock would snap"},
             "envelope": {"type": "string", "enum": ["note"],
                          "description": ("'note': also send amp_hold 127 (HOLD = NOTE, CC 80) so length is audible "
@@ -303,8 +308,10 @@ SCHEMAS = {
     "whiplash_status": {
         "name": "whiplash_status",
         "description": ("Now: port, pattern, key, chords, section, bpm, bar, queued switch, per-track "
-                        "role/slot/pitch/part/mute, ramps, mutations, kit map, routing, errors." + SKILL),
-        "parameters": EMPTY,
+                        "role/slot/pitch/part/mute, ramps, mutations, kit map, routing, errors. review: N bars of what "
+                        "changed, plus too-repetitive or too-busy hints. Feedback only." + SKILL),
+        "parameters": {"type": "object", "properties": {
+            "review": {"type": "integer", "minimum": 4, "maximum": 32, "description": "Bars to review instead"}}},
     },
     "whiplash_listen": {
         "name": "whiplash_listen",
