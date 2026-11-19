@@ -130,7 +130,7 @@ Today the tool descriptions total 4,033 of the 4,100-character cap. The caps are
 | energy while playing | `whiplash_mutate(action: "energy", amount: 1-5 \| "up" \| "down")` | O1 |
 | a named fill | `whiplash_mutate`: `fill` takes a fill name as well as `true` | O1 |
 | feedback | `whiplash_status(review: 4-32)` (status's first argument) | O1b |
-| intents, key changes, lock | `whiplash_set_progression`: `intent`, `lock`; `key`/`scale` with no chords changes the key (today that errors "give chords") | O2 |
+| intents, key changes, lock | `whiplash_set_progression`: `intent` (with `how` for darker/brighter), `lock`; `key`/`scale` with no chords changes the key (today that errors "give chords") | O2 |
 | auto-follow for written parts | `whiplash_write_part`: `follow` | O2 |
 | forms and performance moves | `whiplash_arrange`: `form`, `then`, `move`, `bars`, and section keys `energy`, `fill_every`, `enter`, `exit` | O4 |
 
@@ -228,10 +228,12 @@ Track layout for compiled genres is the one `patterns.py` already uses: 1 kick, 
 - **New shapes** in `harmony.SHAPES`:
   - `min9` (0 3 7 10 14), `maj9` (0 4 7 11 14), `9` (0 4 7 10 14), `min11` (0 3 7 10 14 17), `6` (0 4 7 9), `m6` (0 3 7 9), `7sus4` (0 5 7 10)
   - their suffixes in `ROMAN_SUFFIX` (`9`, `maj9`, `11`, `6`, `7sus4`, with the existing upper and lower case rule) and `NAME_SUFFIX` (`m9`, `maj9`, `9`, `m11`, `6`, `m6`, `7sus4`)
-- **New voicing `shell`:** for an extended chord, the 3rd, 7th and 9th, or the 3rd, 7th and 5th without a 9th. It leaves the root to the bass (research, shared norms: roots left to the bass, mid-range clusters).
-  - **Default** for library 7th, 9th and 11th chords on chord tracks when the kit has three or fewer one-voice chord tracks; otherwise `close` (Q-H4). A given `voicing` overrides it.
+- **New voicing `shell`:** the root, 3rd and 7th of a 7th, 9th or 11th chord. The 5th and the extensions are dropped (Q-H4, answered 2026-11-19).
+  - **Default** for library 7th, 9th and 11th chords on chord and stab tracks when the kit has three or fewer one-voice chord tracks; otherwise `close`. A given `voicing` overrides it.
+  - **Pad tracks** (role `pad`) may take the fuller voicing: `close` with the full shape, so the 9th (and 11th) sound there on top of the shell.
+  - **Why:** the three shell notes keep the Digitakt's low-mids clean on one-voice audio tracks. The extensions on pads keep the deep house colour.
   - It is voice-led like `close`, with the same bounds (`CHORD_LOW` 53 median, 41-79).
-  - **HW:** whether a rootless voicing sounds right on Phil's samples (§8, HW O-4).
+  - **HW:** whether the shell, and a pad carrying the 9th, sound right on Phil's samples (§8, HW O-4).
 - **Progression entries:**
 
 ```python
@@ -240,7 +242,7 @@ class Prog:
     name: str            # "deephouse.gospel"
     chords: str          # numerals in the progression's scale (§1.1), e.g. "i7 VImaj7 VII7 i7"
     bars_per_chord: int
-    voicing: str | None  # None: the default rule (shell for 7th/9th/11th on <= 3 chord tracks, else close)
+    voicing: str | None  # None: the default rule (shell for 7th/9th/11th on <= 3 chord tracks, pads full; else close)
     scale: str           # the scale it is written in ("minor", "dorian", "major", ...)
     bass: str | None     # a phrase it is written for (bass.descending_walk), else None
     tags: frozenset      # genre, mood words (warm, soulful, uplift, dark, hypnotic, cinematic, ...)
@@ -328,12 +330,22 @@ Chords shown in the genre's home key. 8-bar loops where the source allows.
 
 **Soul, breaks:** no new progressions.
 
-- **Intent tables** (`progressions.INTENTS`, pure, O2). Each intent is a deterministic transform of the session's (key, progression), and **changes harmony only, never the filter** (Q-H3):
-  - **`darker`:** with a library progression playing, swap to the same genre's entry with the next lower `brightness` and the most shared tags. With a hand-written one, shift the mode one step down the ladder lydian → major → mixolydian → dorian → minor → phrygian. Phrygian is the floor, and locrian is never chosen.
-  - **`brighter`:** the reverse.
+- **Intent tables** (`progressions.INTENTS`, pure, O2). Each intent is a deterministic transform. `tension` and `release` change the progression only.
+- **`darker` and `brighter` are a menu, not one hard-wired transform** (Q-H3, answered 2026-11-19). The plugin gives the model context and a small menu of interpretations. The model picks one or combines them with `how`, and the result names which were applied, so the change is explainable and undoable. With no `how`, the **harmonic** option applies.
+
+  | `how` | `darker` | `brighter` |
+  | --- | --- | --- |
+  | `harmonic` (default) | Darker chord qualities and modes; flatten the 3rd/6th; lower the voicing register. With a library progression playing, swap to the same genre's entry with the next lower `brightness` and the most shared tags. With a hand-written one, shift the mode one step down the ladder lydian → major → mixolydian → dorian → minor → phrygian. Phrygian is the floor, and locrian is never chosen. | The reverse, with lydian as the ceiling. |
+  | `timbral` | Close the filter (`filter_freq`, an existing unblocked CC) or reduce brightness on the **melodic** tracks only (chord, pad, stab, bass, lead), one bounded step, at the next bar line. Drums, cymbals and fx are never touched. | Open them by the same step, never past the value before the first `darker`. |
+  | `register` | Thin the highs (the top chord voice and any lead above 72 drop out or move down) and drop the lead an octave, within the 41-79 bounds. | Restore the highs and lift the lead back. |
+
+  - **Context for the model:** the `set_progression` description names the three options in one line. The result lists the options that were not used (`"other_options": ["timbral", "register"]`), so a weak model can try another next time without guessing.
+  - **Undo:** `whiplash_undo` restores the progression, the CC values Whiplash sent before the step, and the lead's register.
+  - **Energy is separate:** a `timbral` step is the model's explicit choice. It is not the opt-in filter-as-energy of Q-A1, and `mutate energy` never undoes it.
   - **`tension`:** `tension` +1: turn the last chord into its dominant (V7 from harmonic minor; the home tables already lean on G♯ in A minor), or add sus4 or 9 to the last chord, or turn on a bass pedal (new track mode `pedal`: the key's tonic under every chord).
   - **`release`:** back to the progression that was playing before the first `tension`, ending on i or I. The pedal is off.
-  - Each result names what it did, e.g. `{"intent": "darker", "did": "A minor -> A phrygian", "chords": [...]}`.
+  - Each result names what it did, e.g. `{"intent": "darker", "applied": ["harmonic"], "did": "A minor -> A phrygian", "chords": [...], "other_options": ["timbral", "register"]}`.
+- **Key lock follows Phil's wording** (Q-H2, answered 2026-11-19): melodic lines (bass, lead, chords) follow the key so they stay tonal. Drums stay on the grid and are never pitch-corrected to the scale; a snare must never accidentally sound like a note.
 - **Key lock** (`harmony.lock`, engine state), **on by default once a key is set** (Q-H2). With a key set (`Engine.effective_key()`), every explicit melodic note snaps to the scale with `harmony.snap()`. That covers `whiplash_write_part` `notes` and `hits` on non-drum roles, and v0.8.0 follow replies, which already snap.
   - The result lists `snapped: [{"from": "C#5", "to": "C5"}]`.
   - `out_of_key: true` on `write_part` opts out, per part, for a deliberate chromatic note.
@@ -347,6 +359,7 @@ Chords shown in the genre's home key. 8-bar loops where the source allows.
 - **`whiplash_set_progression`** gains:
   - `name: "deephouse.gospel"` (O1): chords, `bars_per_chord` and voicing come from the library. Given arguments override them.
   - `intent: "darker" | "brighter" | "tension" | "release"` (O2)
+  - `how: "harmonic" | "timbral" | "register"`, or a list of them, for `darker` and `brighter` only (O2; default `harmonic`). With `tension` or `release`, it errors "how is for darker or brighter".
   - `lock: true | false` (O2)
   - **Key-only calls** (O2): `key` and/or `scale` with no `chords`, `name` or `intent` change the key from the next bar line instead of erroring. The melodic tracks move (`in_key`), a Roman-numeral progression is re-voiced in the new key, and a chord-name progression shifts by the same interval. Result: `{key, from, lands_at_bar, progression: [...], lock}`.
   - `chords`, `name` and `intent` are mutually exclusive.
@@ -378,12 +391,15 @@ Chords shown in the genre's home key. 8-bar loops where the source allows.
   - names are unique and resolvable through `library.resolve`
   - tags come from a fixed vocabulary, and every entry has a `source`
   - every `bass` reference names a phrase that exists
-- **Shapes:** `parse_chord("i9", Am)` is `(9, (0, 3, 7, 10, 14))`, `Am9` and `Fmaj9` read correctly, and `shell` on Am9 gives C, G, B (3rd, 7th, 9th) near 60.
-- **Shell rule:** with two labelled chord tracks a library min9 voices `shell`; with four it voices `close`; a given `voicing` wins.
+- **Shapes:** `parse_chord("i9", Am)` is `(9, (0, 3, 7, 10, 14))`, `Am9` and `Fmaj9` read correctly, and `shell` on Am9 gives A, C, G (root, 3rd, 7th) near 60.
+- **Shell rule:** with two labelled chord tracks a library min9 voices `shell`; with four it voices `close`; a given `voicing` wins. With chord tracks plus a `pad` track, the pad carries the 9th (B) and the chord tracks the shell.
 - **Scale mismatch:** `tropicalhouse.pop` in an A minor session plays C major chords and reports the relative key.
 - **Intents (O2):**
   - `darker` from A minor goes to A phrygian, and is idempotent at the floor (the result says so)
-  - `darker` sends no `filter_freq` CC (Q-H3)
+  - `darker` with no `how` applies `harmonic`, sends no `filter_freq` CC and reports `applied: ["harmonic"]` with the other options (Q-H3)
+  - `darker` with `how: "timbral"` sends `filter_freq` on melodic tracks only, never on a drum, cymbal or fx channel; `how: ["harmonic", "register"]` changes the mode and moves the lead down an octave, within 41-79
+  - `whiplash_undo` after each restores the progression, the CC values and the lead register
+  - `brighter` after `darker` with `timbral` never opens past the value before the first step
   - `tension` then `release` brings the exact previous progression back
   - every result lists what it did
 - **Key lock:** `write_part(track: 7, notes: ["C#5"])` in A minor plays C5 (`bar_events`) and reports `snapped`. With `out_of_key: true` it plays C#5. A kick part's note 60 is never moved.
@@ -926,7 +942,7 @@ Every form is within `arrange`'s limits (64 bars per section, 16 sections, 512 b
 | HW O-1 | Microtiming vs USB jitter: "deep house shuffle groove, energy 3", then "tech house rolling groove". | clap +0.75 tick (about 15 ms at 122); hats −0.25 tick (about 5 ms at 126) via the previous-step compile | the clap sits behind the beat; the hats push ahead; both audibly, not inside USB jitter (`docs/testing/clock-jitter.md`) | widen the offsets in the lane tables, or drop the negative compile |
 | HW O-2 | Ghost notes vs VELOCITY TO VOL (reference Q6). | `GHOST_VEL` 28-40 | ghosts audible but quiet on `deephouse.shuffle` and `house.jack` | raise `GHOST_VEL` to 40-55 in one place |
 | HW O-3 | Octave-pump retrigger: "Chicago house" (bass on track 6, 123 BPM). | `bass.octave_pump`, gate 1 | clean R and R+12 retriggers near native pitch, not smeared by the AMP envelope (Q9); the bass follows the chords on the bar | shorten the gate, or lengthen the AMP decay advice in the skill |
-| HW O-4 | Rootless shell voicing on Phil's samples: "deep house gospel progression" on two chord tracks. | `shell` for 7th/9th/11th on ≤ 3 one-voice chord tracks | it sounds like Am7, Fmaj7, G7 across the tracks with the bass carrying the root (Q12, Q13) | default to `close` |
+| HW O-4 | Shell voicing on Phil's samples: "deep house gospel progression" on two or three chord tracks, then again with a pad track. | `shell` (root, 3rd, 7th) for 7th/9th/11th on ≤ 3 one-voice chord tracks; pads carry the 9th | it sounds like Am7, Fmaj7, G7 with clean low-mids; the pad adds the 9th's colour without mud (Q12, Q13) | default to `close` |
 | HW O-5 | By-ear check of every new progression (O1: the deep house six, the house five, tech house two, techno four; O3: the rest). | §3.2.1 as written | each loop sounds like its genre on Phil's kit; list the ones to drop or revoice | edit the table; the source stays cited |
 | HW O-6 | Energy changes: "energy 5", then "energy 1". | `mutate energy` through `_reroute` | each lands on the one, with no stuck notes and no Stop or Start | — |
 | HW O-7 | "Build to the drop in 16 bars" (`arrange move: build, bars: 16`). | §6.2 | hats in for the last 4 bars, the kick sits out bar 16 with a snare roll, everything lands on the one, and the beat keeps going | — |
@@ -940,7 +956,7 @@ The ontology is **v0.9** (Q-S2). The roadmap's multi-device studio moves to v0.1
 | --- | --- | --- | --- | --- |
 | **O1a: library, harmony, grooves (four genres)** | v0.9.0 | `library.py` + `whiplash_list_library`; `genres.py` records for deephouse, house, techhouse, techno and the compile path (house is the first compiled genre); aliases and the `peak time` change (§1.5); 9th/11th shapes, `shell` and its default rule; the deep house, house, tech house and techno progressions; `set_progression(name)`; key lock with `out_of_key`; lanes marked O1, the eight O1 grooves with five energy levels, curves, `GHOST_VEL`, microtiming and the negative-offset compile; `play_pattern(groove, energy)`, `write_part(groove)`, `mutate energy`, named fills | L | v0.6 harmony, v0.5.1 parts, v0.8.0 undo |
 | **O1b: phrases and taste (four genres)** | v0.9.0 | `harmony.Rel` + mode `phrase`; `bass.rolling_deep`, `bass.octave_pump`, `bass.bouncy`, `bass.offbeat`, `stab.offbeat`; `write_part(phrase)` and `phrase: "genre"`; house compiled with its phrases; `bar_digest`, `changes`, `status(review)`, `status.taste`, `taste_hint`; thresholds for the four genres | M | O1a |
-| O2: harmony intents and keys | v0.9.1 | `set_progression(intent)` (darker, brighter, tension, release); **NEW behaviour:** key-only `set_progression` (`key`/`scale` with no chords changes the key; today that errors "give chords"), with `lock`; `pedal` mode, `follow: true` on written parts | M | O1 |
+| O2: harmony intents and keys | v0.9.1 | `set_progression(intent)` (darker, brighter, tension, release), with `how` for darker/brighter (`harmonic` default, `timbral`, `register`, or combined; the result names what was applied and the other options; undoable, §3.2); **NEW behaviour:** key-only `set_progression` (`key`/`scale` with no chords changes the key; today that errors "give chords"), with `lock`; `pedal` mode, `follow: true` on written parts | M | O1 |
 | O3: the other four genres | v0.9.2 | records, progressions, lanes, grooves and phrases for progressivehouse, melodictechno, minimal (both presets, with the `perc.poly3` approximation) and tropicalhouse; `bass.root_follow`, `bass.rolling_16`, `bass.stab_sparse`, `bass.round_sub`, `bass.descending_walk`, `bass.walking`, `stab.single`, `pad.hold`, the arps, `lead.stutter`, `lead.pentatonic_hook`, `melody.motif`; `soul.classic` and `breaks.classic`; the O3 aliases and moods | M-L | O1 |
 | O4: arrangement grammar | v0.9.3 | `form.py`: section types, energy per section, breakdown styles, `fill_every`, `enter`/`exit`, `then`, the eight forms; `arrange(form)` and `arrange(move, bars)` | M-L | O1 (energy), O3 (all genres' styles) |
 | O5: taste, polish | v0.9.4 | listen data in reviews, threshold tuning from Phil's sessions, hint wording | S | O1b, O4 |
@@ -956,22 +972,22 @@ It adds one tool and extends five, so its budget step is small: tools about 4,25
 
 ## 10. Decisions
 
-Settled in two rounds, from the research brief and Phil's stated defaults. Phil didn't answer each one himself; anything marked **HW** is a proposed default that still needs his ears (§8).
+Settled in two rounds, from the research brief and Phil's stated defaults. On 2026-11-19 Phil answered Q-S1 to Q-H4: six confirmed, Q-H3 changed, Q-H4 decided by Deck (he delegated it). The other 21 are still open with their defaults. Anything marked **HW** is a proposed default that still needs his ears (§8).
 
 ### 10.1 Decisions for Phil to confirm
 
-One line per question, with the default the spec uses. Phil can confirm or change each by ID; the tables in §10.2 give the rationale and source.
+One line per question, with the default the spec uses. Phil can confirm or change each by ID; the tables in §10.2 give the rationale and source. **Answered** items carry the date and the decision; **open** items carry the default.
 
 **Scope**
-- Q-S1. Four new tools, or fold key/lock/intents, energy, moves and review into existing verbs? **Default:** one new tool, `whiplash_list_library` (25→26).
-- Q-S2. Ontology as v0.9 (multi-device to v0.10), or v0.8.x? **Default:** v0.9; phases ship as v0.9.0–v0.9.4.
-- Q-S3. In-repo Python tables only, or also a user JSON library later? **Default:** Python tables now; read-only user JSON after v0.9, never shadowing a built-in name.
+- Q-S1. Four new tools, or fold key/lock/intents, energy, moves and review into existing verbs? **Answered 2026-11-19: confirmed.** One new tool, `whiplash_list_library` (25→26).
+- Q-S2. Ontology as v0.9 (multi-device to v0.10), or v0.8.x? **Answered 2026-11-19: confirmed.** v0.9; phases ship as v0.9.0–v0.9.4.
+- Q-S3. In-repo Python tables only, or also a user JSON library later? **Answered 2026-11-19: confirmed.** Python tables now; read-only user JSON after v0.9, never shadowing a built-in name.
 
 **Harmony**
-- Q-H1. Are the six deep house progressions right by ear, and which are missing? **Default:** `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`; i–VI–III–VII moves to `house.uplift`. **HW** (O-5).
-- Q-H2. Key lock on by default once a key is set? **Default:** on; `out_of_key` per part; drums never snapped.
-- Q-H3. Should `darker` do both a mode shift and a filter close by default? **Default:** harmony only, never the filter.
-- Q-H4. `shell` as the default voicing for 9th (and 7th/11th) chords on audio tracks? **Default:** `shell` when there are ≤3 one-voice chord tracks; otherwise `close`. **HW** (O-4).
+- Q-H1. Are the six deep house progressions right by ear, and which are missing? **Answered 2026-11-19: confirmed** (the researched set). `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`; i–VI–III–VII moves to `house.uplift`. Still **HW** by ear (O-5).
+- Q-H2. Key lock on by default once a key is set? **Answered 2026-11-19: confirmed.** On; `out_of_key` per part; drums never snapped. Phil: melodic lines (bass, lead, chords) follow the key so they stay tonal; drums stay on the grid and are never pitch-corrected to the scale; a snare must never accidentally sound like a note.
+- Q-H3. Should `darker` do both a mode shift and a filter close by default? **Answered 2026-11-19: changed.** Not hard-wired to harmony only. The plugin gives the model context and a menu (`how`): `harmonic` (darker qualities/modes, flatten the 3rd/6th, lower voicing register), `timbral` (close the filter / reduce brightness on melodic tracks) and `register` (thin the highs, drop the lead an octave). The model picks one or combines them, and the result names what was applied, so it is undoable and explainable. `brighter` mirrors it. Default with no choice: `harmonic`.
+- Q-H4. `shell` as the default voicing for 9th (and 7th/11th) chords on audio tracks? **Answered 2026-11-19: delegated to Deck.** Shell voicings (root, 3rd, 7th) by default when there are three or fewer chord tracks; pad tracks may use fuller 9th voicings; otherwise `close`. Still **HW** (O-4).
 
 **Groove**
 - Q-G1. Groove names: letters or descriptive names? **Default:** descriptive; letter aliases only for today's patterns (`deephouse.classic` = `deephouse.A`, bit-identical).
@@ -1010,18 +1026,18 @@ One line per question, with the default the spec uses. Phil can confirm or chang
 
 | Q | Decision | Rationale | Source |
 | --- | --- | --- | --- |
-| Q-S1 | One new tool, `whiplash_list_library`. Key, lock and intents fold into `set_progression`; energy into `mutate(action: "energy")`; moves into `arrange(move, bars)`; review into `status(review)`. 26 tools. | Each folded verb already belongs to an existing tool; discovery can't be an enum. | Phil default (fewer tools), usability |
-| Q-S2 | The ontology is v0.9; multi-device moves to v0.10. O1 ships as v0.9.0, later phases as v0.9.x. | | Phil default |
-| Q-S3 | In-repo Python tables now. A read-only user JSON library under `~/.hermes/whiplash/` after v0.9, with the same integrity checks, never shadowing a built-in name. | No new dependency; deterministic tests. | Phil default |
+| Q-S1 | **Confirmed 2026-11-19.** One new tool, `whiplash_list_library`. Key, lock and intents fold into `set_progression`; energy into `mutate(action: "energy")`; moves into `arrange(move, bars)`; review into `status(review)`. 26 tools. | Each folded verb already belongs to an existing tool; discovery can't be an enum. | Phil default (fewer tools), usability |
+| Q-S2 | **Confirmed 2026-11-19.** The ontology is v0.9; multi-device moves to v0.10. O1 ships as v0.9.0, later phases as v0.9.x. | | Phil default |
+| Q-S3 | **Confirmed 2026-11-19.** In-repo Python tables now. A read-only user JSON library under `~/.hermes/whiplash/` after v0.9, with the same integrity checks, never shadowing a built-in name. | No new dependency; deterministic tests. | Phil default |
 
 **Harmony:**
 
 | Q | Decision | Rationale | Source |
 | --- | --- | --- | --- |
-| Q-H1 | Deep house: `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`. i–VI–III–VII moves to `house.uplift`. Every genre has a sourced table (§3.2.1); melodic techno has only the two sourced entries. Prydz-style descending bass is `bass.descending_walk` (O3); slash chords are a later parser extension. | Deep house is not "i–VI–III–VII only"; don't invent progressions. **HW:** by ear (HW O-5). | Research §1-8 |
-| Q-H2 | Key lock on by default once a key is set; `out_of_key: true` per part; drums never snapped. | | Phil default |
-| Q-H3 | `darker` changes harmony only, never the filter. | Filter moves mean energy, and only in some genres. | Research, cross-cutting |
-| Q-H4 | `shell` is the default for library 7th/9th/11th on chord tracks with three or fewer one-voice chord tracks; otherwise `close`. | Roots left to the bass, mid-range clusters. **HW:** rootless voicing on Phil's samples (HW O-4). | Research, shared norms |
+| Q-H1 | **Confirmed 2026-11-19.** Deep house: `two_chord`, `dorian_soul`, `two_five`, `gospel`, `afro`, `one_chord`. i–VI–III–VII moves to `house.uplift`. Every genre has a sourced table (§3.2.1); melodic techno has only the two sourced entries. Prydz-style descending bass is `bass.descending_walk` (O3); slash chords are a later parser extension. | Deep house is not "i–VI–III–VII only"; don't invent progressions. **HW:** by ear (HW O-5). | Research §1-8 |
+| Q-H2 | **Confirmed 2026-11-19.** Key lock on by default once a key is set; `out_of_key: true` per part; drums never snapped. | Phil: melodic lines (bass, lead, chords) follow the key so they stay tonal; drums stay on the grid and are never pitch-corrected to the scale; a snare must never accidentally sound like a note. | Phil default, confirmed by Phil |
+| Q-H3 | **Changed 2026-11-19.** `darker`/`brighter` take `how`: `harmonic` (default), `timbral` (melodic tracks' filter/brightness only) or `register` (thin the highs, lead down an octave), alone or combined. The result names what was applied and the unused options; undo restores all of it (§3.2). | Darkness is harmonic, timbral or registral depending on the track; a menu lets the model choose with context instead of one fixed meaning, and naming the choice keeps it explainable. | Phil |
+| Q-H4 | **Decided by Deck 2026-11-19** (Phil delegated). `shell` (root, 3rd, 7th) is the default for library 7th/9th/11th chords on chord and stab tracks with three or fewer one-voice chord tracks; pad tracks may use fuller 9th voicings; otherwise `close`. | Clean low-mids on the Digitakt; the extensions on pads keep the deep house colour. **HW:** on Phil's samples (HW O-4). | Deck, research shared norms |
 
 **Groove:**
 
