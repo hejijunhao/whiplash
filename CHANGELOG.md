@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+Docs
+- **Web app vision:** [docs/vision/web-app.md](docs/vision/web-app.md). It covers a Next.js app on Vercel that works as a Digitakt II twin. You can play it by hand over Web MIDI, and an agent can drive it through a local bridge to the engine. The doc covers the layout, honest limits, the architecture options, bridge security, the safety rules carried over, the SysEx decision for sample browsing, and open questions. Nothing is built, and there is no code change.
+
 ## 0.9.5
 
 The post-O5 audit of ontology v1 ([docs/executing/ontology-v1-audit.md](docs/executing/ontology-v1-audit.md)): the whole of v0.9 checked as one system against [the spec](docs/executing/ontology-v1-spec.md), with the findings fixed and tested. **Nothing here has been tested on a real Digitakt II.** Every v0.9 hardware check is now in one session: [docs/testing/v0.9-hardware-checklist.md](docs/testing/v0.9-hardware-checklist.md).
