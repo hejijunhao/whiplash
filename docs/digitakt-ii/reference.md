@@ -736,6 +736,13 @@ Consequences in the code:
   - **Send:** the project, a pattern, or presets.
   - **Receive:** the unit "is continuously listening for SysEx data". It can store received patterns and presets to slots.
   - **This is why Whiplash refuses SysEx outright.**
+- **Read-only SysEx research** (desk research, 2026-11-21, not hardware-verified): [docs/research/digitakt-ii-sysex.md](../research/digitakt-ii-sysex.md). It covers:
+  - the OS release history to 1.17 (the current OS, 2026-10-01);
+  - the Elektron file and data protocol as Elektroid implements it;
+  - what is known to be readable on the Digitakt II, and what is still UNKNOWN (per-track sample assignment);
+  - a probe plan for a hardware session.
+
+  The Hermes plugin still sends no SysEx. The approval covers only a read path in the planned web app ([docs/vision/web-app.md](../vision/web-app.md) §8).
 
 Whiplash visualiser implications:
 - The browser can only capture the unit when USB CONFIG = **USB AUDIO/MIDI**. MIDI keeps working in that mode.
