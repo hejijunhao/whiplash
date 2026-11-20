@@ -4,6 +4,19 @@
 
 Docs
 - **Web app vision:** [docs/vision/web-app.md](docs/vision/web-app.md). It covers a Next.js app on Vercel that works as a Digitakt II twin. You can play it by hand over Web MIDI, and an agent can drive it through a local bridge to the engine. The doc covers the layout, honest limits, the architecture options, bridge security, the safety rules carried over, the SysEx decision for sample browsing, and open questions. Nothing is built, and there is no code change.
+  - **Updated with Phil's 21 Nov decisions:**
+    - The web app is the instrument, and agent control is a bonus.
+    - Mirroring changes made on the unit is no longer a goal.
+    - Read-only SysEx is approved in principle for the web app only: an exact allow-list, an OS version gate, and the order samples, then projects, then per-track assignment.
+    - The Hermes plugin's no-SysEx rule is unchanged.
+- **Digitakt II SysEx research spike:** [docs/research/digitakt-ii-sysex.md](docs/research/digitakt-ii-sysex.md). Desk research only; nothing was sent to a device. It covers:
+  - the official sources (manual, OS 1.00-1.17 release notes, Transfer, Overbridge, EULA);
+  - Elektroid's protocol for the unit, with read commands and banned commands;
+  - what is known and UNKNOWN about reading per-track sample assignment;
+  - Web MIDI limits;
+  - a capability table, and a hardware probe plan for Phil.
+
+  The device reference links to it from §14.
 
 ## 0.9.5
 
