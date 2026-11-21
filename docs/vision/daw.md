@@ -5,7 +5,9 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 **Framing (Phil, 21 Nov 2026):** this is a new project that keeps only the name *Whiplash*.
 - It is not the Hermes plugin in this repo and not the Digitakt web twin (PR #34).
 - Digitakt II support is out of scope for now.
-- Nothing here builds on the existing plugin code. The one idea carried over is that every action is a typed, validated, undoable command an agent can call.
+- Nothing here builds on the existing plugin code.
+
+**Update (Phil, 21 Nov 2026, 8:14 SGT):** the baseline is an **Ableton/Logic twin: core DAW first.** Agent control is secondary. It is a short later-phase note (§5), and it drives none of the scope, the stack choice or the v0/v1 phasing.
 
 ---
 
@@ -14,7 +16,7 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 **It is:**
 - **Our own native DAW for macOS.** In look and workflow it is an Ableton Live and Logic Pro hybrid: Logic's arrange window, mixer and editors, with Ableton's speed, device chain and (later) clip launching.
 - **Built for Phil to record and finish music** with the instruments and plugins he owns.
-- **Agent-native at the core.** Every action the UI can do, an agent can do through the same command surface (§5).
+- **A complete core DAW before anything else.** Agent control may come later (§5), and nothing in v0 or v1 waits on it.
 
 **It isn't:**
 - **A toy or a demo.** It has to record a real session with real plugins without losing a take.
@@ -43,7 +45,7 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 | **Automation** | Per-parameter lanes for track and plugin parameters. Read, write, touch and latch modes. Breakpoint editing |
 | **Project** | Save, load and autosave. A project folder with audio files, collected and self-contained. Plugin state stored per instance (§4.3). Crash recovery from autosave |
 | **Export** | Offline bounce of the master or stems to WAV/AIFF at the project rate. Real-time bounce as a fallback for plugins that misbehave offline (§7.5) |
-| **Undo** | Unlimited, one history covering UI, keyboard and agent actions (§5) |
+| **Undo** | Unlimited, one history for every edit. Every edit is an undoable command internally, which is standard DAW design (Tracktion Engine's `Edit` owns a `juce::UndoManager`, [tracktion_Edit.h](https://github.com/Tracktion/tracktion_engine/blob/develop/modules/tracktion_engine/model/edit/tracktion_Edit.h)) |
 
 ---
 
@@ -56,47 +58,43 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 | **Speed:** single window, few modal dialogs, keyboard-first, drag-and-drop everywhere | **The arrange window** as the main canvas ([Tracks area](https://support.apple.com/guide/logicpro/tracks-area-overview-lgcpf7c0d5d8/mac)) |
 | **The device chain:** a horizontal strip of devices along the bottom, with instant add and reorder ([Live manual](https://www.ableton.com/en/live-manual/12/working-with-instruments-and-effects/)) | **The mixer:** a full console with sends, buses, folders and colour, and the polish to work in for hours ([Mixer](https://support.apple.com/guide/logicpro/mixing-overview-lgcpbc219818/mac)) |
 | **Racks and macros,** later ([Racks](https://www.ableton.com/en/live-manual/12/instrument-drum-and-effect-racks/)) | **Editors** that dock in a bottom pane: piano roll, audio editor, later a step sequencer ([Piano Roll](https://support.apple.com/guide/logicpro/overview-lgcpa9111b0d/mac)) |
-| **Session view** (clip launching), in v1.x ([Session View](https://www.ableton.com/en/live-manual/12/session-view/)) | **The inspector:** the selected track's channel strip at the left. **Smart Controls** become our parameter maps (§5.4) |
+| **Session view** (clip launching), in v1.x ([Session View](https://www.ableton.com/en/live-manual/12/session-view/)) | **The inspector:** the selected track's channel strip at the left. **Smart Controls** become our quick controls (§3.2) |
 | **The browser:** one searchable place for instruments, plugins, presets and samples | **Multi-output instrument handling** ([Logic guide](https://support.apple.com/guide/logicpro/use-multi-output-instruments-lgcp8e887f45/mac)) |
 
 ### 3.2 Proposed layout (one window)
 
 ```
 ┌──────┬──────────────────────────────────────────────────────────────┬────────────┐
-│ ◀ ▶ ● ⟲  │ 1.3.2 │ 120.00 │ 4/4 │ ⧗ count │ CPU ▮▮▯ │ DISK ▮▯ │ 2i2 48k/128 │ AGENT ● │
+│ ◀ ▶ ● ⟲  │ 1.3.2 │ 120.00 │ 4/4 │ ⧗ count │ CPU ▮▮▯ │ DISK ▮▯ │ 2i2 48k/128        │
 ├──────┼──────────────────────────────────────────────────────────────┼────────────┤
 │ INSP │  ruler · markers · sections                                   │ BROWSER    │
 │      │  ─────────────────────────────────────────────────────────── │ instr      │
 │ chan │  01 Drums  SD3 ▸ [clip────────][clip────────]                 │ plugins    │
-│ strip│  02 Bass   EZbass [MIDI clip───────]                          │ samples    │
-│      │  03 Gtr    ● Helix ~~~audio~~~~~~~~~                          │ presets    │
-│ macro│  04 Keys   Kontakt/Noire [MIDI──]   ← automation lane ↓      │────────────│
-│ map  │  05 Vox    ● ~~~~~audio~~~~~                                  │ AGENT      │
-│      │  Bus A · Bus B · Master                                       │ notes →    │
-│      │                                                               │ plan →     │
-├──────┴──────────────────────────────────────────────────────────────┤ changes    │
-│ DETAIL (Tab toggles): device chain ▸ [EQ][Comp][Helix][Send A]   or  │ (undoable, │
-│ editor: piano roll / audio editor for the selected clip              │  at bar n) │
-└─────────────────────────────────────────────────────────────────────┴────────────┘
+│ strip│  02 Bass   EZbass [MIDI clip───────]                          │ presets    │
+│      │  03 Gtr    ● Helix ~~~audio~~~~~~~~~                          │ samples    │
+│ quick│  04 Keys   Kontakt/Noire [MIDI──]   ← automation lane ↓      │ files      │
+│ ctrls│  05 Vox    ● ~~~~~audio~~~~~                                  │            │
+│      │  Bus A · Bus B · Master                                       │            │
+├──────┴──────────────────────────────────────────────────────────────┴────────────┤
+│ DETAIL (Tab toggles): device chain ▸ [EQ][Comp][Helix][Send A]   or               │
+│ editor: piano roll / audio editor for the selected clip                           │
+└───────────────────────────────────────────────────────────────────────────────────┘
    X = full-screen mixer (Logic-style console)      Tab = session grid (v1.x)
 ```
 
 - **Centre:** the arrange window. Tracks run top to bottom and time left to right, with automation lanes folding under each track.
 - **Bottom:** the detail pane, Ableton's device chain for the selected track or Logic's editor for the selected clip.
-- **Left:** the inspector: channel strip and the plugin's **parameter map** (§5.4).
-- **Right:** the browser, and under it the **agent panel**:
-  - Phil's notes ("tighten the bass, warmer vocal");
-  - the agent's plan as a list of commands;
-  - applied changes, each one undoable and tagged with the bar it touched.
+- **Left:** the inspector: the channel strip, plus quick controls, a handful of pinned plugin parameters per track in the spirit of Logic's Smart Controls ([Apple](https://support.apple.com/guide/logicpro/smart-controls-overview-lgcp7e59f24b/mac)).
+- **Right:** the browser.
 - **Mixer:** a full-screen Logic-style console (`X`).
 - **Session grid:** comes later, sharing the same tracks, as in Live.
 
 ### 3.3 Aesthetic
 
-- **A dark instrument, Dieter Rams-adjacent:** "less, but better". Near-black and graphite surfaces. One accent colour for live state: record arm, playhead, clip. One for the agent's changes.
+- **A dark instrument, Dieter Rams-adjacent:** "less, but better". Near-black and graphite surfaces. One accent colour for live state: record arm, playhead, clip.
 - **Tabular monospace numerals** for time and values.
 - **The usual hierarchy:** colour only where it means something, such as track colour and meters. No decoration.
-- **No purple gradients, glassmorphism, sparkle icons or generic AI styling.** The agent is shown as one more hand on the session, not as a chatbot bolted to the side.
+- **No purple gradients, glassmorphism, sparkle icons or generic AI styling.**
 - **Plugin windows look like their vendors made them.** We frame them and never skin them.
 - **Readable at a glance across a room:** large transport numerals and a clear record state.
 
@@ -148,56 +146,21 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 
 ---
 
-## 5. The agent-native layer (the differentiator)
+## 5. Agent control (later phase; it doesn't drive scope, stack or phasing)
 
-**The competition (2026):** this is no longer an empty field.
-- **Logic Pro 13** ships an "intelligent assistant" (beta) for track setup, mixing and editing. It requires "an Apple Creator Studio subscription, a Mac with Apple silicon, and macOS 27 or later" ([Apple](https://support.apple.com/en-us/109503)).
-- **Ableton's Extensions SDK** (public beta since 2026-06-02) lets Node.js code edit tracks, clips, devices and parameters ([Ableton](https://www.ableton.com/en/blog/introducing-extensions-sdk)). A community MCP server already drives Live ([ableton-mcp](https://github.com/ahujasid/ableton-mcp)).
-- REAPER has ReaScript plus third-party agents ([ReaScript](https://www.reaper.fm/sdk/reascript/reascript.php)). Waveform 14 has an AI assistant ([SOS](https://www.soundonsound.com/news/tracktion-unleash-waveform-14-daw)).
+Per Phil's update of 21 Nov, agent control is **secondary** and comes **after v1** at the earliest (§8). Nothing in v0 or v1 depends on it. The only requirement now is to keep the architecture friendly to it, and a good DAW is already built that way:
+- **Every edit is an undoable command.** We need that for undo regardless (§2).
+- **The project model is separate from the audio engine** (§7.1).
 
-**Our edge** has to be depth and trust, not novelty:
-- every action an agent can take is the same action the UI takes;
-- every agent change is shown, deterministic and undoable;
-- third-party plugins are drivable by name;
-- it runs locally with any agent, not one vendor's assistant.
+**What it could become later, as a sketch to refine when it's scheduled:**
+- **A local API.** Then an MCP server, exposing the same commands the UI uses, with read-only queries for project state.
+- **Notes to changes.** Phil writes a note ("the chorus bass is muddy"), an agent proposes a list of commands, and Phil applies it as one undo step or discards it.
+- **Parameter maps.** Semantic names for third-party plugin parameters, so an agent can drive them. This extends the quick controls in §3.2.
 
-### 5.1 One command surface
-
-- **Every user action is a typed command** with a schema: `track.create`, `clip.split`, `notes.quantize`, `mixer.set_send`, `plugin.set_param`, `automation.write`, `arrange.insert_section`, and so on. Menus, shortcuts, drag-and-drop and the agent all dispatch commands. Nothing edits the project model directly.
-- **Commands validate before they apply.** Bad input changes nothing. A command applies to the **project model** on the UI or worker side, never on the audio thread. The engine receives the resulting model change through a lock-free handoff (§7.1).
-- **Determinism:** the same command on the same project state gives the same result. Randomised operations such as humanise take an explicit seed, which is recorded.
-- **Undo:** each command records its inverse. An agent's plan applies as **one undo group**, so "undo that" removes the whole plan.
-- **Log:** every applied command carries a time, its source (`ui`, `key`, `agent:<name>`), its arguments, the bars and tracks it touched, and its result. The log is the audit trail, and it's how an agent sees what Phil changed by hand.
-
-### 5.2 Surfaces for agents
-
-1. **In-process API:** the same command bus, used by the built-in agent panel.
-2. **A local API:** JSON-RPC over a Unix socket on the same machine only, with a per-session token. Any agent or script can use it.
-3. **An MCP server later,** mapping commands to tools and project state to resources.
-
-**Queries are read-only commands:** `project.describe`, `track.list`, `clip.notes`, `mixer.snapshot`, `plugin.params`, `analysis.loudness`.
-
-**Agents may not:**
-- delete audio files;
-- export outside the project folder;
-- touch plugin installs or licences;
-- change audio-device settings without confirmation.
-
-### 5.3 From Phil's notes to changes
-
-- **Phil writes a note:** "the chorus bass is muddy, humanise the hats, make the bridge half as long". The agent turns it into a **plan**: an ordered list of commands with reasons, shown in the agent panel.
-- **Phil reviews the plan:** apply all, apply some, or discard. Small, clearly scoped requests can be set to apply at once (Q6).
-- **A/B:** a plan can be previewed by applying it, comparing, and undoing. Plan-as-branch (a parallel project state) is v2.
-- **What agents can reach in v1:** mixing (levels, pan, sends, EQ and compression via parameter maps), MIDI edits (quantise, humanise, velocity shaping, transposing, doubling), arrangement (sections, duplicating, shortening, muting parts) and sound changes (swap presets or plugins, adjust mapped parameters).
-- **Analysis tools** give agents ears: loudness, peaks, spectral balance per bus and masking between tracks, computed offline from a render, never on the audio thread.
-
-### 5.4 Third-party plugin parameters
-
-- **Hosts see a flat list.** Hosts get a list of parameters with IDs, names, units and ranges: the VST3 edit-controller parameter list, or the AU parameter list or tree. The quality of the names varies by plugin **[inferred; general SDK knowledge, not checked per product]**.
-- **A sampler may expose generic slots.** Kontakt-style samplers may expose host-automation slots that the user has to assign inside the plugin (**UNVERIFIED** for Kontakt 8).
-- **Parameter maps** are our layer on top. Per plugin ID and version, a map gives semantic names ("amp gain", "cab mic distance", "room mic level"), ranges in real units, and groups. This plays the role of Logic's Smart Controls ([Apple](https://support.apple.com/guide/logicpro/smart-controls-overview-lgcp7e59f24b/mac)).
-  - **How a map gets made:** the agent drafts one from the parameter list, by sweeping values and reading units back, and Phil confirms it. Confirmed maps live with the app, not the project.
-- **What stays out of reach:** anything inside a plugin's own GUI or internal browser that isn't exposed as a parameter. That means Kontakt library browsing, SD3 groove browsing and Helix preset browsing, beyond preset files we can find on disk (**UNVERIFIED** per product). State chunks are opaque, and we never parse or patch them.
+**Prior art, for when it's scheduled:**
+- Logic Pro 13's "intelligent assistant" (beta; "requires an Apple Creator Studio subscription, a Mac with Apple silicon, and macOS 27 or later", [Apple](https://support.apple.com/en-us/109503)).
+- Ableton's Extensions SDK (public beta since 2026-06-02, [Ableton](https://www.ableton.com/en/blog/introducing-extensions-sdk)) and the community [ableton-mcp](https://github.com/ahujasid/ableton-mcp).
+- REAPER's [ReaScript](https://www.reaper.fm/sdk/reascript/reascript.php).
 
 ---
 
@@ -208,18 +171,18 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 | **Tracktion Engine + JUCE** (C++20) | **The most DAW for the least work.** From Tracktion Engine ([FEATURES.md](https://github.com/Tracktion/tracktion_engine/blob/develop/FEATURES.md)): an Edit model with audio, MIDI and step clips; clip launching and scenes; tempo, time-signature and key curves; automation; PDC; background rendering; MIDI clock; and AU/VST3/LV2 hosting through JUCE. It is the engine behind Tracktion Waveform. Last commit 2026-11-20 ([repo](https://github.com/Tracktion/tracktion_engine)). It has no UI | **Tracktion:** GPL-3.0-or-later or commercial. Personal is free up to $50k revenue with branding; Indie is $35/seat/month up to $200k ([engine.tracktion.com](https://engine.tracktion.com/)). **JUCE 9** (9.0.6, 2026-11-19): AGPLv3 or commercial. Starter is free up to $20k; Indie is $800 perpetual up to $300k; Pro is $3,500 ([juce.com](https://juce.com/get-juce/)). No splash screen since JUCE 8. **Whether Tracktion commercial also needs JUCE commercial: UNVERIFIED (we assume yes).** **JUCE EULA clause 1.12, "may not … Distribute Products that create other Products", needs a legal read for a DAW** | **Recommended** |
 | **JUCE alone** | the same hosting, audio I/O and UI toolkit. We write the edit model, timeline, automation, PDC graph and rendering ourselves | JUCE as above | more control, many more months of work |
 | **Ardour / libardour** (C++) | the most complete open DAW back end. AU, VST3, LV2 and VST2 on macOS, out-of-process scanning, and no CLAP ("no plans", [tracker 9417](https://tracker.ardour.org/view.php?id=9417)). 9.10 released 2026-11-10 | **GPLv2+** ([COPYING](https://github.com/Ardour/ardour/blob/master/COPYING)). The developers' stated position (2002) is that linking libardour makes your app GPL ([linux-audio-dev](https://lists.linuxaudio.org/archives/linux-audio-dev/2002-November/001137.html)). Harrison Mixbus is a commercial precedent built on GPL source ([Harrison](https://rsrc.harrisonconsoles.com/mixbus/mixbus-live-manual/topic/mixbus-license-terms-and-gpl-compliance)) | strong engine, but GPL for good and a GTK UI we'd fight to restyle |
-| **Rust from scratch** | memory safety, and agents write it well **[inferred]**. Pieces: cpal for I/O (Apache-2.0, [repo](https://github.com/RustAudio/cpal)); clack-host for CLAP hosting (MIT/Apache, [repo](https://github.com/prokopyl/clack)); the `vst3` crate (MIT/Apache, bindings from the now-MIT SDK headers, [repo](https://github.com/coupler-rs/vst3-rs)); `rack` for AU hosting (MIT/Apache, which calls itself production-ready, **UNVERIFIED**, [repo](https://github.com/sinkingsugar/rack)). nih-plug is for *making* plugins, not hosting them ([repo](https://github.com/robbert-vdh/nih-plug)). The notable Rust DAW, Meadowlark, is effectively dormant ([Codeberg](https://codeberg.org/Meadowlark/Meadowlark)) | permissive throughout | everything above the I/O and format bindings is ours: years before it records a song. AU hosting is the weakest link |
+| **Rust from scratch** | memory safety and long-term ownership. Pieces: cpal for I/O (Apache-2.0, [repo](https://github.com/RustAudio/cpal)); clack-host for CLAP hosting (MIT/Apache, [repo](https://github.com/prokopyl/clack)); the `vst3` crate (MIT/Apache, bindings from the now-MIT SDK headers, [repo](https://github.com/coupler-rs/vst3-rs)); `rack` for AU hosting (MIT/Apache, which calls itself production-ready, **UNVERIFIED**, [repo](https://github.com/sinkingsugar/rack)). nih-plug is for *making* plugins, not hosting them ([repo](https://github.com/robbert-vdh/nih-plug)). The notable Rust DAW, Meadowlark, is effectively dormant ([Codeberg](https://codeberg.org/Meadowlark/Meadowlark)) | permissive throughout | everything above the I/O and format bindings is ours: years before it records a song. AU hosting is the weakest link |
 | **Others** | Zrythm (AGPLv3; C++23, Qt/QML **and JUCE**; optional plugin bridging, [repo](https://github.com/zrythm/zrythm)). Qtractor (GPL-2.0). LMMS (GPL-2.0; last stable release 2020). I/O-only libraries: miniaudio, PortAudio, RtAudio (permissive) | — | reference reading, not a base |
 
 **Recommendation: Tracktion Engine + JUCE 9, macOS (arm64) first.**
-- **It reaches a usable v0 soonest.** The hard, boring parts already exist and ship in a commercial DAW: the edit model, tempo map, clips, automation, PDC and offline render. That frees our effort for the workflow, the UI and the agent layer, which are what make this ours.
+- **It reaches a usable v0 soonest.** The hard, boring parts already exist and ship in a commercial DAW: the edit model, tempo map, clips, automation, PDC and offline render. That frees our effort for the workflow and the UI, which are what make this ours.
 - **It meets the plugin requirement out of the box.** AU and VST3 hosting through JUCE is mature, and JUCE 9.0.5 still fixes VST3 hosting details ([CHANGE_LIST](https://github.com/juce-framework/JUCE/blob/master/CHANGE_LIST.md)).
 - **The licences are fine for personal use.** While Whiplash is Phil's own tool and isn't distributed, the GPL and AGPL options impose nothing, because their obligations start on distribution (or network use, for AGPL) **[inferred; standard reading]**. Going commercial later means paying for Tracktion and JUCE, budgeted from the tiers above (Q3).
 - **The costs:**
   - **C++ real-time code:** a stricter review burden on agent-written code (§9).
   - **The UI:** JUCE's toolkit is capable but not native AppKit, so reaching Logic-level polish is our work.
   - **CLAP:** neither JUCE nor Tracktion hosts it ([clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions): "does not support JUCE-based CLAP hosting"). We'd add it with clap-helpers if we want it.
-- **Keep an exit.** The command layer (§5) and project format belong to us, not to Tracktion's Edit, so the engine could be swapped later without losing the agent surface (Q4).
+- **Keep an exit.** The project format and our UI-facing edit commands belong to us, not to Tracktion's Edit, so the engine could be swapped later (Q4).
 
 **Platform:** macOS 14+ on Apple Silicon first (Q5 for the floor). Windows comes later, if ever. JUCE and Tracktion run there, but driver handling (ASIO), testing and plugin quirks double the work.
 
@@ -251,17 +214,17 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 
 | Phase | Ships | Done when |
 |---|---|---|
-| **v0 "tape"** | CoreAudio I/O with the 2i2. Audio tracks: record and play. MIDI tracks: record and play into **one hosted AU or VST3 instrument** (Noire in Kontakt Player as the first target). A basic mixer (volume, pan, mute, solo, master). Transport, tempo, metronome. Save and load. **The command bus and undo from day one**, plus a CLI to send commands | Phil records a take over Noire, saves, reopens and hears it identically |
+| **v0 "tape"** | CoreAudio I/O with the 2i2. Audio tracks: record and play. MIDI tracks: record and play into **one hosted AU or VST3 instrument** (Noire in Kontakt Player as the first target). A basic mixer (volume, pan, mute, solo, master). Transport, tempo, metronome. Save and load. **Undo from day one** | Phil records a take over Noire, saves, reopens and hears it identically |
 | **v0.5** | Arrangement editing (move, trim, split, loop). Piano roll and quantise. Effect inserts. Sends and buses. PDC. Plugin state save and restore. Offline bounce. Superior Drummer 3, EZbass and Helix loaded and saved | a full demo song with all four target plugins, bounced |
-| **v1** | Everything in §2. Automation. Multi-out instruments. Sidechain. Plugin MIDI out. File drops from plugin windows. Loop and punch recording. Autosave and crash recovery. The local agent API. Plans with apply and undo. Parameter maps for the four targets. Analysis tools | Phil makes a track start to finish, and the agent does a mix pass he keeps |
-| **v1.x** | Session (clip-launch) view. Step sequencer. Racks and macros. MCP server. CLAP | |
-| **Later, deliberately** | A plugin sandbox bridge. Time-stretch and warping (needs a stretch library: Rubber Band is GPL or commercial, élastique is commercial, both **UNVERIFIED** current terms). Comping. Pitch correction and ARA. Control surfaces. Windows. Video. Notation. Surround | |
+| **v1** | Everything in §2. Automation. Multi-out instruments. Sidechain. Plugin MIDI out. File drops from plugin windows. Loop and punch recording. Autosave and crash recovery. Quick controls for the four targets | Phil makes a track start to finish, from recording to bounce, without opening Logic |
+| **v1.x** | Session (clip-launch) view. Step sequencer. Racks and macros. CLAP | |
+| **Later, deliberately** | **Agent control (§5)**: a local API, then MCP, notes to changes, and parameter maps. A plugin sandbox bridge. Time-stretch and warping (needs a stretch library: Rubber Band is GPL or commercial, élastique is commercial, both **UNVERIFIED** current terms). Comping. Pitch correction and ARA. Control surfaces. Windows. Video. Notation. Surround | |
 
 ---
 
 ## 9. Risks and hard parts
 
-- **Scale.** Logic and Live are decades of work by large teams. Ardour is over 20 years old. A small team plus agents won't reach their breadth. **The realistic target:** a focused DAW that one musician can finish songs in, with an agent layer neither of them has in this form. Expect months to v0 and a year or more to v1 **[estimate, not a commitment]**.
+- **Scale.** Logic and Live are decades of work by large teams. Ardour is over 20 years old. A small team plus agents won't reach their breadth. **The realistic target:** a focused Ableton/Logic-style DAW that one musician can finish songs in, with his own plugins. Expect months to v0 and a year or more to v1 **[estimate, not a commitment]**.
 - **The plugin long tail.** Each plugin interprets the AU and VST3 specs a little differently: bus layouts, state, threading, GUI resizing, latency changes. Four named targets are tractable. "Any plugin" is not. Testing licensed plugins needs real licences on a real Mac, so CI can't cover it. Phil's Mac is the compatibility lab.
 - **A crash takes the session down in v1.** Without a sandbox, one bad plugin crashes the app. The mitigation is autosave and incremental recording, which makes the bridge a real v2 item.
 - **Real-time correctness.** Priority inversions, allocation in the callback and denormals are subtle, and agent-written C++ makes them likelier. Needed from the start:
@@ -275,7 +238,7 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
   - stretch-library licences;
   - trademark care: no "VST" logo unless we follow Steinberg's rules, and no Ableton or Logic look-alike assets.
 - **Platform churn.** Rosetta narrows after macOS 27 ([Apple](https://developer.apple.com/documentation/apple-silicon/about-the-rosetta-translation-environment)). Xcode 27 needs `x86_64` added to ARCHS explicitly. Apple steers hosts toward AUv3.
-- **Competition.** Logic 13's assistant and Ableton's Extensions SDK narrow the gap from both sides. Our case rests on openness (any agent, local), plans you can audit and undo, and plugin-level control.
+- **Why build it at all.** Live and Logic already do all of v1. The case for Whiplash is ownership: a DAW shaped exactly to Phil's workflow, with the option of agent control later (§5). It doesn't rest on doing more than they do. That is worth Phil confirming before the build (Q11).
 
 ---
 
@@ -286,7 +249,7 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
 3. **Budget for licences**, if it's ever distributed: Tracktion plus JUCE tiers (§6), and a legal read on JUCE EULA clause 1.12.
 4. **The foundation.** Accept the Tracktion Engine + JUCE recommendation? Or do you want a Rust-first core for safety and long-term ownership, accepting a much later v0?
 5. **The macOS floor.** 14+ (matching Kontakt and Helix) or 15+? Do you need Intel Macs at all? (Recommended: no.)
-6. **Agent autonomy.** Every plan reviewed before it applies, or small edits applied at once? Which agent: Claude through the local API first, MCP later?
+6. **When does agent control come in?** After v1 (as written), or not at all unless the core DAW is in daily use?
 7. **The look.** Dark only, or a light theme too? Any reference images beyond "Ableton x Logic, Rams"?
 8. **Session view priority.** Clip launching is very Ableton. Do you jam that way, or is arrange-first enough for v1?
 9. **Interfaces beyond the 2i2.** Any other gear to support early: MIDI controllers, a control surface?
