@@ -1,67 +1,82 @@
 # Whiplash DAW: vision
 
-Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and the build phase starts only on Phil's explicit go-ahead. Facts are cited inline and were checked on 2026-11-21. Anything marked **UNVERIFIED** wasn't confirmed from a primary source. §10 lists the open questions.
+Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and the build phase starts only on Phil's explicit go-ahead. Facts are cited inline and were checked on 2026-11-21. Anything marked **UNVERIFIED** wasn't confirmed from a primary source. §13 lists the open questions.
 
-**Framing (Phil, 21 Nov 2026):** this is a new project that keeps only the name *Whiplash*.
-- It is not the Hermes plugin in this repo and not the Digitakt web twin (PR #34).
-- Digitakt II support is out of scope for now.
-- Nothing here builds on the existing plugin code.
-
-**Update (Phil, 21 Nov 2026, 8:14 SGT):** the baseline is an **Ableton/Logic twin: core DAW first.** Agent control is secondary. It is a short later-phase note (§5), and it drives none of the scope, the stack choice or the v0/v1 phasing.
+**Framing and updates from Phil (21 Nov 2026):**
+- **A new project** that keeps only the name *Whiplash*. It is not the Hermes plugin in this repo and not the Digitakt web twin (PR #34). Digitakt II support is out of scope.
+- **Core DAW first** (8:14 SGT). The baseline is an **Ableton/Logic twin**. Agent control is a short later-phase note (§10), and it drives none of the scope, the stack or the phasing.
+- **The engine is a separate repo** (8:24 SGT): **[kaminocorp/riddim](https://github.com/kaminocorp/riddim)**, "Riddim", our own native audio engine in Rust. Its README: "playback, recording, timeline, AU/VST3 hosting". Its vision is being written there (`docs/visions/riddim.md`). This doc treats Riddim as a **dependency behind an engine API** and covers the **app**: UX, workflow, editors, mixer UI, project model and phasing. §9 says what the app needs from Riddim.
 
 ---
 
 ## 1. What it is, and what it isn't
 
 **It is:**
-- **Our own native DAW for macOS.** In look and workflow it is an Ableton Live and Logic Pro hybrid: Logic's arrange window, mixer and editors, with Ableton's speed, device chain and (later) clip launching.
+- **Our own native DAW app for macOS**, with Riddim underneath. In look and workflow it is an Ableton Live and Logic Pro hybrid: Logic's arrange window, mixer and editors, with Ableton's speed, device chain and (later) clip launching.
 - **Built for Phil to record and finish music** with the instruments and plugins he owns.
-- **A complete core DAW before anything else.** Agent control may come later (§5), and nothing in v0 or v1 waits on it.
 
 **It isn't:**
 - **A toy or a demo.** It has to record a real session with real plugins without losing a take.
-- **A web app.** Native wins, for three reasons:
-  - **Plugin hosting.** Kontakt, Superior Drummer, EZbass and Helix ship as AU, VST3 and AAX binaries (§4). A browser can't load them, so a web DAW can't host any of them.
-  - **Real-time audio.** CoreAudio at 64-128-sample buffers, with real-time threads joined to the device's audio workgroup (macOS 11+, [Apple](https://developer.apple.com/documentation/audiotoolbox/understanding-audio-workgroups)). A browser's audio stack is a worse foundation for 30 plugin instances at low latency **[inferred]**.
-  - **Files.** Multi-gigabyte projects, sample streaming and recording to disk.
-- **Not a Logic or Ableton replacement in breadth.** No notation, no video, no surround or Atmos, no bundled instrument suite, no comping or Flex Time in v1 (§8).
-- **Not AAX.** AAX is for Pro Tools. Every target plugin also ships AU and VST3.
+- **A browser app.** The target plugins ship as native AU and VST3 binaries (§6), which a browser can't load. Real-time audio and multi-gigabyte projects are native territory too. *A web-technology UI inside a native shell is a different question, and it is one of the UI options in §8.*
+- **Not a Logic or Ableton replacement in breadth.** No notation, video, surround, bundled instrument suite, comping or Flex Time in v1 (§11).
+- **Not AAX.** Every target plugin also ships AU and VST3.
 
 **Who it's for:** Phil first, on his Mac with a Focusrite Scarlett 2i2. Anyone else comes later, if ever (Q2).
 
 ---
 
-## 2. Core functionality (v1 must-haves)
+## 2. Architecture at a glance
+
+```
+┌──────────────────────────── Whiplash (this repo / app) ────────────────────────────┐
+│  UI: arrange · editors · mixer · browser · inspector · plugin-window frames         │
+│  Workflow: commands, undo, selection, keyboard, drag-and-drop, snapping             │
+│  Project model (the document): tracks, clips, routing, automation, tempo map        │
+│  Files: project folder, media management, autosave, plugin-state blobs (opaque)     │
+└───────────────▲───────────────────────────────────────────────┬────────────────────┘
+                │ events: playhead, meters, recorded clips,      │ document snapshots / diffs,
+                │ plugin param changes, progress, errors         │ transport, record, render, plugin ops
+┌───────────────┴──────────────────── engine API ───────────────▼────────────────────┐
+│  Riddim (kaminocorp/riddim, Rust): CoreAudio I/O, real-time graph, playback,        │
+│  recording, mixing, PDC, AU/VST3 hosting, plugin scan, offline render               │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Proposed rule:** the app owns the **document** and its undo. Riddim owns the **real-time state**: the device, the graph, plugin instances and recording buffers. The app pushes the document, and Riddim reports what happened. The README lists "timeline" under Riddim, so where exactly the timeline model lives needs agreeing with Riddim's vision (§9.1, Q3).
+
+---
+
+## 3. Core functionality (v1 must-haves)
 
 | Area | v1 scope |
 |---|---|
 | **Recording** | Mono and stereo audio from the interface's inputs. Input monitoring. Arm several tracks at once. Loop and punch recording, keeping takes as separate clips (no comping UI in v1). Latency-corrected placement. MIDI recording with overdub and replace |
 | **Audio tracks** | Clips referencing audio files. Gain, fades and crossfades. Non-destructive |
-| **MIDI and instrument tracks** | One instrument plugin (AU/VST3) per track plus an effect chain. Multi-output instruments routed to their own mixer channels. Plugin MIDI output routable to other tracks (§4.2) |
-| **Arrangement timeline** | Tracks and clips on bars and beats. A tempo and time-signature map. Markers and sections. Snap and grid. Track folders and stacks |
-| **Mixer** | Channel strips with an inserts chain, sends (pre/post), buses, master, volume, pan, mute and solo. Sidechain inputs (§4.2). Peak and RMS meters |
+| **MIDI and instrument tracks** | One instrument plugin (AU/VST3) per track plus an effect chain. Multi-output instruments routed to their own mixer channels. Plugin MIDI output routable to other tracks (§6.2) |
+| **Arrangement** | Tracks and clips on bars and beats. Tempo and time-signature map. Markers and sections. Snap and grid. Folders and track stacks |
+| **Mixer** | Channel strips with inserts, sends (pre/post), buses, master, volume, pan, mute and solo. Sidechain inputs. Peak and RMS meters |
 | **Transport** | Play, stop, record, loop range, punch in/out, metronome with count-in, tap and typed tempo, follow playhead |
-| **Editing** | Clip move, trim, split, duplicate and loop. Piano roll (notes, velocity, length, CC lanes). Audio clip edits (trim, fade, gain, reverse, normalise; no time-stretch in v1). Quantise with strength and swing. Humanise |
-| **Automation** | Per-parameter lanes for track and plugin parameters. Read, write, touch and latch modes. Breakpoint editing |
-| **Project** | Save, load and autosave. A project folder with audio files, collected and self-contained. Plugin state stored per instance (§4.3). Crash recovery from autosave |
-| **Export** | Offline bounce of the master or stems to WAV/AIFF at the project rate. Real-time bounce as a fallback for plugins that misbehave offline (§7.5) |
-| **Undo** | Unlimited, one history for every edit. Every edit is an undoable command internally, which is standard DAW design (Tracktion Engine's `Edit` owns a `juce::UndoManager`, [tracktion_Edit.h](https://github.com/Tracktion/tracktion_engine/blob/develop/modules/tracktion_engine/model/edit/tracktion_Edit.h)) |
+| **Editing** | Clip move, trim, split, duplicate and loop. Piano roll. Audio clip edits (trim, fade, gain, reverse, normalise; no time-stretch in v1). Quantise with strength and swing. Humanise |
+| **Automation** | Lanes for track and plugin parameters. Read, write, touch and latch. Breakpoint editing |
+| **Project** | Save, load, autosave and crash recovery. A self-contained project folder (§5) |
+| **Export** | Offline bounce of the master or stems to WAV/AIFF. Real-time bounce as a fallback |
+| **Undo** | Unlimited, one history for every edit (§5.3) |
 
 ---
 
-## 3. Look and workflow
+## 4. Look, workflow, editors and mixer
 
-### 3.1 What comes from where
+### 4.1 What comes from where
 
 | From **Ableton Live** (12.4.16 current; Live 13 announced for early 2027, [ableton.com](https://www.ableton.com/en/live/)) | From **Logic Pro** (13.0, 2026-11-06, [Apple](https://support.apple.com/en-us/109503)) |
 |---|---|
 | **Speed:** single window, few modal dialogs, keyboard-first, drag-and-drop everywhere | **The arrange window** as the main canvas ([Tracks area](https://support.apple.com/guide/logicpro/tracks-area-overview-lgcpf7c0d5d8/mac)) |
-| **The device chain:** a horizontal strip of devices along the bottom, with instant add and reorder ([Live manual](https://www.ableton.com/en/live-manual/12/working-with-instruments-and-effects/)) | **The mixer:** a full console with sends, buses, folders and colour, and the polish to work in for hours ([Mixer](https://support.apple.com/guide/logicpro/mixing-overview-lgcpbc219818/mac)) |
-| **Racks and macros,** later ([Racks](https://www.ableton.com/en/live-manual/12/instrument-drum-and-effect-racks/)) | **Editors** that dock in a bottom pane: piano roll, audio editor, later a step sequencer ([Piano Roll](https://support.apple.com/guide/logicpro/overview-lgcpa9111b0d/mac)) |
-| **Session view** (clip launching), in v1.x ([Session View](https://www.ableton.com/en/live-manual/12/session-view/)) | **The inspector:** the selected track's channel strip at the left. **Smart Controls** become our quick controls (§3.2) |
+| **The device chain:** a horizontal strip of devices along the bottom ([Live manual](https://www.ableton.com/en/live-manual/12/working-with-instruments-and-effects/)) | **The mixer:** a full console with sends, buses, folders and colour ([Mixer](https://support.apple.com/guide/logicpro/mixing-overview-lgcpbc219818/mac)) |
+| **Racks and macros,** later ([Racks](https://www.ableton.com/en/live-manual/12/instrument-drum-and-effect-racks/)) | **Docked editors:** piano roll, audio editor, later a step sequencer ([Piano Roll](https://support.apple.com/guide/logicpro/overview-lgcpa9111b0d/mac)) |
+| **Session view** (clip launching), in v1.x ([Session View](https://www.ableton.com/en/live-manual/12/session-view/)) | **The inspector,** plus **Smart Controls** as our quick controls ([Smart Controls](https://support.apple.com/guide/logicpro/smart-controls-overview-lgcp7e59f24b/mac)) |
 | **The browser:** one searchable place for instruments, plugins, presets and samples | **Multi-output instrument handling** ([Logic guide](https://support.apple.com/guide/logicpro/use-multi-output-instruments-lgcp8e887f45/mac)) |
 
-### 3.2 Proposed layout (one window)
+### 4.2 Main window
 
 ```
 ┌──────┬──────────────────────────────────────────────────────────────┬────────────┐
@@ -82,176 +97,239 @@ Status: **vision draft for Phil to refine, 2026-11-21.** Nothing is built, and t
    X = full-screen mixer (Logic-style console)      Tab = session grid (v1.x)
 ```
 
-- **Centre:** the arrange window. Tracks run top to bottom and time left to right, with automation lanes folding under each track.
-- **Bottom:** the detail pane, Ableton's device chain for the selected track or Logic's editor for the selected clip.
-- **Left:** the inspector: the channel strip, plus quick controls, a handful of pinned plugin parameters per track in the spirit of Logic's Smart Controls ([Apple](https://support.apple.com/guide/logicpro/smart-controls-overview-lgcp7e59f24b/mac)).
-- **Right:** the browser.
-- **Mixer:** a full-screen Logic-style console (`X`).
-- **Session grid:** comes later, sharing the same tracks, as in Live.
+- **Centre: the arrange window.** Tracks top to bottom, time left to right. Automation lanes fold under each track. Waveforms are drawn from precomputed overviews (§5.2) at any zoom without stalls.
+- **Bottom: the detail pane.** Ableton's device chain for the selected track, or Logic's editor for the selected clip.
+- **Left: the inspector.** The channel strip, plus **quick controls**: a few plugin parameters pinned per track.
+- **Right: the browser** for plugins, presets, samples and project files. Drag onto a track or the empty area to create one.
 
-### 3.3 Aesthetic
+### 4.3 Editors
+
+- **Piano roll** (v0.5):
+  - notes with velocity and length;
+  - a velocity lane, plus CC and pitch-bend lanes;
+  - scale highlighting;
+  - quantise (grid, strength, swing) and humanise (timing and velocity, seeded so it's repeatable);
+  - a keyboard-first edit set: nudge, length, transpose, duplicate.
+- **Audio editor** (v0.5): trim, fades, gain, reverse, normalise, silence detection to split, and clip gain envelopes. Non-destructive: edits live in the document, and the source files are never modified.
+- **Later:** a step sequencer (Logic-style, [Apple](https://support.apple.com/guide/logicpro/step-sequencer-overview-lgcp39acefc9/mac)), comping, warping and time-stretch (§11).
+
+### 4.4 Mixer UI
+
+- **A full-screen console** (`X`) with strips for audio, instrument, aux and bus channels, plus master, in track order. Folders collapse to one strip.
+- **Each strip:** input, inserts (drag to reorder, alt-drag to copy), sends with levels, output, pan, fader, meter, mute, solo, record and monitor. Multi-out instrument channels group under their instrument.
+- **Sidechain:** picked from a strip's plugin, listing buses and tracks.
+- **Meters and gain readouts** come from Riddim's metering stream (§9.2). The UI never computes audio.
+
+### 4.5 Aesthetic
 
 - **A dark instrument, Dieter Rams-adjacent:** "less, but better". Near-black and graphite surfaces. One accent colour for live state: record arm, playhead, clip.
-- **Tabular monospace numerals** for time and values.
-- **The usual hierarchy:** colour only where it means something, such as track colour and meters. No decoration.
+- **Tabular monospace numerals** for time and values. Colour only where it means something, such as track colour and meters.
 - **No purple gradients, glassmorphism, sparkle icons or generic AI styling.**
 - **Plugin windows look like their vendors made them.** We frame them and never skin them.
-- **Readable at a glance across a room:** large transport numerals and a clear record state.
+- **Readable across a room:** large transport numerals and a clear record state.
 
 ---
 
-## 4. Third-party plugins (hard requirement)
+## 5. Project model (the app's document)
 
-### 4.1 Phil's target products (checked 2026-11-21)
+### 5.1 Structure
+
+- **Project:** sample rate, tempo and time-signature map, markers and sections, and a track list.
+- **Tracks:** audio, instrument, aux/bus, folder and master. Each has a channel strip: inserts as plugin slots, sends, input, output and the automation lanes.
+- **Clips:**
+  - an audio clip is a media reference plus offset, length, gain, fades and gain envelope;
+  - a MIDI clip holds notes and CC events.
+
+  Times are stored in musical ticks plus a sample-accurate offset where needed, so tempo edits move clips correctly.
+- **Plugin slots:** the plugin's identity (format, ID, vendor, version), an opaque state blob received from Riddim, quick-control picks and the window position.
+- **Every object has a stable ID,** so diffs, undo and the engine API refer to objects, never to list positions.
+
+### 5.2 Files
+
+- **A project folder:** a project document, `Audio/` (recordings and imports, copied in), `Overviews/` (waveform peak files), `PluginState/` (blobs) and `Autosave/`.
+- **Format:** a versioned, human-diffable document (JSON or similar) with binary blobs in side files. **[proposal]** It should be readable without Riddim, so a project survives an engine change.
+- **Media:** imports are copied in by default. Missing media and missing plugins show as offline placeholders, with their state preserved and never dropped.
+- **Autosave** every few seconds to `Autosave/`. Crash recovery offers the newest autosave. Recorded audio is written by Riddim as it records (§9.2), so a crash loses at most the last flush.
+
+### 5.3 Commands and undo
+
+- **Every edit is a typed command,** whether it comes from a menu, a shortcut or a drag. Each validates first, applies to the document, and records its inverse. Gestures such as a fader drag coalesce into one undo step.
+- **After a command,** the app sends Riddim the resulting change (§9.1). Undo is a command too, so Riddim needs nothing special for it.
+- **Determinism:** randomised edits (humanise) take a recorded seed. The same command on the same document gives the same result.
+- This is ordinary DAW architecture, and it is also what makes later agent control (§10) cheap.
+
+---
+
+## 6. Third-party plugins (hard requirement)
+
+### 6.1 Phil's target products (checked 2026-11-21)
 
 | Product | Mac formats | Apple Silicon | Min macOS | Licensing (host involvement) |
 |---|---|---|---|---|
-| **Kontakt 8 Player** (free) + **Noire** (paid library) | AU, VST3, AAX, standalone ([NI specs, from a search excerpt](https://www.native-instruments.com/en/products/komplete/samplers/kontakt-8/specifications/)) | yes | 14, 15, 26 per an NI excerpt; another excerpt says 15, 26, 27 (**UNVERIFIED**) | Native Access with an NI account. The plugin itself shows "not activated" ([NI KB](https://support.native-instruments.com/support/solutions/articles/69000879750-kontakt-error-message-not-activated-or-full-kontakt-required-)). The host does nothing. Noire runs in the free Player, per an NI page excerpt ([NI](https://www.native-instruments.com/en/products/komplete/keys/noire/), **UNVERIFIED** full page) |
+| **Kontakt 8 Player** (free) + **Noire** (paid library) | AU, VST3, AAX, standalone ([NI specs, search excerpt](https://www.native-instruments.com/en/products/komplete/samplers/kontakt-8/specifications/)) | yes | 14, 15, 26 per an NI excerpt; another excerpt says 15, 26, 27 (**UNVERIFIED**) | Native Access with an NI account. The plugin itself shows "not activated" ([NI KB](https://support.native-instruments.com/support/solutions/articles/69000879750-kontakt-error-message-not-activated-or-full-kontakt-required-)). The host does nothing. Noire runs in the free Player per an NI excerpt ([NI](https://www.native-instruments.com/en/products/komplete/keys/noire/), **UNVERIFIED** full page) |
 | **Superior Drummer 3** (3.4.4, 2026-03-26) | AU, VST3 (since 3.3.0), AAX, standalone ([release notes](https://www.toontrack.com/release-notes/superior-drummer-3/)) | native since 3.2.5 | 10.13 | Toontrack Product Manager ([Toontrack](https://www.toontrack.com/product-manager/)). The host does nothing |
 | **EZbass** (1.3.4, 2026-05-29) | AU, VST3, AAX, standalone ([release notes](https://toontrack.com/release-notes/release-notes-ezbass)) | native since 1.1.0 | 10.13 | Product Manager plus an account. The host does nothing |
-| **Helix Stadium Native** (launched 2026-08-04) | VST3, AU, AAX; **no standalone** ([Line 6 KB](https://kb.line6.com/helix-stadium-native-faq)) | yes per reviews (**UNVERIFIED** from Line 6) | 14 per reviews (**UNVERIFIED**) | A Line 6 account, up to four computers ([Line 6 KB](https://kb.line6.com/helix-stadium-native-faq)). The host does nothing |
+| **Helix Stadium Native** (launched 2026-08-04) | VST3, AU, AAX; no standalone ([Line 6 KB](https://kb.line6.com/helix-stadium-native-faq)) | yes per reviews (**UNVERIFIED**) | 14 per reviews (**UNVERIFIED**) | A Line 6 account, up to four computers ([Line 6 KB](https://kb.line6.com/helix-stadium-native-faq)). The host does nothing |
 
-**Copy protection is handled inside each plugin and its vendor app.** The host's only duty is to stay out of the way:
-- don't block a plugin's network access or its first-run dialogs;
-- don't kill a slow instantiation.
+**Copy protection is handled inside each plugin and its vendor app.** The host only has to stay out of the way: no blocking of first-run dialogs or network access, and no killing a slow load.
 
-### 4.2 Host features these products need
+### 6.2 What these plugins need (app side and engine side)
 
-- **Multi-output instruments:**
-  - Kontakt in AU hosts offers a "16xStereo" multi-out variant, capped at 16 channels in AU/AAX and 64 mono in VST3 (NI manual excerpt, **UNVERIFIED** full page).
-  - Superior Drummer 3 has 16 stereo outputs ([Toontrack](https://www.toontrack.com/product/superior-drummer-3/)).
-  - So the host must negotiate output buses (AU bus layouts, VST3 bus arrangements) and create mixer channels for them.
-- **Sidechain input** on effects: Helix's dynamics and some filter blocks ([Line 6 KB](https://kb.line6.com/helix-stadium-native-faq)).
-- **Plugin MIDI output** routed to other tracks: SD3 and EZbass.
-- **OS file drops from a plugin window onto the timeline.** SD3 writes a temporary MIDI file and starts a drag ([SD3 3.2.5 notes](https://www.toontrack.com/release-notes/superior-drummer-3/)). EZbass's vendor warns that MIDI drag-and-drop "may not work in some hosts" ([Toontrack](https://www.toontrack.com/product/ezbass/)).
-- **The host playhead:** tempo, time signature, position and transport. SD3's "Follow Host" uses it ([Toontrack forum, staff](https://www.toontrack.com/forums/topic/superior-drummer-3-are-tempo-and-time-signature-synchronized-bidirectional-in-daw/)).
-- **Large memory and slow loads.** One SD3 preset ranges from 3.7 GB to 18 GB with full bleed ([Toontrack FAQ](https://www.toontrack.com/faq/how-much-ram-does-a-superior-library-or-sdx-use/)). Instantiation and state restore must be asynchronous with progress, and must never block the audio or UI thread.
-- **Latency reporting and delay compensation** for amp sims and look-ahead dynamics (§7.4). Helix's reported latency is **UNVERIFIED**.
+| Need | Source | App | Riddim (§9.2) |
+|---|---|---|---|
+| **Multi-output instruments.** Kontakt's AU "16xStereo" variant (NI manual excerpt, **UNVERIFIED** full page). SD3's 16 stereo outs ([Toontrack](https://www.toontrack.com/product/superior-drummer-3/)) | | creates mixer channels per output bus, grouped under the instrument | negotiates bus layouts, exposes each output as a routable channel |
+| **Sidechain input** (Helix dynamics and filters) | [Line 6 KB](https://kb.line6.com/helix-stadium-native-faq) | a sidechain picker on the strip | sidechain bus routing |
+| **Plugin MIDI output** (SD3, EZbass) | [SD3](https://www.toontrack.com/product/superior-drummer-3/), [EZbass notes](https://toontrack.com/release-notes/release-notes-ezbass) | routes it to other tracks, or records it | delivers plugin MIDI out as an event stream |
+| **File drops from a plugin window onto the timeline.** SD3 writes a temporary MIDI file and starts an OS drag ([SD3 3.2.5 notes](https://www.toontrack.com/release-notes/superior-drummer-3/)). EZbass "may not work in some hosts" ([Toontrack](https://www.toontrack.com/product/ezbass/)) | | **the app's** drop target accepts OS file drags from any window, plugin windows included | none |
+| **Host playhead** (SD3 "Follow Host") | [Toontrack forum, staff](https://www.toontrack.com/forums/topic/superior-drummer-3-are-tempo-and-time-signature-synchronized-bidirectional-in-daw/) | tempo map in the document | supplies tempo, time signature, position and transport to plugins |
+| **Large memory and slow loads** (an SD3 preset takes 3.7-18 GB) | [Toontrack FAQ](https://www.toontrack.com/faq/how-much-ram-does-a-superior-library-or-sdx-use/) | progress UI, so the project stays usable while a plugin loads | asynchronous instantiation and state restore, never on the audio or UI thread |
+| **Latency** (amp sims, look-ahead) | | shows a strip's latency, plus a low-latency monitoring toggle | reports it and compensates (PDC) |
 
-### 4.3 How hosting works
+### 6.3 Plugin UX in the app
 
-- **Formats:**
-  - **AU** (macOS): AUv2 via AudioToolbox and AUv3 via `AVAudioUnit`. Apple calls AUv2 "maintenance mode" and recommends AUv3 for new development ([Apple](https://developer.apple.com/documentation/audiotoolbox/hosting-audio-unit-extensions-using-the-auv2-api)). Most commercial instruments, these four included, still ship AUv2 **[inferred]**.
-  - **VST3:** the SDK is **MIT-licensed since 3.8.0 (2025-10-20)**. "Licensing under GPLv3 and the Steinberg proprietary license is no longer available" ([vst3sdk](https://github.com/steinbergmedia/vst3sdk), [Steinberg](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST+3+Licensing/Index.html)). Current version: 3.8.1 (2026-08-11). The VST name and logo are optional and covered by trademark rules. VST2 has been discontinued since 2018 ([Steinberg forum](https://forums.steinberg.net/t/vst-2-sdk-discontinued/201774)), so there is no VST2.
-  - **CLAP:** MIT ([free-audio/clap](https://github.com/free-audio/clap)), with an MIT host-side SDK ([clap-helpers](https://github.com/free-audio/clap-helpers)). Bitwig, REAPER, FL Studio and Studio One support it, but neither Logic nor Live does ([clapdb](https://clapdb.tech/category/hostsdaws)). Optional, after v1.
-- **Scanning:** in a child process, so a plugin that crashes on load doesn't take the DAW with it. JUCE's AudioPluginHost and Tracktion Engine both do this ([JUCE](https://github.com/juce-framework/JUCE/blob/master/extras/AudioPluginHost/Source/UI/MainHostWindow.cpp), [Tracktion](https://github.com/Tracktion/tracktion_engine/blob/develop/modules/tracktion_engine/plugins/tracktion_PluginScanHelpers.h)). Results are cached by path, version and modified time, with a blocklist for repeat offenders.
-- **GUI windows:** each plugin's own view is hosted in a native window we frame: title, bypass, preset and A/B. Windows float above the main window and remember their position per instance.
-- **State:** the VST3 component and controller state, and the AU `ClassInfo` / full-state property, are stored opaquely per instance in the project, alongside the plugin's identity and version. A plugin that is missing on load keeps its state and shows as an offline placeholder, never silently dropped.
-- **Crash isolation:**
-  - **AUv3** runs out of process by default, for free ([Apple](https://developer.apple.com/documentation/audiotoolbox/migrating-your-audio-unit-host-to-the-auv3-api)).
-  - **AUv2 and VST3** run in our process unless we build a bridge. Bitwig offers five sandbox modes, from in-engine to each instance alone ([Bitwig](https://bitwig.com/userguide/latest/vst_plug-in_handling_and_options)). REAPER runs a plugin in a shared or dedicated bridge process ([REAPER guide](https://www.reaper.fm/userguide/ReaperUserGuide786c.pdf), p. 339).
-  - **Neither JUCE nor Tracktion Engine ships a runtime sandbox** **[source: code search, see §6]**.
-  - **v1 plan:** in-process hosting, plus autosave every few seconds and crash recovery. **A bridge process is v2** (§8): shared-memory audio and one-block IPC per process, at real CPU and latency cost.
-- **Rosetta:** an Intel-only AU can be loaded through Apple's out-of-process helper (`AUHostingServiceXPC_arrow`) ([Apple](https://developer.apple.com/documentation/audiotoolbox/debugging-out-of-process-audio-units-on-apple-silicon)). Rosetta stays a general-purpose tool only "through macOS 27" ([Apple](https://developer.apple.com/documentation/apple-silicon/about-the-rosetta-translation-environment)), so we target **arm64-native plugins only**. All four targets are native.
+- **Plugin manager:**
+  - runs a scan through Riddim in the background, with progress, and never blocks;
+  - lists formats, vendors and failures, with a blocklist and "rescan";
+  - Phil picks AU or VST3 when a plugin ships both (Q8).
+- **Plugin windows:** each plugin's own editor in a native window we frame, with title, bypass, preset menu, A/B and latency readout. Windows float and remember their position per instance.
+- **Missing or crashed plugins:** an offline placeholder that keeps its state. v1 shows a crash clearly and recovers from autosave. Running plugins in a separate process to survive a crash is an engine capability for v2 (§9.2).
 
 ---
 
-## 5. Agent control (later phase; it doesn't drive scope, stack or phasing)
+## 7. Workflow details that make or break it
 
-Per Phil's update of 21 Nov, agent control is **secondary** and comes **after v1** at the earliest (§8). Nothing in v0 or v1 depends on it. The only requirement now is to keep the architecture friendly to it, and a good DAW is already built that way:
-- **Every edit is an undoable command.** We need that for undo regardless (§2).
-- **The project model is separate from the audio engine** (§7.1).
+- **Never block the UI:** loading a project, a plugin, a scan, a bounce. Everything slow shows progress and can be cancelled.
+- **Recording must feel safe:** a clear arm and record state, input meters before you press record, the disk space left, and every take kept (the takes stack in v1, comping comes later).
+- **Keyboard-first:** every common action has a shortcut. A Logic-compatible key set is an option (Q7).
+- **Snapping and zoom:** smooth, fast, and predictable to the sample.
+- **Low-latency monitoring** while recording: high-latency plugins are bypassed or flagged on armed tracks.
 
-**What it could become later, as a sketch to refine when it's scheduled:**
-- **A local API.** Then an MCP server, exposing the same commands the UI uses, with read-only queries for project state.
-- **Notes to changes.** Phil writes a note ("the chorus bass is muddy"), an agent proposes a list of commands, and Phil applies it as one undo step or discards it.
-- **Parameter maps.** Semantic names for third-party plugin parameters, so an agent can drive them. This extends the quick controls in §3.2.
+---
 
-**Prior art, for when it's scheduled:**
-- Logic Pro 13's "intelligent assistant" (beta; "requires an Apple Creator Studio subscription, a Mac with Apple silicon, and macOS 27 or later", [Apple](https://support.apple.com/en-us/109503)).
-- Ableton's Extensions SDK (public beta since 2026-06-02, [Ableton](https://www.ableton.com/en/blog/introducing-extensions-sdk)) and the community [ableton-mcp](https://github.com/ahujasid/ableton-mcp).
+## 8. UI stack options (open)
+
+The app sits on top of Riddim (Rust). Criteria:
+- Logic-level polish on macOS;
+- a timeline that handles thousands of clips and waveforms with smooth zoom;
+- **hosting plugin editors**, which are native NSViews (**[inferred]**: standard for AU Cocoa views and VST3 `IPlugView` on macOS);
+- accessibility;
+- iteration speed;
+- Windows later;
+- licence;
+- the cost of the boundary to Riddim.
+
+| Option | Boundary to Riddim | For | Against |
+|---|---|---|---|
+| **A. Native Swift: AppKit + SwiftUI, Metal for the timeline** | a C ABI ([cbindgen](https://github.com/mozilla/cbindgen), MPL-2.0) or generated bindings ([UniFFI](https://github.com/mozilla/uniffi-rs), MPL-2.0; [swift-bridge](https://github.com/chinedufn/swift-bridge), MIT/Apache) | the most Mac-native feel, accessibility, text and menus. Plugin NSViews drop straight in | macOS only, so Windows means a second UI. Two languages |
+| **B. Rust-native UI:** [egui](https://github.com/emilk/egui) 0.37 (MIT/Apache), [iced](https://github.com/iced-rs/iced) 0.14 (MIT), [Slint](https://github.com/slint-ui/slint) 1.19 ([royalty-free licence for proprietary desktop apps, or GPLv3, or commercial](https://github.com/slint-ui/slint/blob/master/LICENSE.md)), [vizia](https://github.com/vizia/vizia) 0.4 (MIT, from audio-plugin UI work); earlier-stage: [Xilem](https://github.com/linebender/xilem), [Floem](https://github.com/lapce/floem) | none: same language and process as Riddim | one language, cross-platform | **[inferred]** less mature for a large pro app: accessibility, text, native menus and polish need our work. Embedding plugin NSViews needs native window handles ([raw-window-handle](https://github.com/rust-windowing/raw-window-handle)). Most are pre-1.0 |
+| **C. Web UI in a Rust shell:** [Tauri](https://github.com/tauri-apps/tauri) 2.x (MIT/Apache), with the system webview | Riddim in-process in the Rust core; the UI talks to it over Tauri IPC | fast iteration, rich layout, people and agents write it quickly, cross-platform | **[inferred]** a timeline at scale needs canvas or WebGPU work. Plugin editors can't live in the webview, so they need separate native windows (they float anyway). Doesn't feel native unless worked hard |
+| **D. Qt / QML** via [cxx-qt](https://github.com/KDAB/cxx-qt) (MIT/Apache bindings) | Rust ↔ Qt through cxx-qt | a mature desktop toolkit, cross-platform. Zrythm uses Qt/QML ([repo](https://github.com/zrythm/zrythm)) | Qt's licence is LGPLv3 or commercial (**UNVERIFIED** current terms). It doesn't look Mac-native by default, and adds a third language (QML) |
+
+**Leaning, not a decision:** A for a Mac-first, Logic-polish goal, accepting that Windows would need a second UI. C if iteration speed and an eventual Windows build matter more.
+
+**Proposed spike before choosing:** build the arrange view (500 tracks of clips, waveform overviews, smooth zoom, one hosted plugin window) in A and C, against a stub of the Riddim API.
+
+---
+
+## 9. What the DAW needs from Riddim
+
+**Decision note.** Phil chose (21 Nov 2026) to build our own engine, Riddim, in Rust rather than adopt Tracktion Engine, JUCE or Ardour, while borrowing their ideas. The previous draft of this doc recommended Tracktion Engine + JUCE. That analysis is superseded, and its useful facts belong in Riddim's vision:
+- the VST3 SDK has been MIT since 3.8.0 ([vst3sdk](https://github.com/steinbergmedia/vst3sdk));
+- Rust hosting pieces: [`vst3`](https://github.com/coupler-rs/vst3-rs), [clack](https://github.com/prokopyl/clack), and [rack](https://github.com/sinkingsugar/rack) for AU (self-described production-ready, **UNVERIFIED**);
+- AUv3 runs out of process ([Apple](https://developer.apple.com/documentation/audiotoolbox/migrating-your-audio-unit-host-to-the-auv3-api));
+- Rosetta remains general-purpose only "through macOS 27" ([Apple](https://developer.apple.com/documentation/apple-silicon/about-the-rosetta-translation-environment));
+- CoreAudio audio workgroups (macOS 11+, [Apple](https://developer.apple.com/documentation/audiotoolbox/understanding-audio-workgroups)).
+
+The list below is **the app's side of the contract**. To be reconciled with `docs/visions/riddim.md` once it exists.
+
+### 9.1 Shape of the API
+
+- **In-process,** as a Rust crate. If the UI isn't Rust (§8 options A and D), a thin binding layer on top.
+- **The document flows one way.** The app sends Riddim the project state: a full snapshot at load, then **transactional diffs** keyed by object ID. Riddim applies each diff atomically at a buffer boundary, glitch-free during playback. **[proposal]** Open: if Riddim keeps its own timeline model, the diffs map onto it (Q3).
+- **Threading contract:**
+  - every API call is safe from the UI or worker threads, and returns quickly;
+  - slow work (plugin load, state restore, scan, render) returns a handle and reports progress and completion as events;
+  - the app never touches the audio thread.
+- **Events back to the app,** through a lock-free queue the UI drains each frame:
+  - playhead (samples plus musical time);
+  - meters, CPU and dropouts;
+  - recorded clips;
+  - plugin parameter changes (for automation write and undo);
+  - plugin latency changes, errors and device changes.
+- **A headless and fake-device mode,** so the app's tests run in CI without audio hardware.
+- **A versioned API** (semver), with contract tests in this repo against a pinned Riddim version.
+
+### 9.2 Capabilities, by phase
+
+| Capability | v0 | v0.5 | v1 |
+|---|---|---|---|
+| **Devices:** list CoreAudio devices, open at a sample rate and buffer size, report input, output and safety latency, report device loss and change. The Scarlett range is class compliant ([Focusrite](https://us.focusrite.com/articles/whats-the-best-interface-for-mac/); 4th Gen 2i2 **UNVERIFIED**) | ✓ | | |
+| **Transport:** play, stop, locate, loop; tempo and time-signature map; metronome and count-in | ✓ | | punch |
+| **Playback:** audio clips (offset, gain, fades) and MIDI clips into instruments | ✓ | crossfades, gain envelopes | |
+| **Recording:** arm, input select, monitoring; write files incrementally into the folder the app names; report each recorded clip with its latency-corrected start | audio + MIDI | | loop takes, punch |
+| **Mixing:** volume, pan, mute, solo, master | ✓ | inserts, sends, buses | sidechain, multi-out channels |
+| **Plugins:** scan in a child process with a cache; load AU and VST3 by identity; parameter list (ID, name, unit, range) with get/set/change events; opaque state get/set; open an editor in a native view the app provides; report latency | one instrument | effects, state save/restore | bus layouts (multi-out, sidechain), plugin MIDI out |
+| **PDC** across the graph, with a rebuild on latency change | | ✓ | |
+| **Automation:** evaluate parameter lanes; touch and latch writes from UI gestures and plugin changes | | | ✓ |
+| **Metering:** peak and RMS per channel; CPU, dropout and disk stats | basic | per channel | |
+| **Render:** offline bounce of the master or stems to a file, with progress and cancel, and a real-time fallback; deterministic output | | ✓ | stems |
+| **Crash isolation:** run plugins out of process | | | later (v2) |
+
+---
+
+## 10. Agent control (later phase; it doesn't drive scope, stack or phasing)
+
+Per Phil's update, agent control is secondary and comes **after v1** at the earliest. The architecture is already friendly to it, because every edit is an undoable command (§5.3) and the document is separate from the engine (§2).
+
+**A sketch, to refine when it's scheduled:**
+- a local API, then MCP, exposing the same commands the UI uses;
+- notes turned into proposed command lists that Phil applies as one undo step;
+- semantic names for plugin parameters, extending quick controls.
+
+**Prior art:**
+- Logic Pro 13's "intelligent assistant" (beta; "requires an Apple Creator Studio subscription, a Mac with Apple silicon, and macOS 27 or later", [Apple](https://support.apple.com/en-us/109503));
+- Ableton's Extensions SDK (public beta since 2026-06-02, [Ableton](https://www.ableton.com/en/blog/introducing-extensions-sdk));
+- [ableton-mcp](https://github.com/ahujasid/ableton-mcp);
 - REAPER's [ReaScript](https://www.reaper.fm/sdk/reascript/reascript.php).
 
 ---
 
-## 6. Technical foundations
+## 11. Phasing (app milestones, against Riddim's)
 
-| Option | What it gives | Licence (checked 2026-11-21) | Fit |
+| Phase | App ships | Needs from Riddim (§9.2) | Done when |
 |---|---|---|---|
-| **Tracktion Engine + JUCE** (C++20) | **The most DAW for the least work.** From Tracktion Engine ([FEATURES.md](https://github.com/Tracktion/tracktion_engine/blob/develop/FEATURES.md)): an Edit model with audio, MIDI and step clips; clip launching and scenes; tempo, time-signature and key curves; automation; PDC; background rendering; MIDI clock; and AU/VST3/LV2 hosting through JUCE. It is the engine behind Tracktion Waveform. Last commit 2026-11-20 ([repo](https://github.com/Tracktion/tracktion_engine)). It has no UI | **Tracktion:** GPL-3.0-or-later or commercial. Personal is free up to $50k revenue with branding; Indie is $35/seat/month up to $200k ([engine.tracktion.com](https://engine.tracktion.com/)). **JUCE 9** (9.0.6, 2026-11-19): AGPLv3 or commercial. Starter is free up to $20k; Indie is $800 perpetual up to $300k; Pro is $3,500 ([juce.com](https://juce.com/get-juce/)). No splash screen since JUCE 8. **Whether Tracktion commercial also needs JUCE commercial: UNVERIFIED (we assume yes).** **JUCE EULA clause 1.12, "may not … Distribute Products that create other Products", needs a legal read for a DAW** | **Recommended** |
-| **JUCE alone** | the same hosting, audio I/O and UI toolkit. We write the edit model, timeline, automation, PDC graph and rendering ourselves | JUCE as above | more control, many more months of work |
-| **Ardour / libardour** (C++) | the most complete open DAW back end. AU, VST3, LV2 and VST2 on macOS, out-of-process scanning, and no CLAP ("no plans", [tracker 9417](https://tracker.ardour.org/view.php?id=9417)). 9.10 released 2026-11-10 | **GPLv2+** ([COPYING](https://github.com/Ardour/ardour/blob/master/COPYING)). The developers' stated position (2002) is that linking libardour makes your app GPL ([linux-audio-dev](https://lists.linuxaudio.org/archives/linux-audio-dev/2002-November/001137.html)). Harrison Mixbus is a commercial precedent built on GPL source ([Harrison](https://rsrc.harrisonconsoles.com/mixbus/mixbus-live-manual/topic/mixbus-license-terms-and-gpl-compliance)) | strong engine, but GPL for good and a GTK UI we'd fight to restyle |
-| **Rust from scratch** | memory safety and long-term ownership. Pieces: cpal for I/O (Apache-2.0, [repo](https://github.com/RustAudio/cpal)); clack-host for CLAP hosting (MIT/Apache, [repo](https://github.com/prokopyl/clack)); the `vst3` crate (MIT/Apache, bindings from the now-MIT SDK headers, [repo](https://github.com/coupler-rs/vst3-rs)); `rack` for AU hosting (MIT/Apache, which calls itself production-ready, **UNVERIFIED**, [repo](https://github.com/sinkingsugar/rack)). nih-plug is for *making* plugins, not hosting them ([repo](https://github.com/robbert-vdh/nih-plug)). The notable Rust DAW, Meadowlark, is effectively dormant ([Codeberg](https://codeberg.org/Meadowlark/Meadowlark)) | permissive throughout | everything above the I/O and format bindings is ours: years before it records a song. AU hosting is the weakest link |
-| **Others** | Zrythm (AGPLv3; C++23, Qt/QML **and JUCE**; optional plugin bridging, [repo](https://github.com/zrythm/zrythm)). Qtractor (GPL-2.0). LMMS (GPL-2.0; last stable release 2020). I/O-only libraries: miniaudio, PortAudio, RtAudio (permissive) | — | reference reading, not a base |
-
-**Recommendation: Tracktion Engine + JUCE 9, macOS (arm64) first.**
-- **It reaches a usable v0 soonest.** The hard, boring parts already exist and ship in a commercial DAW: the edit model, tempo map, clips, automation, PDC and offline render. That frees our effort for the workflow and the UI, which are what make this ours.
-- **It meets the plugin requirement out of the box.** AU and VST3 hosting through JUCE is mature, and JUCE 9.0.5 still fixes VST3 hosting details ([CHANGE_LIST](https://github.com/juce-framework/JUCE/blob/master/CHANGE_LIST.md)).
-- **The licences are fine for personal use.** While Whiplash is Phil's own tool and isn't distributed, the GPL and AGPL options impose nothing, because their obligations start on distribution (or network use, for AGPL) **[inferred; standard reading]**. Going commercial later means paying for Tracktion and JUCE, budgeted from the tiers above (Q3).
-- **The costs:**
-  - **C++ real-time code:** a stricter review burden on agent-written code (§9).
-  - **The UI:** JUCE's toolkit is capable but not native AppKit, so reaching Logic-level polish is our work.
-  - **CLAP:** neither JUCE nor Tracktion hosts it ([clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions): "does not support JUCE-based CLAP hosting"). We'd add it with clap-helpers if we want it.
-- **Keep an exit.** The project format and our UI-facing edit commands belong to us, not to Tracktion's Edit, so the engine could be swapped later (Q4).
-
-**Platform:** macOS 14+ on Apple Silicon first (Q5 for the floor). Windows comes later, if ever. JUCE and Tracktion run there, but driver handling (ASIO), testing and plugin quirks double the work.
+| **v0 "tape"** | Arrange view with audio and MIDI tracks. Record and play. A basic mixer strip per track. Transport, tempo, metronome. Save and load (§5). Undo from day one. Plugin window for one instrument | the v0 column | Phil records a take over Noire, saves, reopens and hears it identically |
+| **v0.5** | Clip editing. Piano roll and quantise. Audio editor. Device chain with effect inserts. Sends and buses. Plugin manager. Offline bounce | the v0.5 column | a full demo song with all four target plugins, bounced |
+| **v1** | Everything in §3. Automation lanes. Multi-out and sidechain UI. Plugin MIDI routing. File drops from plugin windows. Loop and punch takes. Autosave and crash recovery. Full-screen mixer. Quick controls | the v1 column | Phil makes a track start to finish, from recording to bounce, without opening Logic |
+| **v1.x** | Session (clip-launch) view. Step sequencer. Racks and macros. CLAP (if Riddim adds it) | as needed | |
+| **Later, deliberately** | Agent control (§10). Plugin crash isolation (with Riddim). Time-stretch and warping. Comping. Pitch correction and ARA. Control surfaces. Windows. Video. Notation. Surround | | |
 
 ---
 
-## 7. Audio engine realities
+## 12. Risks and hard parts
 
-1. **The real-time thread rules.** The audio callback never:
-   - allocates or frees memory;
-   - takes a lock that a non-real-time thread can hold;
-   - does file or network I/O, or logs synchronously;
-   - calls Objective-C or Swift runtime paths that might allocate.
-
-   Graph changes are compiled off-thread and swapped in with an atomic pointer exchange. The old graph is freed off-thread. Parallel processing threads join the device's audio workgroup ([Apple](https://developer.apple.com/documentation/apple-silicon/porting-your-audio-code-to-apple-silicon)).
-2. **Buffer sizes.** 64-128 samples while recording and monitoring; 128 at 48 kHz is 2.7 ms per buffer. 512-1024 for mixing with heavy plugins. Switchable per session without reopening the project.
-3. **Driver I/O.** CoreAudio HAL through JUCE's device layer.
-   - Focusrite says its Scarlett range is class compliant ([Focusrite](https://us.focusrite.com/articles/whats-the-best-interface-for-mac/)), and its 3rd Gen guide says no Mac driver is needed ([Focusrite](https://userguides.focusrite.com/hc/en-gb/articles/23031328571282-Scarlett-2i2-3rd-Gen-overview)). **The 2i2 4th Gen specifically: UNVERIFIED (very likely).**
-   - Recorded audio is placed using the device's reported input, output and safety-offset latency, plus a manual offset we calibrate with a loopback test.
-4. **Plugin delay compensation (PDC).** Every node reports its latency. The graph delays parallel paths so they meet aligned at sums, sends and the master. A latency change at runtime (an oversampling toggle, say) triggers a graph rebuild. Tracktion Engine provides PDC ([FEATURES.md](https://github.com/Tracktion/tracktion_engine/blob/develop/FEATURES.md)). Live and Logic document the same behaviour ([Live](https://www.ableton.com/en/live-manual/12/working-with-instruments-and-effects/#device-delay-compensation), [Logic](https://support.apple.com/guide/logicpro/work-with-plug-in-latencies-lgcpe11997ba/mac)). Monitoring paths with latency show their delay, and offer low-latency monitoring that bypasses high-latency plugins, as Logic does **[inferred feature choice]**.
-5. **Offline bounce.**
-   - Faster than real time, with plugins put in offline or non-real-time mode.
-   - Sample streamers need time to fetch from disk, so the renderer has to tolerate plugins that need real-time pacing. A **real-time bounce** fallback is kept. None of the four vendors documents offline-render behaviour (**UNVERIFIED**).
-   - A bounce of the same project is bit-identical, a test we can automate, except for plugins that are themselves non-deterministic.
-6. **Recording safety.** Captured audio goes through a lock-free FIFO to a disk-writer thread, with headroom for disk stalls. Files are written incrementally, so a crash keeps everything up to the last flush. A dropped buffer is shown and logged, never hidden.
+- **Scale.** Logic and Live are decades of work by large teams. **The realistic target:** a focused Ableton/Logic-style DAW that one musician finishes songs in, with his own plugins. Expect months to v0 and a year or more to v1 **[estimate, not a commitment]**.
+- **The engine is on the critical path.** Riddim is a new Rust engine. Every app phase waits on its column in §9.2, and AU hosting from Rust is the least proven piece (**UNVERIFIED** maturity of `rack`). **Mitigation:** build the app against a stub engine with the same API, so UI work isn't blocked.
+- **Two repos, one contract.** API churn between Whiplash and Riddim. **Mitigation:** a versioned API, contract tests here, and an agreed owner for the document/timeline boundary (Q3).
+- **The plugin long tail.** Four named targets are tractable; "any plugin" is not. Testing licensed plugins needs real licences on a real Mac, so Phil's Mac is the compatibility lab.
+- **A crash takes the session down** until Riddim isolates plugins. **Mitigation:** autosave and incremental recording.
+- **The UI stack** (§8) decides how much polish costs. Choosing late, after the spike, is cheaper than switching.
+- **UI polish is the long pole.** Logic-level feel (zoom, scroll, drag, snapping) is many small things.
+- **Why build it at all.** Live and Logic already do all of v1. The case is ownership: a DAW shaped to Phil, with agent control as a later option. It doesn't rest on doing more than they do. Worth confirming before the build (Q12).
 
 ---
 
-## 8. Phasing
+## 13. Open questions for Phil
 
-| Phase | Ships | Done when |
-|---|---|---|
-| **v0 "tape"** | CoreAudio I/O with the 2i2. Audio tracks: record and play. MIDI tracks: record and play into **one hosted AU or VST3 instrument** (Noire in Kontakt Player as the first target). A basic mixer (volume, pan, mute, solo, master). Transport, tempo, metronome. Save and load. **Undo from day one** | Phil records a take over Noire, saves, reopens and hears it identically |
-| **v0.5** | Arrangement editing (move, trim, split, loop). Piano roll and quantise. Effect inserts. Sends and buses. PDC. Plugin state save and restore. Offline bounce. Superior Drummer 3, EZbass and Helix loaded and saved | a full demo song with all four target plugins, bounced |
-| **v1** | Everything in §2. Automation. Multi-out instruments. Sidechain. Plugin MIDI out. File drops from plugin windows. Loop and punch recording. Autosave and crash recovery. Quick controls for the four targets | Phil makes a track start to finish, from recording to bounce, without opening Logic |
-| **v1.x** | Session (clip-launch) view. Step sequencer. Racks and macros. CLAP | |
-| **Later, deliberately** | **Agent control (§5)**: a local API, then MCP, notes to changes, and parameter maps. A plugin sandbox bridge. Time-stretch and warping (needs a stretch library: Rubber Band is GPL or commercial, élastique is commercial, both **UNVERIFIED** current terms). Comping. Pitch correction and ARA. Control surfaces. Windows. Video. Notation. Surround | |
-
----
-
-## 9. Risks and hard parts
-
-- **Scale.** Logic and Live are decades of work by large teams. Ardour is over 20 years old. A small team plus agents won't reach their breadth. **The realistic target:** a focused Ableton/Logic-style DAW that one musician can finish songs in, with his own plugins. Expect months to v0 and a year or more to v1 **[estimate, not a commitment]**.
-- **The plugin long tail.** Each plugin interprets the AU and VST3 specs a little differently: bus layouts, state, threading, GUI resizing, latency changes. Four named targets are tractable. "Any plugin" is not. Testing licensed plugins needs real licences on a real Mac, so CI can't cover it. Phil's Mac is the compatibility lab.
-- **A crash takes the session down in v1.** Without a sandbox, one bad plugin crashes the app. The mitigation is autosave and incremental recording, which makes the bridge a real v2 item.
-- **Real-time correctness.** Priority inversions, allocation in the callback and denormals are subtle, and agent-written C++ makes them likelier. Needed from the start:
-  - real-time-safety tests and assertions in debug builds;
-  - stress tests at 64-sample buffers;
-  - a human review of everything that runs on the audio thread.
-- **UI polish is the long pole.** Logic-level feel (zoom, scroll, drag) is many small things. JUCE draws its own UI, so we own the feel completely, for better and for worse.
-- **Licensing and legal:**
-  - the JUCE clause 1.12 question;
-  - Tracktion and JUCE combined commercial cost if Whiplash is ever sold;
-  - stretch-library licences;
-  - trademark care: no "VST" logo unless we follow Steinberg's rules, and no Ableton or Logic look-alike assets.
-- **Platform churn.** Rosetta narrows after macOS 27 ([Apple](https://developer.apple.com/documentation/apple-silicon/about-the-rosetta-translation-environment)). Xcode 27 needs `x86_64` added to ARCHS explicitly. Apple steers hosts toward AUv3.
-- **Why build it at all.** Live and Logic already do all of v1. The case for Whiplash is ownership: a DAW shaped exactly to Phil's workflow, with the option of agent control later (§5). It doesn't rest on doing more than they do. That is worth Phil confirming before the build (Q11).
-
----
-
-## 10. Open questions for Phil
-
-1. **Scope of v1.** Is §2 right? Should anything move up (session view, time-stretch, comping) or down?
-2. **Audience.** Just you, or eventually other people? That decides licensing (GPL/AGPL is fine for personal use; selling needs Tracktion and JUCE commercial), code signing, installers and support.
-3. **Budget for licences**, if it's ever distributed: Tracktion plus JUCE tiers (§6), and a legal read on JUCE EULA clause 1.12.
-4. **The foundation.** Accept the Tracktion Engine + JUCE recommendation? Or do you want a Rust-first core for safety and long-term ownership, accepting a much later v0?
-5. **The macOS floor.** 14+ (matching Kontakt and Helix) or 15+? Do you need Intel Macs at all? (Recommended: no.)
-6. **When does agent control come in?** After v1 (as written), or not at all unless the core DAW is in daily use?
-7. **The look.** Dark only, or a light theme too? Any reference images beyond "Ableton x Logic, Rams"?
-8. **Session view priority.** Clip launching is very Ableton. Do you jam that way, or is arrange-first enough for v1?
-9. **Interfaces beyond the 2i2.** Any other gear to support early: MIDI controllers, a control surface?
-10. **Repo.** A new repository (recommended, since this isn't the plugin), or a directory here? The project only keeps the name.
-11. **Go-ahead criteria.** What do you need to see or decide before the build phase starts? A spike that hosts Noire in a minimal Tracktion Engine app would be the obvious first proof.
+1. **Scope of v1.** Is §3 right? Should anything move (session view, time-stretch, comping)?
+2. **Audience.** Just you, or eventually others? That decides signing, installers, support and the UI-stack licence (for example Slint or Qt).
+3. **Document and timeline ownership.** The app owns the document and Riddim mirrors it (proposed, §2, §9.1), or Riddim owns the timeline model and the app is a view? Decide together with Riddim's vision.
+4. **The UI stack** (§8). Run the A-vs-C spike? Any strong preference (Swift, Rust or web)?
+5. **The macOS floor.** 14+ (matching Kontakt and Helix) or 15+? Apple Silicon only? (Recommended: yes.)
+6. **When does agent control come in?** After v1, or only once the DAW is in daily use?
+7. **Key commands.** Logic-compatible shortcuts, or our own set?
+8. **AU or VST3 by default** when a plugin ships both?
+9. **The look.** Dark only, or a light theme too? Any references beyond "Ableton x Logic, Rams"?
+10. **Session view priority.** Do you jam clip-first, or is arrange-first enough for v1?
+11. **Repo.** The app in a new repository (kaminocorp/whiplash-daw?), or here? This repo is the Hermes plugin.
+12. **Go-ahead criteria.** What do you need before the build starts? Proposed first proofs: Riddim hosting Noire and recording a take, and the UI spike (§8).
