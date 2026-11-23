@@ -16,12 +16,16 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
   - Kamino owns the copyright;
   - Phil's rig is a Mac Mini M4 Pro, and Helix is not owned.
 - **23 Nov: answers to all 13 open questions** (§13), applied throughout:
-  - a smaller, high-quality v1, with no advanced editing in the GUI;
+  - a smaller, high-quality v1, with no advanced editing in the GUI apart from the piano roll (below);
   - open source under AGPL-3.0 with a CLA;
-  - macOS 15+ as a universal binary, with a WebGL2 fallback;
+  - macOS 15+, with a WebGL2 fallback;
   - the 2i2 is 1st gen;
   - the UI is built as a web app first, then wrapped in Tauri;
   - the installed plugins are the test set, with no purchases.
+- **23 Nov, later decisions:**
+  - **v1 includes a piano roll** for instrument tracks (§4.3);
+  - **Apple Silicon only:** arm64, macOS 15+, with no Intel build and no universal binary (§8.4);
+  - **one fixed BPM and time signature per project,** with no tempo map or tempo changes (§3, §5.1).
 
   Riddim details are aligned with its [`docs/api/embedding.md`](https://github.com/kaminocorp/riddim/blob/main/docs/api/embedding.md) and its vision's §1.1 ([riddim.md](https://github.com/kaminocorp/riddim/blob/main/docs/visions/riddim.md)), as of `main` at `e4bbf49`.
 
@@ -31,26 +35,27 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
 
 **It is:**
 - **Our own desktop DAW, open source and public,** with Riddim underneath.
-  - It ships on **macOS 15 Sequoia and later**, as a **universal binary** (Apple Silicon and Intel). Apple Silicon is the tested path.
+  - It ships on **macOS 15 Sequoia and later, Apple Silicon only** (arm64). There is no Intel build.
   - **Windows comes later** from the same code (§8.4).
   - In look and workflow it's an Ableton Live and Logic Pro hybrid: a Logic-style arrange window and mixer, with Ableton's speed and device chain.
 - **Small and high quality in v1** (§3):
   - record;
   - an arrange timeline with basic edits;
+  - a piano roll for instrument tracks;
   - a mixer;
   - AU and VST3 plugins;
   - export.
 
-  It does those few things very well. **Sophisticated editing is left to agents later** (§10), so the GUI gets no advanced editing controls.
+  It does those few things very well. Beyond the piano roll, **sophisticated editing is left to agents later** (§10), so the GUI gets no other advanced editing controls.
 - **Built for Phil first** to record and finish music with the plugins he already has installed.
 
 **It isn't:**
 - **A toy or a demo.** It has to record a real session with real plugins without losing a take.
 - **A browser app.** The UI is a web app, developed in Chrome and shipped inside Tauri 2 (§8). Audio, plugins and files live in native code: the Rust core and Riddim. Browsers can't host AU or VST3 plugins, so there is no pure in-browser build.
 - **A Logic or Ableton replacement in breadth.** v1 has none of these:
-  - piano roll or note editing;
   - an audio editor;
   - automation lanes;
+  - tempo changes or a tempo map;
   - session view;
   - comping, time-stretch, notation, video or surround.
 
@@ -109,17 +114,20 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
 
 ## 3. Core functionality (v1)
 
-**v1 is smaller but high quality** (Phil, 23 Nov, Q1): record, an arrange timeline with basic edits, a mixer, AU/VST3 hosting and export. The GUI gets **no advanced editing controls**.
+**v1 is smaller but high quality** (Phil, 23 Nov, Q1): record, an arrange timeline with basic edits, a mixer, AU/VST3 hosting and export.
+- **Plus a piano roll** for instrument tracks (Phil, 23 Nov, later decision).
+- Apart from that, the GUI gets **no advanced editing controls**.
 
 | Area | v1 scope | Not in v1 |
 |---|---|---|
 | **Recording** | Mono and stereo audio from the interface's inputs. MIDI from a controller into an instrument. Input monitoring. Arm several tracks at once. Latency-corrected placement. Every take kept | Loop and punch takes, comping (Riddim already supports loop and punch, so they're a cheap v1.x) |
 | **Tracks** | Audio and instrument tracks, plus buses and master | Folders, track stacks, multi-out instrument channels |
-| **Arrange timeline** | Tracks and clips on bars and beats. Grid and snap. Zoom and scroll. Tempo and time signature. Loop range | Markers and sections, a tempo-map editor, session view (Q10) |
-| **Basic edits** | On audio and MIDI clips: **move, cut, copy, paste, trim, fades**. Also select, delete, duplicate, split at the playhead, clip gain | Piano roll, note editing, quantise, humanise, an audio editor, time-stretch. Agents handle these later (§10) |
+| **Arrange timeline** | Tracks and clips on bars and beats. Grid and snap. Zoom and scroll. Loop range. **One BPM and time signature per project**, fixed for the whole song and editable in the project settings (§5.1) | Tempo changes and a tempo map, markers and sections, session view (Q10) |
+| **Basic edits** | On audio and MIDI clips: **move, cut, copy, paste, trim, fades**. Also select, delete, duplicate, split at the playhead, clip gain | An audio editor, time-stretch, humanise. Agents handle these later (§10) |
+| **Piano roll** (instrument tracks) | Draw or place, move, resize and delete notes. Note velocity. Quantise (§4.3) | CC and pitch-bend editing, scale tools, step sequencer |
 | **Mixer** | Channel strips: inserts (AU/VST3), sends, buses, master, volume, pan, mute, solo, record arm, input monitor. Peak meters | Sidechain, automation lanes, RMS and true peak |
 | **Plugins** | AU and VST3 instruments and effects. Scan, a plugin manager, native editor windows, state saved with the project (§6) | CLAP in the UI (Riddim hosts it), plugin MIDI out routing, multi-out |
-| **Transport** | Play, stop, record, loop, metronome with count-in, typed tempo, follow playhead | Punch in/out, tap tempo |
+| **Transport** | Play, stop, record, loop, metronome with count-in, follow playhead. Shows the project's BPM | Punch in/out, tap tempo |
 | **Export** | Offline bounce of the master to WAV (and AIFF). Progress and cancel | Stems, real-time bounce |
 | **Project** | Save, load, autosave, crash recovery. A self-contained project folder (§5) | |
 | **Undo** | Unlimited, one history for every edit (§5.3) | |
@@ -150,20 +158,42 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
 │      │  04 Vox    ● ~~~~~audio~~~~~                                  │ files      │
 │      │  Bus A · Master                                               │            │
 ├──────┴──────────────────────────────────────────────────────────────┴────────────┤
-│ DETAIL: device chain ▸ [AirEQ][VMR][VerbSuite send]                               │
+│ DETAIL (Tab): device chain ▸ [AirEQ][VMR][VerbSuite send]  or  piano roll         │
 └───────────────────────────────────────────────────────────────────────────────────┘
    X = full-screen mixer (Logic-style console)
 ```
 
 - **Centre: the arrange window.** Tracks run top to bottom and time left to right. Waveforms are drawn from overviews the Rust core precomputes (§5.2), at any zoom and without stalls.
-- **Bottom: the detail pane.** The selected track's device chain. In v1 it has no clip editor (§3).
+- **Bottom: the detail pane.** The selected track's device chain, or the **piano roll** for the selected MIDI clip (double-click a clip, or press Tab to toggle), as in Ableton's Detail View and Logic's docked editor.
 - **Left: the inspector.** The selected track's channel strip.
 - **Right: the browser** for plugins, presets, samples and project files. Drag an item onto a track, or onto the empty area to create one.
 
 ### 4.3 Editing in v1
 
-- **Clip-level only:** move, cut, copy, paste, trim, fades, plus select, delete, duplicate, split and clip gain. Edits snap to the grid, and holding a modifier turns snapping off.
-- **Everything else in editing** (notes, quantise, audio surgery, arrangement rewrites) comes through agents on the command API (§10), and doesn't get GUI controls. A minimal note view could return later if real use calls for it (§11).
+- **In the arrange view: clip-level edits.** Move, cut, copy, paste, trim, fades, plus select, delete, duplicate, split and clip gain. Edits snap to the grid, and holding a modifier turns snapping off.
+- **In the piano roll: note editing for instrument tracks** (Phil, 23 Nov: a must for v1, like Ableton's or Logic's):
+  - **Draw or place** notes with the pencil, or by double-clicking in the note grid. A new note takes the last-used length and velocity.
+  - **Move** notes in time and pitch, snapping to the grid (a modifier turns snapping off). Alt-drag copies.
+  - **Resize** a note from either edge.
+  - **Delete** notes (key or click).
+  - **Velocity:**
+    - a velocity lane under the note grid, with drag-to-set on one or several notes;
+    - note colour shows velocity.
+  - **Quantise** the selected notes, or the whole clip, to the grid. **[proposal]** With strength (0-100 %) and a choice of starts only or starts and ends, as in Logic and Live.
+  - **The basics around it:**
+    - a piano keyboard down the side, where clicking a key plays the note;
+    - selection by click, shift and marquee;
+    - cut, copy, paste and duplicate notes;
+    - nudge and transpose with the arrow keys;
+    - the grid size;
+    - zoom and scroll;
+    - looping playback of the clip;
+    - undo, as everywhere.
+- **What the piano roll needs, and what it doesn't:**
+  - **It needs to play a note when you place it or click a key**, so you hear what you're editing. Riddim already has this: `Engine::play_note(track, body)` "plays a note or controller into a track's instrument, as an on-screen keyboard would" ([engine.rs](https://github.com/kaminocorp/riddim/blob/main/crates/riddim-engine/src/engine.rs)). Note edits are ordinary model ops, and Riddim's note model carries velocity (`riddim-model`, `Note`).
+  - **It doesn't need automation lanes or an audio editor.** Both stay out of v1.
+  - **CC and pitch-bend data** recorded from a controller is kept and played back, but isn't editable in v1. A CC lane is the first thing to add if that hurts (§11).
+- **Everything else in editing** (humanise, audio surgery, arrangement rewrites) comes through agents on the command API (§10), and doesn't get GUI controls.
 
 ### 4.4 Mixer UI
 
@@ -206,7 +236,7 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
 
 **Riddim's engine model** (`riddim-model`, typed, serialisable and versioned):
 - tracks, clips, routing (buses, sends, inserts), automation curves;
-- the tempo and meter map, in Riddim's integer time (beat ticks and superclock, `riddim-time`), so tempo edits move clips correctly;
+- timing in Riddim's integer time (beat ticks and superclock, `riddim-time`). Riddim's model has a tempo and meter map, and **Whiplash uses it with exactly one entry** (below);
 - plugin slots with opaque state blobs.
 
 **Whiplash's additions** (vision §1.1 lists them as the app's):
@@ -216,6 +246,16 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
 - **each plugin's chosen format** (§6.3).
 
 **Objects are addressed by Riddim's IDs**, so ops, undo and events refer to objects, never to list positions.
+
+**Tempo and time signature (Phil, 23 Nov):**
+- **No tempo map and no tempo changes.** Each project has **one user-defined BPM and one time signature**, fixed for the whole song.
+- **They're editable per project,** in the project settings and the transport display. A new project starts at 120 BPM in 4/4, or a preference.
+- Editing the BPM is one undoable command that replaces the single tempo entry.
+- **[inferred] What a BPM edit does:**
+  - clips are placed in beats, so they keep their bar positions;
+  - MIDI follows the new tempo;
+  - audio isn't time-stretched (that's not in v1), so recorded audio drifts against the grid if the BPM changes after recording. The app warns before applying the change to a project that has audio clips.
+- **Imported MIDI files with tempo changes** (Riddim's importer reads a tempo map, `riddim/src/import.rs`) keep their notes. The app offers to adopt the file's first tempo, and ignores the later changes.
 
 ### 5.2 Files
 
@@ -255,7 +295,7 @@ Status: **vision draft, updated 2026-11-23 with Phil's answers to the open quest
 | **Splice INSTRUMENT** | An instrument on an instrument track; online sample-library content |
 | **LABS** | An instrument that streams samples from disk; slow loads |
 
-**Not checked:** each plugin's formats, versions, architectures (Apple Silicon or Intel) and licensing behaviour. The app's first scan on Phil's Mac produces that list. It also shows which plugins ship both AU and VST3, which matters for §6.3.
+**Not checked:** each plugin's formats, versions, whether it is native on Apple Silicon (the app hosts arm64 plugins only, §8.4), and licensing behaviour. The app's first scan on Phil's Mac produces that list. It also shows which plugins ship both AU and VST3, which matters for §6.3.
 
 **What a host needs from these** (all within v1's scope):
 - instruments and effects in AU and VST3;
@@ -281,7 +321,7 @@ These are v1.x features (§11), and they get tested when someone owns the plugin
 | **Load and state** | Progress UI, so the project stays usable while a plugin loads | Loads one plugin per main-thread pump, so audio keeps running (Riddim D50). Runs a plugin's first block off the audio thread (D84). Gets and sets opaque state |
 | **Editors** | One native window per editor, framed, with position remembered | `open_editor(ParentWindow::AppKit(ns_view))` and `plugin_editor_resize` |
 | **Latency** | Shows each strip's latency, with a low-latency monitoring toggle for armed tracks | Reports latency and compensates (PDC) |
-| **Host playhead** | Tempo and time signature as ops | Supplies tempo, time signature, position and transport to plugins |
+| **Host playhead** | The project's single BPM and time signature (§5.1) | Supplies tempo, time signature, position and transport to plugins |
 
 ### 6.3 Format policy (Phil, 23 Nov, Q8)
 
@@ -369,15 +409,15 @@ These follow the same pattern as the Digitakt web app's local bridge (hejijunhao
 - **Use WebGPU whenever `navigator.gpu` exists:** in Chrome during development, and in WKWebView on **macOS 26+**. WebGPU "is supported and enabled by default" in WebKit only from macOS Tahoe 26 ([gpuweb implementation status](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status)).
   - Whether WKWebView exposes `navigator.gpu` on macOS 26 is **UNVERIFIED**. An Apple forum reply suggests it does once the feature is on by default ([Apple forums](https://developer.apple.com/forums/thread/770862)), and one WebKit bug reports it missing in Safari 26.x ([WebKit 301627](https://bugs.webkit.org/show_bug.cgi?id=301627)).
 - **Use WebGL2 on macOS 15**, where WKWebView has no WebGPU.
-- **[proposal] Keep the drawing layer small:** timeline clips, waveforms, meters and the playhead, behind one renderer interface with two back ends. Panels, the inspector and dialogs are DOM.
+- **[proposal] Keep the drawing layer small:** timeline clips, waveforms, the piano roll's note grid and velocity lane, meters and the playhead, behind one renderer interface with two back ends. Panels, the inspector and dialogs are DOM.
 - **[proposal] Make the fallback testable in Chrome:** the UI can be forced onto WebGL2 there (a debug switch). CI and a regular manual pass also run the UI in Safari or WKWebView, because Chrome isn't the shipping engine.
 - **Windows (later):** in 2023 Tauri's WebView2 didn't expose WebGPU ([tauri#6381](https://github.com/tauri-apps/tauri/issues/6381)). Current behaviour is **UNVERIFIED**. The WebGL2 path covers it either way.
 
 ### 8.4 Platforms (Phil, 21 and 23 Nov)
 
-**macOS 15 Sequoia minimum, universal binary, Apple Silicon is the tested path.**
+**macOS 15 Sequoia minimum, Apple Silicon only (arm64).** No Intel build and no universal binary (Phil, 23 Nov, later decision, replacing the earlier universal-binary answer).
 
-How others draw the line (checked 2026-11-23):
+How others draw the line (checked 2026-11-23). On the floor we're close to Cubase 16. On the CPU we follow Logic: Apple Silicon only.
 
 | DAW | Minimum macOS | Intel Macs |
 |---|---|---|
@@ -392,13 +432,10 @@ How others draw the line (checked 2026-11-23):
 **Note on Phil's Cubase citation:** it's Cubase **16** that starts at macOS 15. Cubase 15 also supports Sonoma 14.
 
 **What the decision means:**
-- **Universal binary:**
-  - Tauri builds `universal-apple-darwin`, which needs both the `aarch64-apple-darwin` and `x86_64-apple-darwin` toolchains ([tauri-cli source](https://docs.rs/crate/tauri-cli/2.11.2/source/src/build.rs)).
-  - **Riddim has to build and run for `x86_64-apple-darwin` too.** Today its vision says "We target arm64 plugins only" (Riddim vision §7.1). That's a new requirement on Riddim (§9.2).
-  - On an Intel Mac, the app hosts Intel (x86_64) plugins. On Apple Silicon it hosts arm64 plugins, and Intel-only plugins don't load (no Rosetta bridging).
-- **Apple Silicon is the tested path:**
-  - Intel builds are compiled and smoke-tested in CI, if an Intel macOS runner is available (**to confirm**), but nobody tests them on real hardware unless an Intel Mac turns up;
-  - **[inferred]** macOS Tahoe 26 is the last macOS that runs on Intel Macs ([Wikipedia](https://en.wikipedia.org/wiki/MacOS_Tahoe)), so Intel support has a natural end date.
+- **One build target: `aarch64-apple-darwin`.** This matches Riddim, whose vision says "We target arm64 plugins only" (Riddim vision §7.1), so Riddim needs nothing new.
+- **No Intel testing.**
+- **Plugins:** the app hosts arm64 plugins (native or universal). Intel-only plugins don't load, because there's no Rosetta bridging, and the plugin manager lists them as unsupported with the reason.
+- **On an Intel Mac** the app doesn't install or launch. The download page and the installer say so.
 - **Drawing:** WebGL2 on macOS 15, and WebGPU on 26+ where available (§8.3).
 - **Windows later.** Phil wants both, provided Windows isn't double the effort. What Windows adds is mostly in Riddim:
   - device backends ("no audio device backend there yet", Riddim D82);
@@ -438,15 +475,17 @@ How others draw the line (checked 2026-11-23):
 | Capability | v0 | v0.5 | v1 |
 |---|---|---|---|
 | **Devices:** list CoreAudio devices, open at a rate and buffer size, report latencies, device loss and change. **Old class-compliant interfaces supported**, with Phil's **Scarlett 2i2 1st gen** as the reference (below) | ✓ | | |
-| **Transport:** play, stop, locate, loop; tempo and meter; metronome and count-in | ✓ | | |
+| **Transport:** play, stop, locate, loop; a single tempo and meter per project (§5.1); metronome and count-in | ✓ | | |
 | **Playback:** audio clips (offset, gain, fades) and MIDI clips into instruments | ✓ | | |
 | **Recording:** arm, input select, monitoring; incremental WAVs; latency-corrected placement | audio + MIDI | | |
 | **Mixing:** volume, pan, mute, solo, master | ✓ | inserts, sends, buses | |
 | **Plugins:** out-of-process scan; load AU and VST3 by identity and **format**; parameters; opaque state; `open_editor`; latency | one instrument | effects, state save and restore | |
 | **PDC** across the graph | | ✓ | |
 | **Metering:** per-strip peaks; CPU, xruns, starvation | ✓ | | |
+| **Note audition:** `play_note` into a track's instrument, for the piano roll's keyboard and note placement (§4.3; exists) | | ✓ | |
 | **Render:** deterministic offline bounce of the master, with progress and cancel | | ✓ | |
-| **New: `x86_64-apple-darwin` build** for the universal binary, hosting Intel plugins on Intel Macs (§8.4) | | | ✓ |
+
+**Platform:** arm64 macOS only (`aarch64-apple-darwin`), as Riddim already targets (§8.4).
 
 **The interface** (Phil, 23 Nov, Q5):
 - Phil's 2i2 is **1st generation, USB PID 0x8006** (Phil's report). The Linux kernel's Scarlett driver lists the 2i2 1st Gen as `1235:8006` ([kernel commit](https://mirrors.lzu.edu.cn/git/linux-net/-/commit/8780f561f6717dec52351251881bff79e960eb46)).
@@ -467,7 +506,7 @@ So the cost now is only discipline: no UI action bypasses the command API.
 
 **A sketch, to refine when it's scheduled:**
 - the command API exposed locally (the dev host's WebSocket is a starting point), then over MCP;
-- sophisticated editing done by agents, because the GUI deliberately has none: note editing, quantise, audio cleanup, arrangement changes;
+- sophisticated editing done by agents, because the GUI deliberately has none beyond the piano roll's basics: humanise, groove, voicing and note transforms, audio cleanup, arrangement changes;
 - each agent proposal applied as one labelled undo step;
 - semantic names for plugin parameters.
 
@@ -484,12 +523,12 @@ So the cost now is only discipline: no UI action bypasses the command API.
 | Phase | App ships | Needs from Riddim (§9.2) | Done when |
 |---|---|---|---|
 | **v0 "tape"** (web app in Chrome) | `whiplash-core` and the dev host. The web UI in Chrome: an arrange view with audio and instrument tracks, record and play, transport and metronome, save and load, and undo from day one. One instrument's native editor window. WebGPU and WebGL2 drawing | the v0 column | Phil records a take over an installed instrument (LABS or Splice INSTRUMENT) through the 2i2, saves, reopens and hears it identically. This is also Riddim's P2 criterion 1 |
-| **v0.5 "MVP"** (still in Chrome) | Basic edits (move, cut, copy, paste, trim, fades). The mixer with inserts, sends and buses. The plugin manager and format policy. Offline bounce. Both shortcut presets | the v0.5 column | a short song made with the installed plugins (§6.1), bounced to WAV |
-| **v1** (Tauri 2) | The same UI and core wrapped in Tauri 2. A universal binary, macOS 15+, signed and notarised. Autosave and crash recovery. The full-screen mixer. Look-and-feel polish (§4.5). Public release with LICENSE, CLA and CONTRIBUTING | v1 column (x86_64 build) | Phil makes a track start to finish, from recording to bounce, without opening Logic. It installs and runs on a clean macOS 15 machine |
-| **v1.x** | Loop and punch takes. Stems export. Automation lanes. Sidechain. CLAP in the UI. Multi-out instruments, plugin MIDI out and file drops from plugin windows, when someone owns a plugin that needs them | as needed | |
+| **v0.5 "MVP"** (still in Chrome) | Basic edits (move, cut, copy, paste, trim, fades). **The piano roll** (§4.3). The project's BPM and time signature in the settings. The mixer with inserts, sends and buses. The plugin manager and format policy. Offline bounce. Both shortcut presets | the v0.5 column | a short song made with the installed plugins (§6.1), with at least one instrument part written or corrected in the piano roll, bounced to WAV |
+| **v1** (Tauri 2) | The same UI and core wrapped in Tauri 2. An arm64 build for macOS 15+, signed and notarised. Autosave and crash recovery. The full-screen mixer. Look-and-feel polish (§4.5). Public release with LICENSE, CLA and CONTRIBUTING | the v1 column | Phil makes a track start to finish, from recording to bounce, without opening Logic. It installs and runs on a clean macOS 15 Apple Silicon Mac |
+| **v1.x** | Loop and punch takes. Stems export. Automation lanes. CC and pitch-bend lanes in the piano roll. Sidechain. CLAP in the UI. Multi-out instruments, plugin MIDI out and file drops from plugin windows, when someone owns a plugin that needs them | as needed | |
 | **Agent control** | The command API exposed to agents (§10), and the UI rethink that goes with it | | |
 | **Windows** | The same app on Windows (§8.4) | WASAPI or ASIO, Win32 editor parenting, the bridge transport | Phil decides once the macOS app is in use and the effort can be measured |
-| **Later, deliberately** | Session view. Comping. Time-stretch. A minimal note view, if agents aren't enough. Control surfaces. Plugin crash isolation with editors | | |
+| **Later, deliberately** | Session view. Comping. Time-stretch. Tempo changes, only if Phil reopens the decision (§5.1). Control surfaces. Plugin crash isolation with editors | | |
 
 **Ordering:** v0 and v0.5 run in Chrome because that's the fastest loop: hot reload, devtools, and nothing to package. Wrapping in Tauri for v1 is then mostly the transport swap (§8.1). **[inferred]** Run a minimal Tauri build early, during v0, as a smoke test, so a WKWebView or main-thread surprise surfaces before v1.
 
@@ -501,7 +540,8 @@ So the cost now is only discipline: no UI action bypasses the command API.
 - **Nothing has run on macOS yet,** not Riddim and not a host around it (§9). The dev host on Phil's Mac is the first real test.
 - **Chrome isn't the shipping engine.** Developing in Chrome hides WKWebView differences (WebGPU availability, fonts, scrolling, input). **Mitigation:** a regular Safari or WKWebView pass, an early Tauri smoke test, and a forced-WebGL2 mode.
 - **Two renderers** (WebGPU and WebGL2) double the drawing code. **Mitigation:** keep the drawing layer small (§8.3). If WebGL2 alone proves good enough, WebGPU can wait.
-- **Universal binary.** It needs a Riddim x86_64 build (new) and an Intel test machine nobody has. **Mitigation:** compile and smoke-test in CI, and state plainly that Intel support is untested.
+- **The piano roll is the biggest single UI piece in v1.** Snapping, resize handles, marquee selection and a velocity lane all have to feel as good as Logic's. **Mitigation:** draw it in the same canvas layer as the timeline (§8.3), and keep v1 to the listed tools (§4.3).
+- **A fixed BPM with audio clips.** Changing the BPM after recording audio misaligns it, because there's no time-stretch. **Mitigation:** warn before the change (§5.1).
 - **Native feel in a web UI** ("feels Apple-made", §4.5) is many small things. Budget for it in v1.
 - **Two repos, one contract.** Riddim is pre-1.0. **Mitigation:** a pinned version and contract tests.
 - **Untested plugins.** The test set (§6.1) is effects-heavy, with two instruments. Multi-out, MIDI out and very large samplers stay untested until someone owns one.
@@ -521,11 +561,11 @@ So the cost now is only discipline: no UI action bypasses the command API.
 - **Rig:** a Mac Mini M4 Pro and a Scarlett 2i2. Helix isn't owned.
 
 **23 Nov 2026 (Phil's answers):**
-1. **v1 scope:** smaller but high quality. Record, an arrange timeline with basic edits (move, cut, copy, paste, trim, fades), a mixer, AU/VST3 hosting, export. Sophisticated editing is left to agents later, so the GUI gets no advanced editing controls (§3, §4.3).
+1. **v1 scope:** smaller but high quality. Record, an arrange timeline with basic edits (move, cut, copy, paste, trim, fades), a mixer, AU/VST3 hosting, export. Sophisticated editing is left to agents later, so the GUI gets no advanced editing controls (§3, §4.3). **Amended later on 23 Nov:** v1 must include a piano roll (MIDI note editor) like Ableton's or Logic's for instrument tracks: draw or place, move, resize and delete notes, velocity, quantise (§4.3). The audio editor and automation lanes stay out of v1, because the piano roll needs neither. It needs note audition, which Riddim already has.
 2. **Audience:** open source and public (§1).
 3. **Licence:** AGPL-3.0, like Riddim, for now. Kamino keeps the right to relicense, so a CLA is required for outside contributions from day one (§1.1).
 4. **macOS floor:**
-   - macOS 15 Sequoia minimum, as a universal binary (Apple Silicon and Intel), with Apple Silicon as the tested path;
+   - macOS 15 Sequoia minimum. **Amended later on 23 Nov:** Apple Silicon only (arm64). Intel and the universal binary are dropped entirely, and so is Intel testing (§8.4);
    - WebGPU when `navigator.gpu` exists (macOS 26+), and WebGL2 on 15;
    - cited against Cubase, Ableton, Bitwig, FL Studio, REAPER and Logic (§8.3, §8.4). Note: the Cubase that starts at macOS 15 is Cubase 16; Cubase 15 also supports 14.
 5. **Interface:** Phil's 2i2 is 1st gen (USB PID 0x8006) and class compliant. Old interfaces are supported (§9.2).
@@ -538,11 +578,14 @@ So the cost now is only discipline: no UI action bypasses the command API.
 12. **Fastest credible MVP:** build the UI as a plain web app against the local Riddim engine (developed in Chrome), then wrap it in Tauri 2. No pure in-browser build, since browsers can't host AU/VST3 (§8, §11).
 13. **Plugins:** no purchases. Test with the installed Slate (Virtual Mix Rack, FG-X, VerbSuite, Virtual Tape Machines), Kilohearts, Eiosis AirEQ, Overloud TH-U, LANDR, Splice INSTRUMENT and LABS. The "Kontakt/SD3/EZbass required" done-when criteria are dropped (§6.1, §11).
 
-### 13.2 New questions these answers raise
+### 13.2 New questions these answers raised
 
-- **Q-N1. Riddim and Intel.** The universal binary needs Riddim built and hosting plugins on `x86_64-apple-darwin`, which its vision currently excludes (arm64 plugins only). Agree that with Riddim, and decide how Intel gets tested.
+**Resolved (Phil, 2026-11-23):**
+- **Q-N1. Riddim and Intel.** *Resolved:* Apple Silicon only, arm64, macOS 15+. There's no Intel build, no universal binary and no Intel testing. This matches Riddim's arm64-only target, so Riddim needs no change (§8.4).
+- **Q-N5. Can tempo change in v1?** *Resolved:* no tempo map and no tempo changes. Each project has one user-defined BPM and time signature, fixed for the whole song and editable per project (§5.1).
+
+**Still open:**
 - **Q-N2. Which Kilohearts and LANDR plugins** are installed? The first scan will list them, along with every plugin's formats.
 - **Q-N3. The CLA.** Reuse Riddim's draft (adapted to Whiplash), and when does counsel review it: before the repo goes public, or before the first outside contribution?
 - **Q-N4. Is whiplash-daw public from day one,** or private until v0.5?
-- **Q-N5. Can tempo change in v1?** Riddim has a tempo map. Proposed: a single tempo and time signature in the v1 UI, with the map later.
 - **Q-N6. The dev host after v1.** Keep it as the agent API's transport (§10), or retire it once Tauri ships?
